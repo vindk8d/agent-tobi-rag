@@ -1,0 +1,20 @@
+"""
+API routes and endpoints for the RAG-Tobi application
+"""
+
+from fastapi import APIRouter
+
+# Import route modules (will be implemented in future tasks)
+# from .chat import router as chat_router
+# from .documents import router as documents_router
+# from .datasources import router as datasources_router
+
+# Main API router
+api_router = APIRouter(prefix="/api/v1")
+
+# Register route modules (will be added when implemented)
+# api_router.include_router(chat_router, prefix="/chat", tags=["chat"])
+# api_router.include_router(documents_router, prefix="/documents", tags=["documents"])
+# api_router.include_router(datasources_router, prefix="/datasources", tags=["datasources"])
+
+__version__ = "1.0.0" 

@@ -1,0 +1,100 @@
+# ======================================================================
+# ENVIRONMENT CONFIGURATION TEMPLATE
+# ======================================================================
+# Copy this file to '.env' and update with your actual values
+# Never commit the actual .env file to version control!
+
+# ======================================================================
+# REQUIRED CONFIGURATIONS (MUST BE SET)
+# ======================================================================
+
+# OpenAI API Configuration
+OPENAI_API_KEY=sk-your_openai_api_key_here
+OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+OPENAI_CHAT_MODEL=gpt-4o-mini
+OPENAI_MAX_TOKENS=4000
+OPENAI_TEMPERATURE=0.3
+
+# Supabase Configuration (Backend)
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_KEY=your_supabase_service_role_key
+
+# Supabase Configuration (Frontend - Next.js)
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+
+# ======================================================================
+# OPTIONAL CONFIGURATIONS (Can be left as defaults)
+# ======================================================================
+
+# LangSmith Configuration (for monitoring - optional)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_API_KEY=your_langsmith_api_key_here
+LANGCHAIN_PROJECT=salesperson-copilot-rag
+
+# RAG System Configuration
+RAG_CHUNK_SIZE=1000
+RAG_CHUNK_OVERLAP=200
+RAG_SIMILARITY_THRESHOLD=0.8
+RAG_MAX_RETRIEVED_DOCUMENTS=10
+RAG_EMBEDDING_BATCH_SIZE=100
+
+# Web Scraping Configuration
+SCRAPING_DELAY_SECONDS=1
+SCRAPING_TIMEOUT_SECONDS=30
+SCRAPING_MAX_RETRIES=3
+SCRAPING_USER_AGENT=SalespersonCopilot/1.0
+
+# System Configuration
+ENVIRONMENT=development
+LOG_LEVEL=INFO
+MAX_CONCURRENT_REQUESTS=100
+RESPONSE_TIMEOUT_SECONDS=30
+
+# FastAPI Configuration
+FASTAPI_HOST=0.0.0.0
+FASTAPI_PORT=8000
+FASTAPI_DEBUG=false
+FASTAPI_CORS_ORIGINS=["http://localhost:3000", "http://localhost:3001"]
+
+# Next.js Frontend Configuration
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXTAUTH_SECRET=your-nextauth-secret-for-production
+NEXTAUTH_URL=http://localhost:3000
+
+# Redis Configuration (for caching)
+REDIS_URL=redis://localhost:6379
+REDIS_PASSWORD=
+
+# Telegram Bot Configuration (for later use)
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_WEBHOOK_URL=
+
+# ======================================================================
+# SETUP INSTRUCTIONS
+# ======================================================================
+
+# 1. Get OpenAI API Key:
+#    - Go to https://platform.openai.com/api-keys
+#    - Create a new API key
+#    - Replace 'sk-your_openai_api_key_here' with your actual key
+
+# 2. Get Supabase Credentials:
+#    - Go to your Supabase project dashboard
+#    - Go to Settings > API
+#    - Copy the Project URL and API keys
+#    - Use the same URL and anon key for both backend and NEXT_PUBLIC_ versions
+#    - NEVER expose the service role key to the frontend (no NEXT_PUBLIC_ version)
+
+# 3. LangSmith (Optional but recommended):
+#    - Go to https://smith.langchain.com/
+#    - Create an account and get an API key
+#    - Replace 'your_langsmith_api_key_here' with your actual key
+
+# 4. Copy this file:
+#    cp env-template.txt .env
+
+# 5. Test your configuration:
+#    python backend/config.py 

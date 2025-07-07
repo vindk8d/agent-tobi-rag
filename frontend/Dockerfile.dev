@@ -1,0 +1,45 @@
+FROM node:18-alpine
+
+# Set environment variables
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Set work directory
+WORKDIR /app
+
+# Copy package.json first
+COPY package.json ./
+
+# Copy lockfiles if they exist
+COPY package-lock.json* yarn.lock* pnpm-lock.yaml* ./
+
+# Install dependencies with proper fallback handling
+RUN if [ -f package-lock.json ]; then \
+        echo "Using npm with package-lock.json" && \
+        npm ci --cache /tmp/npm-cache --prefer-offline; \
+    elif [ -f yarn.lock ]; then \
+        echo "Using yarn with yarn.lock" && \
+        yarn --frozen-lockfile --cache-folder /tmp/yarn-cache; \
+    elif [ -f pnpm-lock.yaml ]; then \
+        echo "Using pnpm with pnpm-lock.yaml" && \
+        yarn global add pnpm && pnpm i --store-dir /tmp/pnpm-cache; \
+    else \
+        echo "No lockfile found, running npm install" && \
+        npm install --cache /tmp/npm-cache; \
+    fi
+
+# Copy project files
+COPY . .
+
+# Create non-root user but don't chown volume-mounted directories
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Switch to non-root user
+USER nextjs
+
+# Expose port
+EXPOSE 3000
+
+# Start the application
+CMD ["npm", "run", "dev"] 

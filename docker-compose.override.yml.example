@@ -1,0 +1,43 @@
+# Copy this file to docker-compose.override.yml for custom local development settings
+# This file is ignored by git to allow developer-specific configurations
+
+services:
+  backend:
+    environment:
+      # Override environment variables for local development
+      - DEBUG=true
+      - LOG_LEVEL=debug
+    ports:
+      # Expose additional ports if needed
+      - "8001:8001"  # For debugging/profiling
+    volumes:
+      # Add additional volume mounts if needed
+      - ./logs:/app/logs
+
+  frontend:
+    environment:
+      # Frontend development overrides
+      - NEXT_PUBLIC_DEBUG=true
+    # ports:
+    #   - "3001:3000"  # Alternative port if 3000 is busy
+
+  # Add development tools
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"  # SMTP server
+      - "8025:8025"  # Web UI
+    networks:
+      - rag-network
+
+  # Redis admin interface
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - rag-network 

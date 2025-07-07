@@ -1,0 +1,49 @@
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV ENVIRONMENT=development
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_DEFAULT_TIMEOUT=100
+ENV PIP_RETRIES=5
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies in one layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gcc \
+    g++ \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies in one layer with timeout settings
+RUN pip install --no-cache-dir --timeout 100 --retries 5 -r requirements.txt && \
+    pip install --no-cache-dir --timeout 100 --retries 5 \
+    uvicorn[standard] \
+    watchfiles \
+    python-multipart
+
+# Create non-root user before copying files
+RUN adduser --disabled-password --gecos '' appuser
+
+# Copy project files
+COPY . .
+
+# Change ownership
+RUN chown -R appuser /app
+USER appuser
+
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the application
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "info"] 
