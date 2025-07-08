@@ -1,0 +1,13 @@
+{
+  "name": "rag-tobi-scripts",
+  "version": "1.0.0",
+  "description": "Utility scripts for RAG-Tobi project setup",
+  "main": "create-storage-bucket.js",
+  "scripts": {
+    "create-bucket": "node create-storage-bucket.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.3.1"
+  }
+} 

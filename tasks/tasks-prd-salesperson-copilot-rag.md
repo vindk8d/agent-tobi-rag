@@ -17,10 +17,16 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `backend/agents/` - LangGraph agent components (structure initialized)
 - `backend/rag/` - RAG system components
 - `backend/rag/embeddings.py` - OpenAI embedding generation
+- `backend/rag/document_loader.py` - Modular LangChain-based loader for PDFs, Word docs, and web content
+- `backend/rag/vector_store.py` - Supabase vector store operations for upsert, similarity, and hybrid search
+- `backend/rag/pipeline.py` - Document processing pipeline: load, chunk, embed, and store documents
+- `backend/rag/retriever.py` - Semantic retriever for similarity search with configurable threshold and source attribution
 - `backend/scrapers/` - Web scraping infrastructure (structure initialized)
+- `backend/scrapers/web_scraper.py` - Unified static (BeautifulSoup4) and dynamic (Playwright) web scraping utility
 - `backend/telegram/` - Telegram bot integration (structure initialized)
 - `backend/monitoring/` - Monitoring and observability (structure initialized)
 - `backend/tests/` - Test files for all backend components (structure initialized)
+- `backend/monitoring/scheduler.py` - Daily refresh scheduler for data sources with error handling
 
 ### Frontend/Dashboard
 - `frontend/app/` - Next.js 14 app router structure with TypeScript
@@ -76,36 +82,36 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
   - [x] 1.6 Initialize backend FastAPI project structure with proper dependency management
   - [x] 1.7 Initialize Next.js 14 frontend with TypeScript and Tailwind CSS configuration
 
-- [ ] 2.0 Build Core RAG System with Web Scraping and Document Processing
-  - [ ] 2.1 Implement LangChain document loaders for PDFs, Word docs, and web content using appropriate loaders
-  - [ ] 2.2 Set up text splitting strategy using RecursiveCharacterTextSplitter with optimal chunk sizes (1000-2000 tokens)
-  - [ ] 2.3 Implement OpenAI embeddings integration with proper error handling and rate limiting
-  - [ ] 2.4 Create Supabase vector store operations with proper indexing and similarity search functions
-  - [ ] 2.5 Build web scraping infrastructure using BeautifulSoup4 and Playwright for dynamic content
-    - **NOTE**: Add back Playwright dependency to requirements.txt when starting this task: `playwright==1.40.0` + run `playwright install chromium`
-  - [ ] 2.6 Implement document processing pipeline with immediate embedding upon upload/scraping
-  - [ ] 2.7 Create semantic retriever with configurable similarity thresholds and source attribution
-  - [ ] 2.8 Set up daily refresh scheduler for all configured data sources with error handling
+- [x] 2.0 Build Core RAG System with Web Scraping and Document Processing
+  - [x] 2.1 Implement LangChain document loaders for PDFs, Word docs, and web content using appropriate loaders
+  - [x] 2.2 Set up text splitting strategy using RecursiveCharacterTextSplitter with optimal chunk sizes (1000-2000 tokens)
+  - [x] 2.3 Implement OpenAI embeddings integration with proper error handling and rate limiting
+  - [x] 2.4 Create Supabase vector store operations with proper indexing and similarity search functions
+  - [x] 2.5 Build web scraping infrastructure using BeautifulSoup4 and Playwright for dynamic content
+  - [x] 2.6 Implement document processing pipeline with immediate embedding upon upload/scraping
+  - [x] 2.7 Create semantic retriever with configurable similarity thresholds and source attribution
+  - [x] 2.8 Set up daily refresh scheduler for all configured data sources with error handling
 
-- [ ] 3.0 Develop LangGraph Agent Architecture and Conversation Management
-  - [ ] 3.1 Design LangGraph state schema with conversation memory, user context, and retrieved documents
-  - [ ] 3.2 Implement agent graph with nodes for: retrieval, generation, conflict detection, and response formatting
-  - [ ] 3.3 Create custom tools for semantic search, source attribution, and conflict logging
-  - [ ] 3.4 Set up persistent conversation memory using LangGraph's built-in persistence with Supabase backend
-  - [ ] 3.5 Implement proactive suggestion logic based on conversation context and available documents
-  - [ ] 3.6 Add conflict detection logic that logs to console and responds appropriately to users
-  - [ ] 3.7 Configure LangChain Expression Language (LCEL) chains for optimized performance
-  - [ ] 3.8 Implement graceful fallback responses when no relevant information is found
+- [ ] 3.0 Create Web Management Dashboard with Next.js
+  - [ ] 3.1 Create frontend interface to list sites, upload PDFs and documents, and trigger processing (for testing RAG pipeline)
+  - [ ] 3.2 Set up Next.js 14 app router structure with TypeScript and proper folder organization
+  - [ ] 3.3 Create Supabase client configuration for frontend with proper environment variables
+  - [ ] 3.4 Build data source management interface for adding/removing websites and viewing status
+  - [ ] 3.5 Implement drag-and-drop document upload with progress indicators and validation
+  - [ ] 3.6 Create status dashboard showing embedding quality metrics and indexing statistics
+  - [ ] 3.7 Build alert system for displaying website accessibility issues and scraping failures
+  - [ ] 3.8 Design responsive UI using Tailwind CSS with professional blue/white theme
+  - [ ] 3.9 Implement real-time updates for document processing status using Supabase realtime subscriptions
 
-- [ ] 4.0 Create Web Management Dashboard with Next.js
-  - [ ] 4.1 Set up Next.js 14 app router structure with TypeScript and proper folder organization
-  - [ ] 4.2 Create Supabase client configuration for frontend with proper environment variables
-  - [ ] 4.3 Build data source management interface for adding/removing websites and viewing status
-  - [ ] 4.4 Implement drag-and-drop document upload with progress indicators and validation
-  - [ ] 4.5 Create status dashboard showing embedding quality metrics and indexing statistics
-  - [ ] 4.6 Build alert system for displaying website accessibility issues and scraping failures
-  - [ ] 4.7 Design responsive UI using Tailwind CSS with professional blue/white theme
-  - [ ] 4.8 Implement real-time updates for document processing status using Supabase realtime subscriptions
+- [ ] 4.0 Develop LangGraph Agent Architecture and Conversation Management
+  - [ ] 4.1 Design LangGraph state schema with conversation memory, user context, and retrieved documents
+  - [ ] 4.2 Implement agent graph with nodes for: retrieval, generation, conflict detection, and response formatting
+  - [ ] 4.3 Create custom tools for semantic search, source attribution, and conflict logging
+  - [ ] 4.4 Set up persistent conversation memory using LangGraph's built-in persistence with Supabase backend
+  - [ ] 4.5 Implement proactive suggestion logic based on conversation context and available documents
+  - [ ] 4.6 Add conflict detection logic that logs to console and responds appropriately to users
+  - [ ] 4.7 Configure LangChain Expression Language (LCEL) chains for optimized performance
+  - [ ] 4.8 Implement graceful fallback responses when no relevant information is found
 
 - [ ] 5.0 Implement Monitoring, Testing, and Deployment Infrastructure
   - [ ] 5.1 Integrate LangSmith tracing throughout the agent pipeline for comprehensive monitoring

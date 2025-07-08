@@ -3,7 +3,7 @@ RAG (Retrieval-Augmented Generation) system components
 """
 
 # Import existing embeddings module
-from .embeddings import OpenAIEmbeddings, get_embedding_client
+from .embeddings import OpenAIEmbeddings
 
 # Future imports will be added when implementing other RAG components
 # from .document_loader import DocumentLoader

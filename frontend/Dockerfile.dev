@@ -31,12 +31,8 @@ RUN if [ -f package-lock.json ]; then \
 # Copy project files
 COPY . .
 
-# Create non-root user but don't chown volume-mounted directories
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
-
-# Switch to non-root user
-USER nextjs
+# Note: Running as root in development mode to avoid permission issues with volume mounts
+# In production, you should use a non-root user for security
 
 # Expose port
 EXPOSE 3000

@@ -5,14 +5,15 @@ Loads environment variables and provides configuration classes.
 
 import os
 from typing import List, Optional
-from pydantic import BaseSettings, Field
+from pydantic_settings import BaseSettings
+from pydantic import Field
 from functools import lru_cache
 
 
 class OpenAIConfig(BaseSettings):
     """OpenAI API configuration"""
     api_key: str = Field(..., env="OPENAI_API_KEY")
-    embedding_model: str = Field(default="text-embedding-3-large", env="OPENAI_EMBEDDING_MODEL")
+    embedding_model: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     chat_model: str = Field(default="gpt-4o-mini", env="OPENAI_CHAT_MODEL")
     max_tokens: int = Field(default=4000, env="OPENAI_MAX_TOKENS")
     temperature: float = Field(default=0.3, env="OPENAI_TEMPERATURE")
@@ -118,23 +119,88 @@ class SystemConfig(BaseSettings):
 
 
 class Settings(BaseSettings):
-    """Main settings class that combines all configurations"""
+    """Main settings class that loads all configurations directly"""
     
-    # Individual config sections
-    openai: OpenAIConfig = OpenAIConfig()
-    supabase: SupabaseConfig = SupabaseConfig()
-    langsmith: LangSmithConfig = LangSmithConfig()
-    rag: RAGConfig = RAGConfig()
-    scraping: ScrapingConfig = ScrapingConfig()
-    telegram: TelegramConfig = TelegramConfig()
-    redis: RedisConfig = RedisConfig()
-    fastapi: FastAPIConfig = FastAPIConfig()
-    nextjs: NextJSConfig = NextJSConfig()
-    system: SystemConfig = SystemConfig()
+    # OpenAI Configuration
+    openai_api_key: str = Field(..., env="OPENAI_API_KEY")
+    openai_embedding_model: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
+    openai_chat_model: str = Field(default="gpt-4o-mini", env="OPENAI_CHAT_MODEL")
+    openai_max_tokens: int = Field(default=4000, env="OPENAI_MAX_TOKENS")
+    openai_temperature: float = Field(default=0.3, env="OPENAI_TEMPERATURE")
+    
+    # Supabase Configuration
+    supabase_url: str = Field(..., env="SUPABASE_URL")
+    supabase_anon_key: str = Field(..., env="SUPABASE_ANON_KEY")
+    supabase_service_key: str = Field(..., env="SUPABASE_SERVICE_KEY")
+    
+    # LangSmith Configuration
+    langsmith_tracing_enabled: bool = Field(default=True, env="LANGCHAIN_TRACING_V2")
+    langsmith_endpoint: str = Field(default="https://api.smith.langchain.com", env="LANGCHAIN_ENDPOINT")
+    langsmith_api_key: Optional[str] = Field(default=None, env="LANGCHAIN_API_KEY")
+    langsmith_project: str = Field(default="salesperson-copilot-rag", env="LANGCHAIN_PROJECT")
+    
+    # RAG Configuration
+    rag_chunk_size: int = Field(default=1000, env="RAG_CHUNK_SIZE")
+    rag_chunk_overlap: int = Field(default=200, env="RAG_CHUNK_OVERLAP")
+    rag_similarity_threshold: float = Field(default=0.8, env="RAG_SIMILARITY_THRESHOLD")
+    rag_max_retrieved_documents: int = Field(default=10, env="RAG_MAX_RETRIEVED_DOCUMENTS")
+    rag_embedding_batch_size: int = Field(default=100, env="RAG_EMBEDDING_BATCH_SIZE")
+    
+    # FastAPI Configuration
+    fastapi_host: str = Field(default="0.0.0.0", env="FASTAPI_HOST")
+    fastapi_port: int = Field(default=8000, env="FASTAPI_PORT")
+    fastapi_debug: bool = Field(default=False, env="FASTAPI_DEBUG")
+    
+    # System Configuration
+    environment: str = Field(default="development", env="ENVIRONMENT")
+    log_level: str = Field(default="INFO", env="LOG_LEVEL")
+    
+    # Convenience properties to maintain compatibility
+    @property
+    def openai(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            api_key=self.openai_api_key,
+            embedding_model=self.openai_embedding_model,
+            chat_model=self.openai_chat_model,
+            max_tokens=self.openai_max_tokens,
+            temperature=self.openai_temperature
+        )
+    
+    @property 
+    def supabase(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            url=self.supabase_url,
+            anon_key=self.supabase_anon_key,
+            service_key=self.supabase_service_key
+        )
+    
+    @property
+    def rag(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            chunk_size=self.rag_chunk_size,
+            chunk_overlap=self.rag_chunk_overlap,
+            similarity_threshold=self.rag_similarity_threshold,
+            max_retrieved_documents=self.rag_max_retrieved_documents,
+            embedding_batch_size=self.rag_embedding_batch_size
+        )
+    
+    @property
+    def langsmith(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            tracing_enabled=self.langsmith_tracing_enabled,
+            endpoint=self.langsmith_endpoint,
+            api_key=self.langsmith_api_key,
+            project=self.langsmith_project
+        )
     
     class Config:
-        env_file = ".env"
+        env_file = "../.env"  # Look for .env file in parent directory
         case_sensitive = False
+        extra = "allow"  # Allow extra environment variables
 
 
 @lru_cache()

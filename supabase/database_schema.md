@@ -6,18 +6,23 @@ The RAG-Tobi salesperson copilot system uses a Supabase PostgreSQL database with
 
 ## Migration Files Structure
 
-### 001_initial_schema.sql
-- Basic project setup and core tables
-- User management and data source configuration
-
-### 002_vector_extensions.sql
-- pgvector extension setup
-- Vector similarity search capabilities
-
-### 003_rag_tables.sql
-- Complete RAG functionality tables
+### 20250707195741_add_document_type_column.sql
+- Complete RAG database schema setup
+- All core tables with proper relationships
+- Vector search capabilities with pgvector
 - Analytics and intelligence features
 - Security policies (RLS)
+
+### 20250708030625_add_document_metadata_columns.sql
+- Added structured columns to documents table
+- Migrated metadata to proper typed columns
+- Performance optimization with indexes
+- Backward compatibility maintained
+
+### 20250708031942_add_document_type_column_fix.sql
+- Added missing document_type column with enum
+- Graceful handling of existing data
+- Index optimization for document type queries
 
 ## Database Tables
 
@@ -42,15 +47,22 @@ The RAG-Tobi salesperson copilot system uses a Supabase PostgreSQL database with
 **Purpose**: Stores processed document chunks ready for embedding
 ```sql
 - id: UUID (Primary Key)
-- source_id: UUID - Foreign key to data_sources
+- data_source_id: UUID - Foreign key to data_sources
 - title: TEXT - Document title
 - content: TEXT - Document content/chunk
-- metadata: JSONB - Additional metadata
-- chunk_index: INTEGER - Order within source
-- token_count: INTEGER - Number of tokens
-- hash: TEXT - Content hash for deduplication
+- document_type: ENUM - Document type (pdf, word, text, html, markdown, web_page)
+- chunk_index: INTEGER - Order within source (default: 0)
+- status: ENUM - Processing status (pending, processing, completed, failed)
+- word_count: INTEGER - Number of words in content
+- character_count: INTEGER - Number of characters in content
+- processed_at: TIMESTAMP - When document processing completed
+- storage_path: TEXT - File system path or storage identifier
+- embedding_count: INTEGER - Number of embeddings generated (default: 0)
+- original_filename: TEXT - Original filename as uploaded by user
+- file_size: BIGINT - File size in bytes
 - created_at: TIMESTAMP
 - updated_at: TIMESTAMP
+- metadata: JSONB - Additional metadata (legacy, prefer specific columns)
 ```
 
 ### 2. Vector Search Tables
@@ -60,9 +72,10 @@ The RAG-Tobi salesperson copilot system uses a Supabase PostgreSQL database with
 ```sql
 - id: UUID (Primary Key)
 - document_id: UUID - Foreign key to documents
-- embedding: VECTOR(1536) - OpenAI text-embedding-3-large vector
-- model: VARCHAR(100) - Embedding model used
+- embedding: VECTOR(1536) - OpenAI text-embedding-3-small vector
+- model_name: VARCHAR(100) - Embedding model used (default: text-embedding-3-small)
 - created_at: TIMESTAMP
+- metadata: JSONB - Additional embedding metadata
 ```
 
 ### 3. Conversation Management Tables
@@ -220,8 +233,8 @@ The RAG-Tobi salesperson copilot system uses a Supabase PostgreSQL database with
 ## Vector Configuration
 
 ### OpenAI Integration
-- **Model**: text-embedding-3-large
-- **Dimensions**: 1536 (optimized for compatibility)
+- **Model**: text-embedding-3-small
+- **Dimensions**: 1536 (optimized for database compatibility)
 - **Similarity**: Cosine similarity for search
 - **Batch Processing**: Efficient bulk embedding operations
 
@@ -276,7 +289,7 @@ SUPABASE_SERVICE_KEY=your_service_key
 
 # Vector Search Configuration
 OPENAI_API_KEY=your_openai_key
-EMBEDDING_MODEL=text-embedding-3-large
+EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMENSIONS=1536
 SIMILARITY_THRESHOLD=0.7
 

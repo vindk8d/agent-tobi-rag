@@ -11,7 +11,7 @@ import openai
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import tiktoken
 
-from backend.config import get_settings
+from config import get_settings
 
 
 @dataclass
@@ -32,7 +32,14 @@ class OpenAIEmbeddings:
     
     def __init__(self):
         self.settings = get_settings()
-        self.client = openai.OpenAI(api_key=self.settings.openai.api_key)
+        
+        # Initialize OpenAI client with proper configuration
+        self.client = openai.OpenAI(
+            api_key=self.settings.openai.api_key,
+            timeout=60.0,
+            max_retries=3
+        )
+        
         self.model = self.settings.openai.embedding_model
         self.batch_size = self.settings.rag.embedding_batch_size
         
@@ -212,7 +219,7 @@ class EmbeddingValidator:
     """Utility class for validating embeddings"""
     
     @staticmethod
-    def validate_embedding_dimensions(embedding: List[float], expected_dim: int = 3072) -> bool:
+    def validate_embedding_dimensions(embedding: List[float], expected_dim: int = 1536) -> bool:
         """Validate embedding has correct dimensions"""
         return len(embedding) == expected_dim
     
