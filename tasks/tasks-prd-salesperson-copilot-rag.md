@@ -58,7 +58,7 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `package.json` - Node.js dependencies
 - `env-template.txt` - Environment variable template with backend and Next.js frontend configurations
 - `backend/config.py` - Configuration management with validation functions for all services including Next.js
-- `backend/rag/embeddings.py` - OpenAI text-embedding-3-large integration with rate limiting and error handling
+- `backend/rag/embeddings.py` - OpenAI text embedding integration with rate limiting and error handling
 - `frontend/.env.local.example` - Next.js specific environment template with NEXT_PUBLIC_ variables
 - `pytest.ini` - Python testing configuration
 
@@ -75,7 +75,7 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 
 - [x] 1.0 Setup Technical Infrastructure and Environment
   - [x] 1.1 Initialize Supabase project with vector extensions (pgvector) and create database schema
-  - [x] 1.2 Configure OpenAI API keys and set up embedding model (text-embedding-3-large)
+  - [x] 1.2 Configure OpenAI API keys and set up embedding model (text-embedding-3-small)
   - [x] 1.3 Set up LangSmith account and configure tracing API keys for monitoring
   - [x] 1.4 Create environment configuration files (.env.example, config.py) with all required variables
   - [x] 1.5 Set up local development environment with Docker Compose for services orchestration

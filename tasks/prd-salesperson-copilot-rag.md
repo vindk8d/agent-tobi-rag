@@ -106,7 +106,7 @@ The copilot operates through a Telegram bot interface for salespeople and includ
 - **Backend:** Python-based microservices using FastAPI
 - **Agent Framework:** LangChain for RAG pipeline, LangGraph for conversation management
 - **Database:** Supabase (PostgreSQL) with vector extensions for embeddings
-- **LLM Provider:** OpenAI GPT-4 for generation, text-embedding-3-large for embeddings
+- **LLM Provider:** OpenAI GPT-4 for generation, text-embedding-3-small for embeddings
 - **Monitoring:** LangSmith for agent tracing and performance monitoring
 - **Message Queue:** Redis for handling concurrent Telegram bot requests
 - **Web Scraping:** BeautifulSoup4 with Playwright for dynamic content

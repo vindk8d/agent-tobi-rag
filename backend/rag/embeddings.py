@@ -1,6 +1,6 @@
 """
 OpenAI Embeddings module for the Salesperson Copilot RAG system.
-Handles text-embedding-3-large model integration with rate limiting and error handling.
+Handles OpenAI text embedding models with rate limiting and error handling.
 """
 
 import asyncio
@@ -26,7 +26,7 @@ class EmbeddingResult:
 
 class OpenAIEmbeddings:
     """
-    OpenAI Embeddings service configured for text-embedding-3-large.
+    OpenAI Embeddings service for text embedding models.
     Handles rate limiting, error handling, and batch processing.
     """
     
@@ -92,7 +92,7 @@ class OpenAIEmbeddings:
         # Count tokens
         token_count = self.count_tokens(text)
         
-        # Check token limit (text-embedding-3-large has 8191 token limit)
+        # Check token limit (OpenAI embedding models have 8191 token limit)
         if token_count > 8191:
             raise ValueError(f"Text too long: {token_count} tokens (max 8191)")
         
@@ -201,10 +201,17 @@ class OpenAIEmbeddings:
     
     def get_embedding_stats(self) -> Dict[str, Any]:
         """Get embedding model statistics and configuration"""
+        # Model-specific dimensions
+        model_dimensions = {
+            "text-embedding-3-large": 3072,
+            "text-embedding-3-small": 1536,
+            "text-embedding-ada-002": 1536
+        }
+        
         return {
             "model": self.model,
             "max_tokens": 8191,
-            "embedding_dimensions": 3072 if "3-large" in self.model else 1536,
+            "embedding_dimensions": model_dimensions.get(self.model, 1536),
             "batch_size": self.batch_size,
             "supported_features": [
                 "batch_processing",
@@ -219,7 +226,7 @@ class EmbeddingValidator:
     """Utility class for validating embeddings"""
     
     @staticmethod
-    def validate_embedding_dimensions(embedding: List[float], expected_dim: int = 1536) -> bool:
+    def validate_embedding_dimensions(embedding: List[float], expected_dim: int) -> bool:
         """Validate embedding has correct dimensions"""
         return len(embedding) == expected_dim
     

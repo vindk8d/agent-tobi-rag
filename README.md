@@ -28,7 +28,7 @@ The Salesperson Copilot Agent is an AI-powered assistant designed to help salesp
 - **Frontend:** Next.js 14+, TypeScript, Tailwind CSS
 - **Backend:** FastAPI microservices, LangChain, LangGraph
 - **Database:** Supabase (PostgreSQL + vector extensions)
-- **LLM:** OpenAI GPT-4, text-embedding-3-large
+- **LLM:** OpenAI GPT-4, text-embedding-3-small
 - **Monitoring:** LangSmith
 - **Queue:** Redis (for Telegram concurrency)
 - **Scraping:** BeautifulSoup4, Playwright

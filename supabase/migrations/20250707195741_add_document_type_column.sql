@@ -108,8 +108,8 @@ CREATE TABLE IF NOT EXISTS conflict_logs (
 CREATE TABLE IF NOT EXISTS embeddings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
-    embedding vector(1536), -- OpenAI text-embedding-3-large dimension
-    model_name VARCHAR(100) DEFAULT 'text-embedding-3-large',
+    embedding vector(1536), -- OpenAI text-embedding-3-small dimension
+    model_name VARCHAR(100) DEFAULT 'text-embedding-3-small',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     metadata JSONB DEFAULT '{}'::jsonb
 );
