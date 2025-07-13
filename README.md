@@ -9,13 +9,15 @@ The Salesperson Copilot Agent is an AI-powered assistant designed to help salesp
 
 ## Key Features
 - Unified conversational interface for salespeople (Telegram)
-- Web dashboard for admins to manage data sources and documents
-- Scrapes and indexes websites and documents (PDF, Word, etc.)
+- Web dashboard for admins to manage document uploads
+- Document processing and indexing (PDF, Word, etc.)
 - Real-time, semantic search using OpenAI embeddings
 - Daily automated data refresh
 - Conversation history and proactive suggestions
 - Source attribution and conflict detection
 - Monitoring and logging (LangSmith, Supabase)
+
+**Note:** Website scraping functionality has been deprioritized due to the complexity of gathering relevant data from websites, HTML/JS parsing challenges, and the need for complex scraping methodologies. The system focuses on document upload as the primary data source.
 
 ## Goals
 - Reduce information retrieval time for salespeople
@@ -31,10 +33,10 @@ The Salesperson Copilot Agent is an AI-powered assistant designed to help salesp
 - **LLM:** OpenAI GPT-4, text-embedding-3-small
 - **Monitoring:** LangSmith
 - **Queue:** Redis (for Telegram concurrency)
-- **Scraping:** BeautifulSoup4, Playwright
+- **Document Processing:** Python libraries for PDF, Word, and other formats
 
 ## Functional Highlights
-- Website and document ingestion (admin dashboard)
+- Document upload and ingestion (admin dashboard)
 - Embedding and indexing of all content
 - Semantic search for user queries
 - Telegram bot with fast, context-aware responses

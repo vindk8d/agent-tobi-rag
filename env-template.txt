@@ -24,8 +24,8 @@ SUPABASE_SERVICE_KEY=your_supabase_service_role_key
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
-# Spider Crawler Configuration
-SPIDER_API_KEY=your_spider_api_key_here
+# Spider Crawler Configuration - DEPRIORITIZED
+# SPIDER_API_KEY=your_spider_api_key_here
 
 # ======================================================================
 # OPTIONAL CONFIGURATIONS (Can be left as defaults)
@@ -44,11 +44,11 @@ RAG_SIMILARITY_THRESHOLD=0.8
 RAG_MAX_RETRIEVED_DOCUMENTS=10
 RAG_EMBEDDING_BATCH_SIZE=100
 
-# Web Scraping Configuration
-SCRAPING_DELAY_SECONDS=1
-SCRAPING_TIMEOUT_SECONDS=30
-SCRAPING_MAX_RETRIES=3
-SCRAPING_USER_AGENT=SalespersonCopilot/1.0
+# Web Scraping Configuration - DEPRIORITIZED
+# SCRAPING_DELAY_SECONDS=1
+# SCRAPING_TIMEOUT_SECONDS=30
+# SCRAPING_MAX_RETRIES=3
+# SCRAPING_USER_AGENT=SalespersonCopilot/1.0
 
 # System Configuration
 ENVIRONMENT=development

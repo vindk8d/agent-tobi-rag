@@ -33,23 +33,31 @@ The RAG-Tobi salesperson copilot system uses a Supabase PostgreSQL database with
 ```sql
 - id: UUID (Primary Key)
 - name: VARCHAR(255) - Human-readable name
-- type: VARCHAR(50) - Type of source (website, document, api, etc.)
+- source_type: ENUM - Type of source (website, document)
 - url: TEXT - Source URL or identifier
-- status: VARCHAR(20) - active, inactive, error
-- last_crawled: TIMESTAMP - Last successful crawl
-- crawl_frequency: INTERVAL - How often to refresh
-- settings: JSONB - Source-specific configuration
+- file_path: TEXT - File path for uploaded documents
+- status: ENUM - active, inactive, error, processing, failed
+- document_type: ENUM - Document type (pdf, word, text, html, markdown, web_page)
+- chunk_count: INTEGER - Number of chunks generated from this source
+- scraping_frequency: ENUM - How often to scrape (daily, weekly, monthly, manual)
+- last_scraped_at: TIMESTAMP - Last successful scraping
+- last_success: TIMESTAMP - Last successful processing
+- error_count: INTEGER - Number of errors encountered
+- last_error: TEXT - Last error message
+- description: TEXT - Optional description
+- configuration: JSONB - Source-specific configuration
 - created_at: TIMESTAMP
 - updated_at: TIMESTAMP
+- metadata: JSONB - Additional metadata
 ```
 
-#### `documents`
+#### `document_chunks`
 **Purpose**: Stores processed document chunks ready for embedding
 ```sql
 - id: UUID (Primary Key)
 - data_source_id: UUID - Foreign key to data_sources
-- title: TEXT - Document title
-- content: TEXT - Document content/chunk
+- title: TEXT - Document chunk title
+- content: TEXT - Document chunk content
 - document_type: ENUM - Document type (pdf, word, text, html, markdown, web_page)
 - chunk_index: INTEGER - Order within source (default: 0)
 - status: ENUM - Processing status (pending, processing, completed, failed)
@@ -57,7 +65,6 @@ The RAG-Tobi salesperson copilot system uses a Supabase PostgreSQL database with
 - character_count: INTEGER - Number of characters in content
 - processed_at: TIMESTAMP - When document processing completed
 - storage_path: TEXT - File system path or storage identifier
-- embedding_count: INTEGER - Number of embeddings generated (default: 0)
 - original_filename: TEXT - Original filename as uploaded by user
 - file_size: BIGINT - File size in bytes
 - created_at: TIMESTAMP
@@ -71,7 +78,7 @@ The RAG-Tobi salesperson copilot system uses a Supabase PostgreSQL database with
 **Purpose**: Stores vector embeddings for similarity search
 ```sql
 - id: UUID (Primary Key)
-- document_id: UUID - Foreign key to documents
+- document_chunk_id: UUID - Foreign key to document_chunks
 - embedding: VECTOR(1536) - OpenAI text-embedding-3-small vector
 - model_name: VARCHAR(100) - Embedding model used (default: text-embedding-3-small)
 - created_at: TIMESTAMP

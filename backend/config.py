@@ -55,17 +55,6 @@ class RAGConfig(BaseSettings):
         env_prefix = "RAG_"
 
 
-class ScrapingConfig(BaseSettings):
-    """Web scraping configuration"""
-    delay_seconds: float = Field(default=1.0, env="SCRAPING_DELAY_SECONDS")
-    timeout_seconds: int = Field(default=30, env="SCRAPING_TIMEOUT_SECONDS")
-    max_retries: int = Field(default=3, env="SCRAPING_MAX_RETRIES")
-    user_agent: str = Field(default="SalespersonCopilot/1.0", env="SCRAPING_USER_AGENT")
-    
-    class Config:
-        env_prefix = "SCRAPING_"
-
-
 class TelegramConfig(BaseSettings):
     """Telegram bot configuration"""
     bot_token: Optional[str] = Field(default=None, env="TELEGRAM_BOT_TOKEN")
@@ -310,4 +299,19 @@ def validate_all_configs() -> bool:
 
 if __name__ == "__main__":
     # Run validation when script is executed directly
-    validate_all_configs() 
+    validate_all_configs()
+
+# ============================================================================
+# DEPRIORITIZED CODE - Website scraping functionality has been deprioritized
+# ============================================================================
+
+# DEPRIORITIZED: Website scraping functionality has been deprioritized
+# class ScrapingConfig(BaseSettings):
+#     """Web scraping configuration"""
+#     delay_seconds: float = Field(default=1.0, env="SCRAPING_DELAY_SECONDS")
+#     timeout_seconds: int = Field(default=30, env="SCRAPING_TIMEOUT_SECONDS")
+#     max_retries: int = Field(default=3, env="SCRAPING_MAX_RETRIES")
+#     user_agent: str = Field(default="SalespersonCopilot/1.0", env="SCRAPING_USER_AGENT")
+    
+#     class Config:
+#         env_prefix = "SCRAPING_" 

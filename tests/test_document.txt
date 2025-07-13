@@ -1,0 +1,25 @@
+Test Document for RAG System
+
+This is a test document to verify the document upload and processing pipeline works correctly with the new database schema.
+
+Key Features to Test:
+- Document chunking into smaller pieces
+- Embedding generation for each chunk
+- Storage in the document_chunks table
+- Proper relationship with data_sources table
+
+Sample Content:
+The quick brown fox jumps over the lazy dog. This is a classic pangram that contains every letter of the English alphabet at least once. 
+
+Testing Sections:
+1. Introduction: This document tests the RAG system
+2. Content: Various text sections for chunking
+3. Conclusion: Verification of successful processing
+
+Additional Information:
+- File type: Plain text (.txt)
+- Expected chunks: 2-3 depending on chunk size
+- Expected embeddings: One per chunk
+- Processing status: Should move from pending -> processing -> active
+
+End of test document. 

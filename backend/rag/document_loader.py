@@ -3,7 +3,7 @@ Document loader utilities for PDFs, Word docs, and web content using LangChain a
 """
 
 from typing import List, Dict, Any, Optional
-from langchain_community.document_loaders import PyPDFLoader, UnstructuredWordDocumentLoader, WebBaseLoader
+from langchain_community.document_loaders import PyPDFLoader, UnstructuredWordDocumentLoader
 from langchain_core.documents import Document
 import requests
 from bs4 import BeautifulSoup
@@ -31,13 +31,6 @@ class DocumentLoader:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Word file not found: {file_path}")
         loader = UnstructuredWordDocumentLoader(file_path)
-        return loader.load()
-
-    @staticmethod
-    def load_web(url: str) -> List[Document]:
-        """Load web content from a URL and return a list of Document objects (single chunk)."""
-        # Use LangChain's WebBaseLoader for robust web page loading
-        loader = WebBaseLoader(url)
         return loader.load()
 
     @staticmethod
@@ -94,4 +87,18 @@ def split_documents(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap
     )
-    return splitter.split_documents(documents) 
+    return splitter.split_documents(documents)
+
+# ============================================================================
+# DEPRIORITIZED CODE - Website scraping functionality has been deprioritized
+# ============================================================================
+
+# DEPRIORITIZED: Website scraping functionality has been deprioritized
+# from langchain_community.document_loaders import WebBaseLoader
+
+# @staticmethod
+# def load_web(url: str) -> List[Document]:
+#     """Load web content from a URL and return a list of Document objects (single chunk)."""
+#     # Use LangChain's WebBaseLoader for robust web page loading
+#     loader = WebBaseLoader(url)
+#     return loader.load() 

@@ -91,41 +91,43 @@ async def process_uploaded_document(
         
         document_type = document_type_mapping.get(file_ext, DocumentType.TEXT)
         
-        # Create document record in database
-        document_id = str(uuid4())
+
         
-        # Insert document record with PENDING status using proper columns
-        document_data = {
-            'id': document_id,
-            'title': request.file_name,
-            'content': '',  # Empty content since file is stored in Supabase Storage
+        # Create data source record first
+        data_source_data = {
+            'name': request.file_name,
+            'description': f"Uploaded file: {request.file_name}",
+            'source_type': 'document',
+            'file_path': request.file_path,
+            'status': 'active',
             'document_type': document_type.value,
-            'status': DocumentStatus.PENDING.value,
-            'storage_path': request.file_path,
-            'original_filename': request.file_name,
-            'file_size': request.file_size,
+            'chunk_count': 0,
             'metadata': {
                 'storage_bucket': 'documents',
-                'upload_path': request.file_path  # Keep for legacy compatibility
+                'upload_path': request.file_path,
+                'original_filename': request.file_name,
+                'file_size': request.file_size
             }
         }
         
-        # Insert into database
-        result = db_client.client.table('documents').insert(document_data).execute()
+        # Insert data source into database
+        result = db_client.client.table('data_sources').insert(data_source_data).execute()
         
         if result.data:
+            data_source_id = result.data[0]['id']
+            
             # Start background processing
-            background_tasks.add_task(process_document_background, document_id, request.file_path, document_type.value, request.file_name)
+            background_tasks.add_task(process_document_background, data_source_id, request.file_path, document_type.value, request.file_name)
             
             return APIResponse.success_response(
                 data={
-                    "document_id": document_id,
+                    "data_source_id": data_source_id,
                     "status": DocumentStatus.PROCESSING.value,
                     "message": "Document processing started"
                 }
             )
         else:
-            raise HTTPException(status_code=500, detail="Failed to create document record")
+            raise HTTPException(status_code=500, detail="Failed to create data source record")
             
     except Exception as e:
         logger.error(f"Error processing uploaded document: {e}")
@@ -167,29 +169,24 @@ async def get_or_create_uploads_data_source() -> str:
         logger.error(f"Error getting/creating uploads data source: {e}")
         return ""
 
-async def process_document_background(document_id: str, storage_path: str, file_type: str, file_name: str):
+async def process_document_background(data_source_id: str, storage_path: str, file_type: str, file_name: str):
     """
     Background task to process document: download, load, chunk, embed, and store.
     """
     local_file_path = None
     try:
-        # Update status to PROCESSING
-        db_client.client.table('documents').update({
-            'status': DocumentStatus.PROCESSING.value
-        }).eq('id', document_id).execute()
+        # Update status to PENDING (processing will start)
+        db_client.client.table('data_sources').update({
+            'status': 'pending'
+        }).eq('id', data_source_id).execute()
         
-        logger.info(f"Starting processing for document {document_id}")
-        
-        # Get or create the uploads data source
-        uploads_data_source_id = await get_or_create_uploads_data_source()
-        if not uploads_data_source_id:
-            raise Exception("Failed to get or create uploads data source")
+        logger.info(f"Starting processing for data source {data_source_id}")
         
         # Download file from Supabase Storage
         local_file_path = await download_from_supabase_storage(storage_path)
         
         metadata = {
-            'original_document_id': document_id,  # Keep reference to the original document record
+            'data_source_id': data_source_id,
             'original_filename': file_name,
             'storage_path': storage_path,
             'processed_at': str(asyncio.get_event_loop().time()),
@@ -197,49 +194,53 @@ async def process_document_background(document_id: str, storage_path: str, file_
         }
         
         # Process the document using the fixed pipeline
-        result = await pipeline.process_file(local_file_path, file_type, uploads_data_source_id, metadata)
+        result = await pipeline.process_file(local_file_path, file_type, data_source_id, metadata)
         
         if result['success']:
             # Update status to COMPLETED using proper columns
-            db_client.client.table('documents').update({
-                'status': DocumentStatus.COMPLETED.value,
-                'processed_at': 'now()',  # Use PostgreSQL's now() function
-                'embedding_count': result.get('chunks', 0),
+            db_client.client.table('data_sources').update({
+                'status': 'active',
+                'last_scraped_at': 'now()',
+                'chunk_count': result.get('chunks', 0),
                 'metadata': {
                     'processing_result': result,
-                    'document_id': document_id
+                    'data_source_id': data_source_id
                 }
-            }).eq('id', document_id).execute()
+            }).eq('id', data_source_id).execute()
             
-            logger.info(f"Document {document_id} processed successfully: {result['chunks']} chunks")
+            logger.info(f"Data source {data_source_id} processed successfully: {result['chunks']} chunks")
         else:
             # Update status to FAILED using proper columns
-            db_client.client.table('documents').update({
-                'status': DocumentStatus.FAILED.value,
-                'processed_at': 'now()',  # Use PostgreSQL's now() function
+            db_client.client.table('data_sources').update({
+                'status': 'failed',
+                'last_scraped_at': 'now()',
+                'last_error': result.get('error', 'Processing failed'),
+                'error_count': 1,
                 'metadata': {
                     'error': result.get('error', 'Processing failed'),
-                    'document_id': document_id
+                    'data_source_id': data_source_id
                 }
-            }).eq('id', document_id).execute()
+            }).eq('id', data_source_id).execute()
             
-            logger.error(f"Document {document_id} processing failed: {result.get('error')}")
+            logger.error(f"Data source {data_source_id} processing failed: {result.get('error')}")
             
     except Exception as e:
-        logger.error(f"Background processing failed for document {document_id}: {e}")
+        logger.error(f"Background processing failed for data source {data_source_id}: {e}")
         
         # Update status to FAILED
         try:
-            db_client.client.table('documents').update({
-                'status': DocumentStatus.FAILED.value,
-                'processed_at': 'now()',  # Use PostgreSQL's now() function
+            db_client.client.table('data_sources').update({
+                'status': 'failed',
+                'last_scraped_at': 'now()',
+                'last_error': str(e),
+                'error_count': 1,
                 'metadata': {
                     'error': str(e),
                     'failed_at': str(asyncio.get_event_loop().time())
                 }
-            }).eq('id', document_id).execute()
+            }).eq('id', data_source_id).execute()
         except Exception as db_error:
-            logger.error(f"Failed to update document status: {db_error}")
+            logger.error(f"Failed to update data source status: {db_error}")
     finally:
         # Clean up temporary file
         if local_file_path and os.path.exists(local_file_path):
@@ -250,13 +251,13 @@ async def process_document_background(document_id: str, storage_path: str, file_
                 logger.warning(f"Failed to cleanup temporary file {local_file_path}: {cleanup_error}")
 
 @router.get("/", response_model=APIResponse)
-async def list_documents(
+async def list_data_sources(
     page: int = 1,
     page_size: int = 10,
     status: Optional[str] = None
 ):
     """
-    List documents with pagination and optional status filtering.
+    List data sources with pagination and optional status filtering.
     """
     try:
         # Calculate offset
@@ -264,17 +265,17 @@ async def list_documents(
         
         # Build and execute query
         if status:
-            result = db_client.client.table('documents').select('*').eq('status', status).range(offset, offset + page_size - 1).execute()
-            count_result = db_client.client.table('documents').select('id', count='exact').eq('status', status).execute()
+            result = db_client.client.table('data_sources').select('*').eq('status', status).range(offset, offset + page_size - 1).execute()
+            count_result = db_client.client.table('data_sources').select('id', count='exact').eq('status', status).execute()
         else:
-            result = db_client.client.table('documents').select('*').range(offset, offset + page_size - 1).execute()
-            count_result = db_client.client.table('documents').select('id', count='exact').execute()
+            result = db_client.client.table('data_sources').select('*').range(offset, offset + page_size - 1).execute()
+            count_result = db_client.client.table('data_sources').select('id', count='exact').execute()
         
         total_count = count_result.count if hasattr(count_result, 'count') else len(result.data)
         
         return APIResponse.success_response(
             data={
-                "documents": result.data,
+                "data_sources": result.data,
                 "total_count": total_count,
                 "page": page,
                 "page_size": page_size
@@ -282,101 +283,115 @@ async def list_documents(
         )
         
     except Exception as e:
-        logger.error(f"Error listing documents: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+        logger.error(f"Error listing data sources: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list data sources: {str(e)}")
 
-@router.get("/{document_id}", response_model=APIResponse)
-async def get_document(document_id: str):
+@router.get("/{data_source_id}", response_model=APIResponse)
+async def get_data_source(data_source_id: str):
     """
-    Get a specific document by ID.
+    Get a specific data source by ID.
     """
     try:
-        result = db_client.client.table('documents').select('*').eq('id', document_id).execute()
+        result = db_client.client.table('data_sources').select('*').eq('id', data_source_id).execute()
         
         if result.data:
             return APIResponse.success_response(data=result.data[0])
         else:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail="Data source not found")
             
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting document {document_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get document: {str(e)}")
+        logger.error(f"Error getting data source {data_source_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get data source: {str(e)}")
 
-@router.delete("/{document_id}", response_model=APIResponse)
-async def delete_document(document_id: str):
+@router.delete("/{data_source_id}", response_model=APIResponse)
+async def delete_data_source(data_source_id: str):
     """
-    Delete a document and its embeddings.
+    Delete a data source and all its chunks and embeddings.
     """
     try:
-        # Delete embeddings first
-        db_client.client.table('embeddings').delete().eq('document_id', document_id).execute()
+        # Get all chunk IDs for this data source
+        chunks_result = db_client.client.table('document_chunks').select('id').eq('data_source_id', data_source_id).execute()
+        chunk_ids = [chunk['id'] for chunk in chunks_result.data or []]
         
-        # Delete document
-        result = db_client.client.table('documents').delete().eq('id', document_id).execute()
+        # Delete embeddings first (for all chunks in this data source)
+        if chunk_ids:
+            db_client.client.table('embeddings').delete().in_('document_chunk_id', chunk_ids).execute()
+        
+        # Delete document chunks
+        db_client.client.table('document_chunks').delete().eq('data_source_id', data_source_id).execute()
+        
+        # Delete data source
+        result = db_client.client.table('data_sources').delete().eq('id', data_source_id).execute()
         
         if result.data:
             return APIResponse.success_response(
-                data={"message": f"Document {document_id} deleted successfully"}
+                data={"message": f"Data source {data_source_id} deleted successfully"}
             )
         else:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail="Data source not found")
             
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting document {document_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+        logger.error(f"Error deleting data source {data_source_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete data source: {str(e)}")
 
-@router.post("/{document_id}/reprocess", response_model=APIResponse)
-async def reprocess_document(document_id: str, background_tasks: BackgroundTasks):
+@router.post("/{data_source_id}/reprocess", response_model=APIResponse)
+async def reprocess_data_source(data_source_id: str, background_tasks: BackgroundTasks):
     """
-    Reprocess an existing document.
+    Reprocess an existing data source.
     """
     try:
-        # Get document details
-        result = db_client.client.table('documents').select('*').eq('id', document_id).execute()
+        # Get data source details
+        result = db_client.client.table('data_sources').select('*').eq('id', data_source_id).execute()
         
         if not result.data:
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail="Data source not found")
         
-        document = result.data[0]
+        data_source = result.data[0]
         
-        # Delete existing embeddings
-        db_client.client.table('embeddings').delete().eq('document_id', document_id).execute()
+        # Get all chunk IDs for this data source
+        chunks_result = db_client.client.table('document_chunks').select('id').eq('data_source_id', data_source_id).execute()
+        chunk_ids = [chunk['id'] for chunk in chunks_result.data or []]
+        
+        # Delete existing embeddings and chunks
+        if chunk_ids:
+            db_client.client.table('embeddings').delete().in_('document_chunk_id', chunk_ids).execute()
+        db_client.client.table('document_chunks').delete().eq('data_source_id', data_source_id).execute()
         
         # Extract file info from proper columns (with metadata fallback for backward compatibility)
-        file_path = document.get('storage_path')
+        file_path = data_source.get('file_path')
         if not file_path:
-            # Fallback to metadata for legacy documents
-            metadata = document.get('metadata', {})
+            # Fallback to metadata for legacy data sources
+            metadata = data_source.get('metadata', {})
             file_path = metadata.get('storage_path', metadata.get('file_path', metadata.get('upload_path', '')))
         
-        document_type = document.get('document_type')
+        document_type = data_source.get('document_type')
         if not document_type:
-            # Fallback to metadata for legacy documents  
+            # Fallback to metadata for legacy data sources
             document_type = metadata.get('document_type', 'text')
         
         # Start reprocessing
         background_tasks.add_task(
             process_document_background, 
-            document_id, 
+            data_source_id, 
             file_path, 
             document_type,
-            document['title']
+            data_source['name']
         )
         
         return APIResponse.success_response(
             data={
-                "document_id": document_id,
+                "data_source_id": data_source_id,
                 "status": DocumentStatus.PROCESSING.value,
-                "message": "Document reprocessing started"
+                "message": "Data source reprocessing started"
             }
         )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error reprocessing document {document_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to reprocess document: {str(e)}") 
+        logger.error(f"Error reprocessing data source {data_source_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reprocess data source: {str(e)}") 
