@@ -42,6 +42,9 @@ export default function ManagePage() {
   const [refresh, setRefresh] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Add delete state
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   // Fetch data sources with chunk counts
   useEffect(() => {
     async function fetchDataSources() {
@@ -165,6 +168,38 @@ export default function ManagePage() {
     return new Date(dateString).toLocaleString();
   }
 
+  // Handle data source deletion
+  async function handleDeleteDataSource(dataSourceId: string, name: string) {
+    if (!confirm(`Are you sure you want to delete "${name}"? This will also delete all related chunks and embeddings. This action cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingId(dataSourceId);
+    setUploadStatus(null);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/data-sources/${dataSourceId}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        setUploadStatus(`Document "${name}" deleted successfully`);
+        setRefresh((r) => r + 1);
+      } else {
+        const errorData = await response.json();
+        setUploadStatus(
+          `Failed to delete document: ${errorData.detail || 'Unknown error'}`
+        );
+      }
+    } catch (error: any) {
+      setUploadStatus(
+        `Failed to delete document: ${error.message || 'Network error'}`
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <div className="max-w-6xl mx-auto py-8 px-4">
       <div className="flex justify-between items-center mb-6">
@@ -237,6 +272,9 @@ export default function ManagePage() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Created
                     </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -278,6 +316,17 @@ export default function ManagePage() {
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
                         {formatDate(ds.created_at)}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleDeleteDataSource(ds.id, ds.name)}
+                            disabled={deletingId === ds.id}
+                            className="inline-flex items-center px-3 py-1 border border-transparent text-xs leading-4 font-medium rounded text-red-700 bg-red-100 hover:bg-red-200 disabled:opacity-50"
+                          >
+                            {deletingId === ds.id ? 'Deleting...' : 'Delete'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
