@@ -93,16 +93,16 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
   - [x] 2.7 Create semantic retriever with configurable similarity thresholds and source attribution
   - [x] 2.8 Set up daily refresh scheduler for document sources with error handling
 
-- [ ] 3.0 Create Web Management Dashboard with Next.js
-  - [ ] 3.1 Create frontend interface to upload PDFs and documents and trigger processing (for testing RAG pipeline)
-  - [ ] 3.2 Set up Next.js 14 app router structure with TypeScript and proper folder organization
-  - [ ] 3.3 Create Supabase client configuration for frontend with proper environment variables
-  - ~~[ ] 3.4 Build data source management interface for adding/removing websites and viewing status~~ (DEPRIORITIZED)
-  - [ ] 3.5 Implement drag-and-drop document upload with progress indicators and validation
-  - [ ] 3.6 Create status dashboard showing embedding quality metrics and indexing statistics
-  - ~~[ ] 3.7 Build alert system for displaying website accessibility issues and scraping failures~~ (DEPRIORITIZED)
-  - [ ] 3.8 Design responsive UI using Tailwind CSS with professional blue/white theme
-  - [ ] 3.9 Implement real-time updates for document processing status using Supabase realtime subscriptions
+- [x] 3.0 Create Web Management Dashboard with Next.js
+  - [x] 3.1 Create frontend interface to upload PDFs and documents and trigger processing (for testing RAG pipeline)
+  - [x] 3.2 Set up Next.js 14 app router structure with TypeScript and proper folder organization
+  - [x] 3.3 Create Supabase client configuration for frontend with proper environment variables
+  - ~~[x] 3.4 Build data source management interface for adding/removing websites and viewing status~~ (DEPRIORITIZED)
+  - [x] 3.5 Implement drag-and-drop document upload with progress indicators and validation
+  - [x] 3.6 Create status dashboard showing embedding quality metrics and indexing statistics
+  - ~~[x] 3.7 Build alert system for displaying website accessibility issues and scraping failures~~ (DEPRIORITIZED)
+  - [x] 3.8 Design responsive UI using Tailwind CSS with professional blue/white theme
+  - [x] 3.9 Implement real-time updates for document processing status using Supabase realtime subscriptions
 
 - [ ] 4.0 Develop LangGraph Agent Architecture and Conversation Management
   - [ ] 4.1 Design LangGraph state schema with conversation memory, user context, and retrieved documents

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -25,6 +25,11 @@ interface DataSource {
   updated_at: string;
 }
 
+interface FileValidation {
+  isValid: boolean;
+  error?: string;
+}
+
 // Simple browser-safe UUID generator
 function uuidv4() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -33,13 +38,57 @@ function uuidv4() {
   });
 }
 
+// File validation
+function validateFile(file: File): FileValidation {
+  const maxSize = 50 * 1024 * 1024; // 50MB
+  const allowedTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain',
+    'text/markdown',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  ];
+  
+  const allowedExtensions = ['.pdf', '.doc', '.docx', '.txt', '.md', '.xls', '.xlsx'];
+  
+  if (file.size > maxSize) {
+    return {
+      isValid: false,
+      error: 'File size must be less than 50MB'
+    };
+  }
+  
+  const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+  if (!allowedExtensions.includes(fileExtension)) {
+    return {
+      isValid: false,
+      error: 'File type not supported. Please upload PDF, Word, Excel, or text files.'
+    };
+  }
+  
+  if (!allowedTypes.includes(file.type) && file.type !== '') {
+    return {
+      isValid: false,
+      error: 'File type not supported. Please upload PDF, Word, Excel, or text files.'
+    };
+  }
+  
+  return { isValid: true };
+}
+
 export default function ManagePage() {
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [dataSourcesLoading, setDataSourcesLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [refresh, setRefresh] = useState(0);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [processingDataSourceId, setProcessingDataSourceId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Add delete state
@@ -78,6 +127,39 @@ export default function ManagePage() {
         { event: '*', schema: 'public', table: 'data_sources' }, 
         (payload) => {
           console.log('Data source changed:', payload);
+          
+          // Check if this is the document we're currently processing
+          if (processingDataSourceId && payload.new && typeof payload.new === 'object') {
+            const newRecord = payload.new as any;
+            
+            if (newRecord.id === processingDataSourceId) {
+              const newStatus = newRecord.status;
+              const newChunkCount = newRecord.chunk_count;
+              const documentName = newRecord.name;
+              
+              // If processing is complete (status is 'active' and has chunks)
+              if (newStatus === 'active' && newChunkCount > 0) {
+                setUploadStatus(`Processing complete! Document "${documentName}" has been successfully processed with ${newChunkCount} chunks.`);
+                setProcessingDataSourceId(null);
+                
+                // Clear the completion message after 5 seconds
+                setTimeout(() => {
+                  setUploadStatus(null);
+                }, 5000);
+              }
+              // If processing failed
+              else if (newStatus === 'failed') {
+                setUploadStatus(`Processing failed for document "${documentName}". Please try again.`);
+                setProcessingDataSourceId(null);
+                
+                // Clear the error message after 8 seconds
+                setTimeout(() => {
+                  setUploadStatus(null);
+                }, 8000);
+              }
+            }
+          }
+          
           // Refresh data sources when changes occur
           setRefresh((r) => r + 1);
         }
@@ -87,7 +169,7 @@ export default function ManagePage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [processingDataSourceId]);
 
   // Auto-refresh timer for periodic updates
   useEffect(() => {
@@ -98,17 +180,76 @@ export default function ManagePage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Handle file upload
+  // Handle file selection
+  const handleFileSelect = useCallback((selectedFile: File) => {
+    setValidationError(null);
+    setUploadStatus(null);
+    setProcessingDataSourceId(null);
+    
+    const validation = validateFile(selectedFile);
+    if (!validation.isValid) {
+      setValidationError(validation.error!);
+      setFile(null);
+      return;
+    }
+    
+    setFile(selectedFile);
+  }, []);
+
+  // Drag and drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 1) {
+      setValidationError('Please upload only one file at a time.');
+      return;
+    }
+    
+    if (files.length === 1) {
+      handleFileSelect(files[0]);
+    }
+  }, [handleFileSelect]);
+
+  // Handle file upload with progress
   async function handleUpload() {
     if (!file) return;
     setUploading(true);
     setUploadStatus(null);
+    setUploadProgress(0);
+    
     try {
       const fileExt = file.name.split(".").pop();
       const filePath = `${uuidv4()}.${fileExt}`;
+      
+      // Simulate upload progress (Supabase doesn't provide real progress callbacks)
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (prev >= 90) {
+            clearInterval(progressInterval);
+            return 90;
+          }
+          return prev + 10;
+        });
+      }, 200);
+      
       const { data, error } = await supabase.storage
         .from("documents")
         .upload(filePath, file);
+      
+      clearInterval(progressInterval);
+      setUploadProgress(100);
       
       if (error) {
         console.error("Upload error:", error);
@@ -120,6 +261,7 @@ export default function ManagePage() {
           setUploadStatus("Upload failed: " + error.message);
         }
         setUploading(false);
+        setUploadProgress(0);
         return;
       }
       
@@ -138,6 +280,12 @@ export default function ManagePage() {
 
         if (response.ok) {
           const result = await response.json();
+          
+          // Set the processing data source ID to track completion
+          if (result.data_source_id) {
+            setProcessingDataSourceId(result.data_source_id);
+          }
+          
           setUploadStatus(
             `Upload successful! Document "${file.name}" is being processed. Processing will complete in the background.`
           );
@@ -155,10 +303,12 @@ export default function ManagePage() {
       }
       
       setFile(null);
+      setUploadProgress(0);
       if (fileInputRef.current) fileInputRef.current.value = "";
       
     } catch (e: any) {
       setUploadStatus("Upload error: " + e.message);
+      setUploadProgress(0);
     }
     setUploading(false);
   }
@@ -166,6 +316,14 @@ export default function ManagePage() {
   function formatDate(dateString: string) {
     if (!dateString) return 'Never';
     return new Date(dateString).toLocaleString();
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
   // Handle data source deletion
@@ -184,6 +342,17 @@ export default function ManagePage() {
 
       if (response.ok) {
         setUploadStatus(`Document "${name}" deleted successfully`);
+        
+        // Clear processing state if the deleted document was being processed
+        if (processingDataSourceId === dataSourceId) {
+          setProcessingDataSourceId(null);
+        }
+        
+        // Clear the success message after 3 seconds
+        setTimeout(() => {
+          setUploadStatus(null);
+        }, 3000);
+        
         setRefresh((r) => r + 1);
       } else {
         const errorData = await response.json();
@@ -212,33 +381,157 @@ export default function ManagePage() {
         </button>
       </div>
 
-      {/* Document Upload Section */}
+      {/* Enhanced Document Upload Section */}
       <section className="mb-10">
         <h2 className="text-xl font-semibold mb-4">Upload Documents</h2>
         <div className="bg-white p-6 rounded-lg shadow">
-          <div className="flex items-center gap-4 mb-4">
-            <input
-              type="file"
-              accept=".pdf,.doc,.docx,.txt,.md"
-              ref={fileInputRef}
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              className="flex-1"
-            />
+          {/* Drag and Drop Area */}
+          <div
+            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+              isDragOver
+                ? 'border-blue-500 bg-blue-50'
+                : 'border-gray-300 hover:border-gray-400'
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <div className="space-y-4">
+              <div className="flex justify-center">
+                <svg
+                  className={`w-12 h-12 ${isDragOver ? 'text-blue-500' : 'text-gray-400'}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  />
+                </svg>
+              </div>
+              <div>
+                <p className="text-lg font-medium text-gray-900">
+                  Drop files here or <span className="text-blue-600">click to browse</span>
+                </p>
+                <p className="text-sm text-gray-500 mt-1">
+                  Supports PDF, Word documents, Excel files, and text files (max 50MB)
+                </p>
+              </div>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={(e) => {
+                  const selectedFile = e.target.files?.[0];
+                  if (selectedFile) {
+                    handleFileSelect(selectedFile);
+                  }
+                }}
+                accept=".pdf,.doc,.docx,.txt,.md,.xls,.xlsx"
+                className="hidden"
+                aria-label="File upload"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                Select File
+              </button>
+            </div>
+          </div>
+
+          {/* Selected File Info */}
+          {file && (
+            <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                      <span className="text-blue-600 font-semibold text-sm">📄</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{file.name}</p>
+                    <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setFile(null);
+                    setValidationError(null);
+                    setUploadStatus(null);
+                    setProcessingDataSourceId(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Upload Progress Bar */}
+          {uploading && (
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-gray-700">Uploading...</span>
+                <span className="text-sm text-gray-500">{uploadProgress}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-in-out"
+                  style={{ width: `${uploadProgress}%` }}
+                ></div>
+              </div>
+            </div>
+          )}
+
+          {/* Upload Button */}
+          <div className="mt-4">
             <button
               onClick={handleUpload}
-              disabled={uploading || !file}
-              className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              disabled={uploading || !file || !!validationError}
+              className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {uploading ? "Uploading..." : "Upload & Process"}
+              {uploading ? "Uploading..." : "Upload & Process Document"}
             </button>
           </div>
+
+          {/* Status Messages */}
+          {validationError && (
+            <div className="mt-4 p-3 rounded-lg bg-red-50 text-red-700 border border-red-200">
+              <div className="flex items-center">
+                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {validationError}
+              </div>
+            </div>
+          )}
+
           {uploadStatus && (
-            <div className={`p-3 rounded ${
+            <div className={`mt-4 p-3 rounded-lg ${
               uploadStatus.includes("failed") || uploadStatus.includes("error") 
                 ? "bg-red-50 text-red-700 border border-red-200" 
                 : "bg-green-50 text-green-700 border border-green-200"
             }`}>
-              {uploadStatus}
+              <div className="flex items-center">
+                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" 
+                    d={uploadStatus.includes("failed") || uploadStatus.includes("error") 
+                      ? "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      : "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                    } 
+                  />
+                </svg>
+                {uploadStatus}
+              </div>
             </div>
           )}
         </div>
