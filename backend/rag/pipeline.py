@@ -24,7 +24,7 @@ class DocumentProcessingPipeline:
         Store a document chunk in the document_chunks table.
         Returns the chunk document ID.
         """
-        from database import db_client
+        from ..database import db_client
         
         # Calculate content stats
         content = chunk.page_content
@@ -60,7 +60,7 @@ class DocumentProcessingPipeline:
         Get existing data source by URL or create a new one.
         Returns the data source ID.
         """
-        from database import db_client
+        from ..database import db_client
         
         try:
             # Try to find existing data source by URL
@@ -101,7 +101,7 @@ class DocumentProcessingPipeline:
             return {"success": False, "error": "No content loaded"}
         
         # 2. Split into chunks
-        chunks = split_documents(docs)
+        chunks = await split_documents(docs)
         if not chunks:
             logger.error(f"No chunks generated from {file_path}")
             return {"success": False, "error": "No chunks generated"}

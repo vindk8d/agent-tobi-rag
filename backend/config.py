@@ -5,76 +5,137 @@ Loads environment variables and provides configuration classes.
 
 import os
 from typing import List, Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from functools import lru_cache
+import asyncio
+from pathlib import Path
+
+# Manual .env file loading to completely avoid os.getcwd() calls
+try:
+    # Use pathlib to get the .env file path without triggering os.getcwd()
+    # Using absolute() instead of resolve() to avoid blocking calls
+    CURRENT_DIR = Path(__file__).absolute().parent
+    PROJECT_ROOT = CURRENT_DIR.parent
+    ENV_FILE_PATH = PROJECT_ROOT / ".env"
+    
+    # Load .env file manually line by line to avoid any dotenv os.getcwd() calls
+    if ENV_FILE_PATH.exists():
+        with open(ENV_FILE_PATH, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")  # Remove quotes
+                    if key and not key in os.environ:  # Don't override existing env vars
+                        os.environ[key] = value
+                        
+except Exception as e:
+    # If .env loading fails, continue with just os.environ
+    pass
+
+# Async settings cache to prevent repeated blocking calls
+_settings_cache = None
+_settings_lock = asyncio.Lock()
 
 
 class OpenAIConfig(BaseSettings):
     """OpenAI API configuration"""
+    model_config = SettingsConfigDict(
+        env_prefix="OPENAI_",
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
+    
     api_key: str = Field(..., env="OPENAI_API_KEY")
     embedding_model: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     chat_model: str = Field(default="gpt-4o-mini", env="OPENAI_CHAT_MODEL")
     max_tokens: int = Field(default=4000, env="OPENAI_MAX_TOKENS")
     temperature: float = Field(default=0.3, env="OPENAI_TEMPERATURE")
-    
-    class Config:
-        env_prefix = "OPENAI_"
 
 
 class SupabaseConfig(BaseSettings):
     """Supabase configuration"""
+    model_config = SettingsConfigDict(
+        env_prefix="SUPABASE_",
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
+    
     url: str = Field(..., env="SUPABASE_URL")
     anon_key: str = Field(..., env="SUPABASE_ANON_KEY")
     service_key: str = Field(..., env="SUPABASE_SERVICE_KEY")
-    
-    class Config:
-        env_prefix = "SUPABASE_"
 
 
 class LangSmithConfig(BaseSettings):
     """LangSmith tracing configuration"""
+    model_config = SettingsConfigDict(
+        env_prefix="LANGCHAIN_",
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
+    
     tracing_enabled: bool = Field(default=True, env="LANGCHAIN_TRACING_V2")
     endpoint: str = Field(default="https://api.smith.langchain.com", env="LANGCHAIN_ENDPOINT")
     api_key: Optional[str] = Field(default=None, env="LANGCHAIN_API_KEY")
     project: str = Field(default="salesperson-copilot-rag", env="LANGCHAIN_PROJECT")
-    
-    class Config:
-        env_prefix = "LANGCHAIN_"
 
 
 class RAGConfig(BaseSettings):
     """RAG system configuration"""
+    model_config = SettingsConfigDict(
+        env_prefix="RAG_",
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
+    
     chunk_size: int = Field(default=1000, env="RAG_CHUNK_SIZE")
     chunk_overlap: int = Field(default=200, env="RAG_CHUNK_OVERLAP")
-    similarity_threshold: float = Field(default=0.8, env="RAG_SIMILARITY_THRESHOLD")
+    similarity_threshold: float = Field(default=0.5, env="RAG_SIMILARITY_THRESHOLD")
     max_retrieved_documents: int = Field(default=10, env="RAG_MAX_RETRIEVED_DOCUMENTS")
     embedding_batch_size: int = Field(default=100, env="RAG_EMBEDDING_BATCH_SIZE")
-    
-    class Config:
-        env_prefix = "RAG_"
 
 
 class TelegramConfig(BaseSettings):
     """Telegram bot configuration"""
+    model_config = SettingsConfigDict(
+        env_prefix="TELEGRAM_",
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
+    
     bot_token: Optional[str] = Field(default=None, env="TELEGRAM_BOT_TOKEN")
     webhook_url: Optional[str] = Field(default=None, env="TELEGRAM_WEBHOOK_URL")
-    
-    class Config:
-        env_prefix = "TELEGRAM_"
 
 
 class RedisConfig(BaseSettings):
     """Redis configuration for caching and queuing"""
+    model_config = SettingsConfigDict(
+        env_prefix="REDIS_",
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
+    
     url: str = Field(default="redis://localhost:6379", env="REDIS_URL")
     password: Optional[str] = Field(default=None, env="REDIS_PASSWORD")
-    
-    class Config:
-        env_prefix = "REDIS_"
 
 
 class FastAPIConfig(BaseSettings):
     """FastAPI server configuration"""
+    model_config = SettingsConfigDict(
+        env_prefix="FASTAPI_",
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
+    
     host: str = Field(default="0.0.0.0", env="FASTAPI_HOST")
     port: int = Field(default=8000, env="FASTAPI_PORT")
     debug: bool = Field(default=False, env="FASTAPI_DEBUG")
@@ -82,25 +143,32 @@ class FastAPIConfig(BaseSettings):
         default=["http://localhost:3000", "http://localhost:3001"], 
         env="FASTAPI_CORS_ORIGINS"
     )
-    
-    class Config:
-        env_prefix = "FASTAPI_"
 
 
 class NextJSConfig(BaseSettings):
     """Next.js frontend configuration"""
+    model_config = SettingsConfigDict(
+        env_prefix="NEXT_PUBLIC_",
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
+    
     api_url: str = Field(default="http://localhost:8000", env="NEXT_PUBLIC_API_URL")
     supabase_url: str = Field(..., env="NEXT_PUBLIC_SUPABASE_URL")
     supabase_anon_key: str = Field(..., env="NEXT_PUBLIC_SUPABASE_ANON_KEY")
     nextauth_secret: Optional[str] = Field(default=None, env="NEXTAUTH_SECRET")
     nextauth_url: str = Field(default="http://localhost:3000", env="NEXTAUTH_URL")
-    
-    class Config:
-        env_prefix = "NEXT_PUBLIC_"
 
 
 class SystemConfig(BaseSettings):
     """General system configuration"""
+    model_config = SettingsConfigDict(
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
+    
     environment: str = Field(default="development", env="ENVIRONMENT")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
     max_concurrent_requests: int = Field(default=100, env="MAX_CONCURRENT_REQUESTS")
@@ -109,6 +177,13 @@ class SystemConfig(BaseSettings):
 
 class Settings(BaseSettings):
     """Main settings class that loads all configurations directly"""
+    
+    # Use new pydantic v2 configuration - REMOVED env_file completely
+    model_config = SettingsConfigDict(
+        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
+        case_sensitive=False,
+        extra='allow'
+    )
     
     # OpenAI Configuration
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")
@@ -131,7 +206,7 @@ class Settings(BaseSettings):
     # RAG Configuration
     rag_chunk_size: int = Field(default=1000, env="RAG_CHUNK_SIZE")
     rag_chunk_overlap: int = Field(default=200, env="RAG_CHUNK_OVERLAP")
-    rag_similarity_threshold: float = Field(default=0.8, env="RAG_SIMILARITY_THRESHOLD")
+    rag_similarity_threshold: float = Field(default=0.5, env="RAG_SIMILARITY_THRESHOLD")
     rag_max_retrieved_documents: int = Field(default=10, env="RAG_MAX_RETRIEVED_DOCUMENTS")
     rag_embedding_batch_size: int = Field(default=100, env="RAG_EMBEDDING_BATCH_SIZE")
     
@@ -185,30 +260,49 @@ class Settings(BaseSettings):
             api_key=self.langsmith_api_key,
             project=self.langsmith_project
         )
+
+async def get_settings() -> Settings:
+    """
+    Get cached settings instance asynchronously.
+    This function prevents blocking calls by using async caching.
+    """
+    global _settings_cache
     
-    class Config:
-        env_file = "../.env"  # Look for .env file in parent directory
-        case_sensitive = False
-        extra = "allow"  # Allow extra environment variables
+    if _settings_cache is not None:
+        return _settings_cache
+    
+    async with _settings_lock:
+        if _settings_cache is not None:
+            return _settings_cache
+        
+        # Initialize settings in a way that doesn't block by using asyncio.to_thread
+        try:
+            _settings_cache = await asyncio.to_thread(Settings)
+            return _settings_cache
+        except Exception as e:
+            # If initialization fails, create a minimal settings object
+            # This prevents blocking calls from causing complete failure
+            raise RuntimeError(f"Failed to initialize settings: {e}")
 
 
 @lru_cache()
-def get_settings() -> Settings:
+def get_settings_sync() -> Settings:
     """
-    Get cached settings instance.
+    Get cached settings instance synchronously (for non-async contexts).
     This function uses lru_cache to ensure settings are loaded only once.
+    WARNING: This may cause blocking calls in ASGI environments.
     """
     return Settings()
 
 
-def validate_openai_config() -> bool:
+async def validate_openai_config() -> bool:
     """
     Validate OpenAI configuration and test API connection.
     Returns True if configuration is valid and API is accessible.
     """
     try:
         import openai
-        settings = get_settings()
+        settings = await get_settings()
         
         # Set the API key
         openai.api_key = settings.openai.api_key
@@ -233,14 +327,14 @@ def validate_openai_config() -> bool:
         return False
 
 
-def validate_supabase_config() -> bool:
+async def validate_supabase_config() -> bool:
     """
     Validate Supabase configuration and test connection.
     Returns True if configuration is valid and database is accessible.
     """
     try:
         from supabase import create_client, Client
-        settings = get_settings()
+        settings = await get_settings()
         
         # Create Supabase client
         supabase: Client = create_client(
@@ -261,11 +355,11 @@ def validate_supabase_config() -> bool:
         return False
 
 
-def setup_langsmith_tracing():
+async def setup_langsmith_tracing():
     """
     Setup LangSmith tracing if configured.
     """
-    settings = get_settings()
+    settings = await get_settings()
     
     if settings.langsmith.tracing_enabled and settings.langsmith.api_key:
         os.environ["LANGCHAIN_TRACING_V2"] = str(settings.langsmith.tracing_enabled).lower()
@@ -278,16 +372,16 @@ def setup_langsmith_tracing():
         print("⚠️ LangSmith tracing not configured (API key missing)")
 
 
-def validate_all_configs() -> bool:
+async def validate_all_configs() -> bool:
     """
     Validate all configurations and return overall status.
     """
     print("🔧 Validating system configurations...")
     
-    openai_ok = validate_openai_config()
-    supabase_ok = validate_supabase_config()
+    openai_ok = await validate_openai_config()
+    supabase_ok = await validate_supabase_config()
     
-    setup_langsmith_tracing()
+    await setup_langsmith_tracing()
     
     if openai_ok and supabase_ok:
         print("✅ All core configurations validated successfully!")
@@ -299,7 +393,8 @@ def validate_all_configs() -> bool:
 
 if __name__ == "__main__":
     # Run validation when script is executed directly
-    validate_all_configs()
+    import asyncio
+    asyncio.run(validate_all_configs())
 
 # ============================================================================
 # DEPRIORITIZED CODE - Website scraping functionality has been deprioritized

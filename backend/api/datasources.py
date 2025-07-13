@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Initialize components
-settings = get_settings()
+# Remove sync settings initialization to avoid blocking calls
+# Settings will be loaded asynchronously when needed
 pipeline = DocumentProcessingPipeline()
 
 class DataSourceCreateRequest(BaseModel):

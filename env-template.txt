@@ -32,7 +32,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 # ======================================================================
 
 # LangSmith Configuration (for monitoring - optional)
-LANGCHAIN_TRACING_V2=true
+LANGSMITH_TRACING=true
 LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
 LANGCHAIN_API_KEY=your_langsmith_api_key_here
 LANGCHAIN_PROJECT=salesperson-copilot-rag

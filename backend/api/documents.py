@@ -26,7 +26,8 @@ router = APIRouter()
 
 # Initialize processing pipeline
 pipeline = DocumentProcessingPipeline()
-settings = get_settings()
+# Remove sync settings initialization to avoid blocking calls
+# Settings will be loaded asynchronously when needed
 
 class ProcessUploadedRequest(BaseModel):
     """Request model for processing uploaded documents"""

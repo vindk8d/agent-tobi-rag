@@ -11,7 +11,7 @@ import openai
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import tiktoken
 
-from config import get_settings
+from ..config import get_settings
 
 
 @dataclass
@@ -31,27 +31,72 @@ class OpenAIEmbeddings:
     """
     
     def __init__(self):
-        self.settings = get_settings()
+        self.settings = None  # Will be loaded asynchronously
+        self.client = None  # Will be initialized asynchronously
+        self.model = None  # Will be set asynchronously
+        self.batch_size = None  # Will be set asynchronously
+        self.tokenizer = None  # Will be initialized asynchronously
+    
+    async def _init_tokenizer_async(self, model: str):
+        """Initialize tokenizer asynchronously to avoid blocking calls."""
+        def _get_tokenizer():
+            try:
+                return tiktoken.encoding_for_model(model)
+            except KeyError:
+                # Fallback to cl100k_base if model-specific encoding not found
+                return tiktoken.get_encoding("cl100k_base")
         
-        # Initialize OpenAI client with proper configuration
-        self.client = openai.OpenAI(
-            api_key=self.settings.openai.api_key,
-            timeout=60.0,
-            max_retries=3
-        )
+        # Move tokenizer initialization to thread to avoid os.getcwd() blocking calls
+        return await asyncio.to_thread(_get_tokenizer)
+    
+    async def _ensure_initialized(self):
+        """Ensure the client is initialized asynchronously."""
+        if self.settings is None:
+            self.settings = await get_settings()
+            
+            # Initialize OpenAI async client with proper configuration
+            self.client = openai.AsyncOpenAI(
+                api_key=self.settings.openai.api_key,
+                timeout=60.0,
+                max_retries=3
+            )
+            
+            self.model = self.settings.openai.embedding_model
+            self.batch_size = self.settings.rag.embedding_batch_size
+            
+            # Initialize tokenizer asynchronously to prevent blocking calls
+            self.tokenizer = await self._init_tokenizer_async(self.model)
+    
+    async def count_tokens_async(self, text: str) -> int:
+        """Count tokens in text using the appropriate tokenizer asynchronously"""
+        await self._ensure_initialized()
         
-        self.model = self.settings.openai.embedding_model
-        self.batch_size = self.settings.rag.embedding_batch_size
+        def _count_tokens():
+            if self.tokenizer is None:
+                # Fallback tokenizer if not initialized yet
+                try:
+                    import tiktoken
+                    tokenizer = tiktoken.get_encoding("cl100k_base")
+                    return len(tokenizer.encode(text))
+                except:
+                    # Rough estimation if tiktoken fails
+                    return int(len(text.split()) * 1.3)  # Approximate tokens per word
+            return len(self.tokenizer.encode(text))
         
-        # Initialize tokenizer for token counting
-        try:
-            self.tokenizer = tiktoken.encoding_for_model(self.model)
-        except KeyError:
-            # Fallback to cl100k_base if model-specific encoding not found
-            self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        # Move token counting to thread to avoid any potential blocking calls
+        return await asyncio.to_thread(_count_tokens)
     
     def count_tokens(self, text: str) -> int:
-        """Count tokens in text using the appropriate tokenizer"""
+        """Count tokens in text using the appropriate tokenizer (sync fallback)"""
+        if self.tokenizer is None:
+            # Fallback tokenizer if not initialized yet
+            try:
+                import tiktoken
+                tokenizer = tiktoken.get_encoding("cl100k_base")
+                return len(tokenizer.encode(text))
+            except:
+                # Rough estimation if tiktoken fails
+                return int(len(text.split()) * 1.3)  # Approximate tokens per word
         return len(self.tokenizer.encode(text))
     
     @retry(
@@ -59,145 +104,94 @@ class OpenAIEmbeddings:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         retry=retry_if_exception_type((openai.RateLimitError, openai.APIConnectionError))
     )
-    async def _create_embedding(self, texts: List[str]) -> List[List[float]]:
-        """
-        Create embeddings for a list of texts with retry logic.
-        """
-        try:
-            response = self.client.embeddings.create(
-                model=self.model,
-                input=texts
-            )
-            return [data.embedding for data in response.data]
-        except openai.RateLimitError as e:
-            print(f"⚠️ Rate limit hit, retrying... {e}")
-            raise
-        except openai.APIConnectionError as e:
-            print(f"⚠️ API connection error, retrying... {e}")
-            raise
-        except Exception as e:
-            print(f"❌ Unexpected error in embedding creation: {e}")
-            raise
-    
+    async def _create_embedding(self, text: str) -> List[float]:
+        """Create a single embedding with retry logic"""
+        await self._ensure_initialized()
+        
+        response = await self.client.embeddings.create(
+            input=text,
+            model=self.model
+        )
+        return response.data[0].embedding
+
     async def embed_single_text(self, text: str) -> EmbeddingResult:
         """
-        Generate embedding for a single text.
+        Generate embedding for a single text string.
+        Returns an EmbeddingResult with embedding, metadata, and timing.
         """
         start_time = time.time()
         
-        # Validate input
-        if not text or not text.strip():
-            raise ValueError("Text cannot be empty")
+        await self._ensure_initialized()
         
-        # Count tokens
-        token_count = self.count_tokens(text)
+        # Count tokens asynchronously
+        token_count = await self.count_tokens_async(text)
         
-        # Check token limit (OpenAI embedding models have 8191 token limit)
-        if token_count > 8191:
-            raise ValueError(f"Text too long: {token_count} tokens (max 8191)")
+        # Create embedding
+        embedding = await self._create_embedding(text)
         
-        # Generate embedding
-        embeddings = await self._create_embedding([text])
-        
-        processing_time = int((time.time() - start_time) * 1000)
+        processing_time_ms = int((time.time() - start_time) * 1000)
         
         return EmbeddingResult(
-            embedding=embeddings[0],
+            embedding=embedding,
             text=text,
             token_count=token_count,
             model=self.model,
-            processing_time_ms=processing_time
+            processing_time_ms=processing_time_ms
         )
-    
+
     async def embed_batch(self, texts: List[str]) -> List[EmbeddingResult]:
         """
         Generate embeddings for a batch of texts.
-        Automatically handles batching if input is too large.
+        Handles rate limiting and processes in configured batch sizes.
         """
-        if not texts:
-            return []
+        await self._ensure_initialized()
         
         results = []
         
-        # Process in batches to avoid rate limits and memory issues
+        # Process in batches to avoid rate limits
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i:i + self.batch_size]
-            batch_results = await self._process_batch(batch)
-            results.extend(batch_results)
+            batch_start_time = time.time()
             
-            # Small delay between batches to avoid rate limits
-            if i + self.batch_size < len(texts):
-                await asyncio.sleep(0.1)
+            # Count tokens for each text in batch asynchronously
+            token_counts = await asyncio.gather(
+                *[self.count_tokens_async(text) for text in batch]
+            )
+            
+            # Create embeddings for the batch
+            batch_embeddings = await asyncio.gather(
+                *[self._create_embedding(text) for text in batch]
+            )
+            
+            batch_processing_time_ms = int((time.time() - batch_start_time) * 1000)
+            
+            # Create results for this batch
+            for j, (text, embedding, token_count) in enumerate(zip(batch, batch_embeddings, token_counts)):
+                results.append(EmbeddingResult(
+                    embedding=embedding,
+                    text=text,
+                    token_count=token_count,
+                    model=self.model,
+                    processing_time_ms=batch_processing_time_ms // len(batch)  # Distribute time
+                ))
         
         return results
-    
-    async def _process_batch(self, texts: List[str]) -> List[EmbeddingResult]:
-        """Process a single batch of texts"""
-        start_time = time.time()
-        
-        # Filter out empty texts
-        valid_texts = [(i, text) for i, text in enumerate(texts) if text and text.strip()]
-        
-        if not valid_texts:
-            return []
-        
-        # Extract just the texts for embedding
-        text_list = [text for _, text in valid_texts]
-        
-        # Count tokens for each text
-        token_counts = [self.count_tokens(text) for text in text_list]
-        
-        # Check for texts that are too long
-        for i, (token_count, text) in enumerate(zip(token_counts, text_list)):
-            if token_count > 8191:
-                print(f"⚠️ Skipping text {i}: {token_count} tokens (too long)")
-                continue
-        
-        # Generate embeddings
-        embeddings = await self._create_embedding(text_list)
-        
-        processing_time = int((time.time() - start_time) * 1000)
-        
-        # Create results
-        results = []
-        for (original_index, text), embedding, token_count in zip(valid_texts, embeddings, token_counts):
-            results.append(EmbeddingResult(
-                embedding=embedding,
-                text=text,
-                token_count=token_count,
-                model=self.model,
-                processing_time_ms=processing_time
-            ))
-        
-        return results
-    
-    async def embed_documents(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+    async def embed_documents(self, documents: List[str]) -> List[List[float]]:
         """
-        Embed a list of document dictionaries.
-        Expected format: [{"id": str, "content": str, "metadata": dict}, ...]
+        Legacy method for compatibility.
+        Generate embeddings for a list of documents and return just the embeddings.
         """
-        if not documents:
-            return []
-        
-        # Extract content for embedding
-        contents = [doc.get("content", "") for doc in documents]
-        
-        # Generate embeddings
-        embedding_results = await self.embed_batch(contents)
-        
-        # Combine results with original documents
-        enhanced_documents = []
-        for doc, result in zip(documents, embedding_results):
-            enhanced_doc = doc.copy()
-            enhanced_doc.update({
-                "embedding": result.embedding,
-                "token_count": result.token_count,
-                "embedding_model": result.model,
-                "processing_time_ms": result.processing_time_ms
-            })
-            enhanced_documents.append(enhanced_doc)
-        
-        return enhanced_documents
+        results = await self.embed_batch(documents)
+        return [result.embedding for result in results]
+
+    async def embed_query(self, query: str) -> List[float]:
+        """
+        Legacy method for compatibility.
+        Generate embedding for a query string and return just the embedding.
+        """
+        result = await self.embed_single_text(query)
+        return result.embedding
     
     def get_embedding_stats(self) -> Dict[str, Any]:
         """Get embedding model statistics and configuration"""
@@ -208,11 +202,14 @@ class OpenAIEmbeddings:
             "text-embedding-ada-002": 1536
         }
         
+        model = self.model or "text-embedding-3-small"  # Default if not initialized
+        batch_size = self.batch_size or 100  # Default if not initialized
+        
         return {
-            "model": self.model,
+            "model": model,
             "max_tokens": 8191,
-            "embedding_dimensions": model_dimensions.get(self.model, 1536),
-            "batch_size": self.batch_size,
+            "embedding_dimensions": model_dimensions.get(model, 1536),
+            "batch_size": batch_size,
             "supported_features": [
                 "batch_processing",
                 "token_counting",

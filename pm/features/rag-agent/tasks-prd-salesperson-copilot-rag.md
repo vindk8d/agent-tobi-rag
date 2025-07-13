@@ -2,6 +2,10 @@
 
 Based on PRD: `prd-salesperson-copilot-rag.md`
 
+## 🎯 Agent Design Principle
+
+**Keep agent logic simple yet effective** - The goal is to achieve the needed functionalities with as little complexity as needed to keep our agent effective, lightweight and traceable. Prioritize clarity over complexity.
+
 ## Relevant Files
 
 ### Backend/Agent Infrastructure
@@ -15,6 +19,10 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `backend/models/document.py` - Document and file management models
 - `backend/models/datasource.py` - Data source and document upload models
 - `backend/agents/` - LangGraph agent components (structure initialized)
+- `backend/agents/state.py` - Minimal LangGraph state schema for conversational RAG agent
+- `backend/agents/rag_agent.py` - Unified tool-calling RAG agent following LangChain best practices: single agent handles both tool calling and execution
+- `backend/agents/tools.py` - Tool-calling functions with @tool decorators for semantic search and source attribution
+- `backend/agents/test_tool_calling.py` - Test script demonstrating tool-calling agent functionality
 - `backend/rag/` - RAG system components
 - `backend/rag/embeddings.py` - OpenAI embedding generation
 - `backend/rag/document_loader.py` - Modular LangChain-based loader for PDFs, Word docs, and other document formats
@@ -104,42 +112,49 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
   - [x] 3.8 Design responsive UI using Tailwind CSS with professional blue/white theme
   - [x] 3.9 Implement real-time updates for document processing status using Supabase realtime subscriptions
 
-- [ ] 4.0 Develop LangGraph Agent Architecture and Conversation Management
-  - [ ] 4.1 Design LangGraph state schema with conversation memory, user context, and retrieved documents
-  - [ ] 4.2 Implement agent graph with nodes for: retrieval, generation, conflict detection, and response formatting
-  - [ ] 4.3 Create custom tools for semantic search, source attribution, and conflict logging
-  - [ ] 4.4 Set up persistent conversation memory using LangGraph's built-in persistence with Supabase backend
-  - [ ] 4.5 Implement proactive suggestion logic based on conversation context and available documents
-  - [ ] 4.6 Add conflict detection logic that logs to console and responds appropriately to users
-  - [ ] 4.7 Configure LangChain Expression Language (LCEL) chains for optimized performance
-  - [ ] 4.8 Implement graceful fallback responses when no relevant information is found
+- [ ] 4.0 Develop Basic LangGraph Agent with Conversational RAG
+  - [x] 4.1 Design minimal LangGraph state schema with user query, retrieved documents, and conversation context
+  - [x] 4.2 Implement simple agent graph with core nodes: retrieval, generation, and response formatting
+  - [x] 4.3 Create basic tools for semantic search and source attribution (without conflict logging)
+  - [ ] 4.4 Set up LangSmith tracing integration for all agent components and conversation flows
+  - [ ] 4.5 Implement basic conversation memory for maintaining context across interactions
+  - [ ] 4.6 Configure LangChain Expression Language (LCEL) chains for retrieval and generation
+  - [ ] 4.7 Implement graceful fallback responses when no relevant information is found
+  - [ ] 4.8 Test end-to-end conversation flow with document retrieval and response generation
 
-- [ ] 5.0 Implement Monitoring, Testing, and Deployment Infrastructure
-  - [ ] 5.1 Integrate LangSmith tracing throughout the agent pipeline for comprehensive monitoring
-  - [ ] 5.2 Set up custom metrics tracking for response accuracy, query resolution, and performance
-  - [ ] 5.3 Implement comprehensive error handling with proper logging and alerting mechanisms
-  - [ ] 5.4 Create unit tests for RAG components using pytest with proper mocking of external APIs
-  - [ ] 5.5 Set up integration tests for agent workflows and conversation flows
-  - [ ] 5.6 Configure performance monitoring with response time tracking and concurrent user support
-  - [ ] 5.7 Implement rate limiting and API security measures for production deployment
-  - [ ] 5.8 Set up automated backup strategies for vector embeddings and conversation history
+- [ ] 5.0 Extend Agent with Advanced Features (Post-Basic RAG)
+  - [ ] 5.1 Set up persistent conversation memory using LangGraph's built-in persistence with Supabase backend
+  - [ ] 5.2 Add conflict detection logic that logs to console and responds appropriately to users
+  - [ ] 5.3 Implement proactive suggestion logic based on conversation context and available documents
+  - [ ] 5.4 Enhance tools with conflict logging capabilities
+  - [ ] 5.5 Optimize performance with advanced LCEL patterns and caching strategies
 
-- [ ] 6.0 Build Temporary Chat Interface for Testing and Development
-  - [ ] 6.1 Create simple React chat component with message history and real-time updates
-  - [ ] 6.2 Implement WebSocket or SSE connection for streaming agent responses
-  - [ ] 6.3 Add debugging features showing retrieved documents, confidence scores, and processing steps
-  - [ ] 6.4 Create test scenarios for different query types and edge cases
-  - [ ] 6.5 Implement conversation reset and context management for testing different scenarios
-  - [ ] 6.6 Add developer tools for inspecting agent state, memory, and decision processes
-  - [ ] 6.7 Create performance testing interface to validate concurrent user support (up to 100 users)
+- [ ] 6.0 Implement Monitoring, Testing, and Deployment Infrastructure
+  - [ ] 6.1 Integrate LangSmith tracing throughout the agent pipeline for comprehensive monitoring
+  - [ ] 6.2 Set up custom metrics tracking for response accuracy, query resolution, and performance
+  - [ ] 6.3 Implement comprehensive error handling with proper logging and alerting mechanisms
+  - [ ] 6.4 Create unit tests for RAG components using pytest with proper mocking of external APIs
+  - [ ] 6.5 Set up integration tests for agent workflows and conversation flows
+  - [ ] 6.6 Configure performance monitoring with response time tracking and concurrent user support
+  - [ ] 6.7 Implement rate limiting and API security measures for production deployment
+  - [ ] 6.8 Set up automated backup strategies for vector embeddings and conversation history
 
-- [ ] 7.0 Integrate Telegram Bot Interface with Production Deployment
-  - [ ] 7.1 Set up Telegram Bot API and configure webhook endpoints for secure message handling
+- [ ] 7.0 Build Temporary Chat Interface for Testing and Development
+  - [ ] 7.1 Create simple React chat component with message history and real-time updates
+  - [ ] 7.2 Implement WebSocket or SSE connection for streaming agent responses
+  - [ ] 7.3 Add debugging features showing retrieved documents, confidence scores, and processing steps
+  - [ ] 7.4 Create test scenarios for different query types and edge cases
+  - [ ] 7.5 Implement conversation reset and context management for testing different scenarios
+  - [ ] 7.6 Add developer tools for inspecting agent state, memory, and decision processes
+  - [ ] 7.7 Create performance testing interface to validate concurrent user support (up to 100 users)
+
+- [ ] 8.0 Integrate Telegram Bot Interface with Production Deployment
+  - [ ] 8.1 Set up Telegram Bot API and configure webhook endpoints for secure message handling
     - **NOTE**: Add back Telegram bot dependency to requirements.txt when starting this task: `python-telegram-bot==20.7`
-  - [ ] 7.2 Implement Telegram bot handlers with proper message parsing and user session management
-  - [ ] 7.3 Adapt agent responses for Telegram format with inline keyboards for proactive suggestions
-  - [ ] 7.4 Configure production deployment with proper scaling and load balancing
-  - [ ] 7.5 Implement user authentication and session persistence across Telegram conversations
-  - [ ] 7.6 Set up production monitoring and alerting for bot uptime and response performance
-  - [ ] 7.7 Create deployment scripts and CI/CD pipeline for automated updates
-  - [ ] 7.8 Hide/remove temporary chat interface and finalize production configuration 
+  - [ ] 8.2 Implement Telegram bot handlers with proper message parsing and user session management
+  - [ ] 8.3 Adapt agent responses for Telegram format with inline keyboards for proactive suggestions
+  - [ ] 8.4 Configure production deployment with proper scaling and load balancing
+  - [ ] 8.5 Implement user authentication and session persistence across Telegram conversations
+  - [ ] 8.6 Set up production monitoring and alerting for bot uptime and response performance
+  - [ ] 8.7 Create deployment scripts and CI/CD pipeline for automated updates
+  - [ ] 8.8 Hide/remove temporary chat interface and finalize production configuration 
