@@ -57,4 +57,68 @@ class WebScraper:
             text = WebScraper.scrape_dynamic(url, timeout=timeout * 2)
             if text:
                 return {"text": text, "method": "dynamic", "success": True}
-        return {"text": None, "method": None, "success": False} 
+        return {"text": None, "method": None, "success": False}
+    
+    async def scrape_url(self, url: str, timeout: int = 10, dynamic_fallback: bool = True) -> Dict[str, Any]:
+        """
+        Async wrapper for scraping a URL with enhanced response details.
+        Returns comprehensive scraping result with metadata.
+        """
+        import time
+        start_time = time.time()
+        
+        try:
+            # Get basic scraping result
+            result = self.scrape(url, timeout=timeout, dynamic_fallback=dynamic_fallback)
+            
+            # Calculate response time
+            response_time = time.time() - start_time
+            
+            # Extract additional metadata
+            title = ""
+            content = result.get("text", "")
+            
+            if result.get("success"):
+                try:
+                    # Get title from the page
+                    response = requests.get(url, timeout=timeout)
+                    if response.status_code == 200:
+                        soup = BeautifulSoup(response.text, "html.parser")
+                        title_tag = soup.find("title")
+                        if title_tag:
+                            title = title_tag.get_text(strip=True)
+                except Exception as e:
+                    logger.warning(f"Failed to extract title from {url}: {e}")
+                
+                return {
+                    "success": True,
+                    "content": content,
+                    "title": title,
+                    "method": result.get("method"),
+                    "response_time": response_time,
+                    "content_length": len(content) if content else 0,
+                    "url": url
+                }
+            else:
+                return {
+                    "success": False,
+                    "content": "",
+                    "title": "",
+                    "method": result.get("method"),
+                    "response_time": response_time,
+                    "error": "Failed to scrape content",
+                    "url": url
+                }
+                
+        except Exception as e:
+            response_time = time.time() - start_time
+            logger.error(f"Error scraping {url}: {e}")
+            return {
+                "success": False,
+                "content": "",
+                "title": "",
+                "method": None,
+                "response_time": response_time,
+                "error": str(e),
+                "url": url
+            } 

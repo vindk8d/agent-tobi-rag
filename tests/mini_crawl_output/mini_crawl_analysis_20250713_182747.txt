@@ -1,0 +1,92 @@
+MINI PHILIPPINES WEBSITE CRAWL ANALYSIS
+==================================================
+Generated: 2025-07-13 18:27:47
+
+OVERALL STATISTICS:
+--------------------
+Total pages crawled: 5
+Total original characters: 1988224
+Total cleaned characters: 146
+Average cleaned content length: 29
+Content compression ratio: 0.0%
+Crawl time: 15.94 seconds
+URLs discovered: 145
+Success rate: 3.4%
+
+URL ANALYSIS:
+---------------
+Unique domains: 1
+Domains: www.mini.com.ph
+
+CONTENT ANALYSIS:
+------------------
+Shortest cleaned content: 0 characters
+Longest cleaned content: 50 characters
+Median cleaned content: 46 characters
+
+CONTENT TYPE ANALYSIS:
+----------------------
+automotive: 3 pages
+general: 2 pages
+Automotive relevance: 3/5 pages
+
+SALES INFORMATION FOUND:
+-------------------------
+Pages with pricing info: 0
+Pages with model info: 3
+Pages with engine info: 0
+Pages with finance info: 0
+
+TOP KEYWORDS (CLEANED CONTENT):
+--------------------------------
+mini: 4
+philippines: 3
+used: 2
+cars: 2
+mini.com.ph: 2
+service: 1
+booking: 1
+online: 1
+
+PAGE DETAILS:
+---------------
+1. https://www.mini.com.ph/en_PH/home.html
+   Title: MINI Philippines – New and used cars | MINI.com.ph
+   Content type: automotive
+   Original length: 592457 characters
+   Cleaned length: 50 characters
+   Key info: {'models': ['New and used', 'MINI Philippines']}
+   Crawl index: 0
+
+2. https://www.mini.com.ph/en_PH/home.html
+   Title: 
+   Content type: general
+   Original length: 16351 characters
+   Cleaned length: 0 characters
+   Key info: {}
+   Crawl index: 1
+
+3. https://www.mini.com.ph/en_PH/home.html
+   Title: MINI Philippines | MINI Service Booking Online
+   Content type: automotive
+   Original length: 392308 characters
+   Cleaned length: 46 characters
+   Key info: {'models': ['MINI Service', 'MINI Philippines']}
+   Crawl index: 2
+
+4. https://www.mini.com.ph/en_PH/home.html
+   Title: MINI Philippines – New and used cars | MINI.com.ph
+   Content type: automotive
+   Original length: 592457 characters
+   Cleaned length: 50 characters
+   Key info: {'models': ['New and used', 'MINI Philippines']}
+   Crawl index: 3
+
+5. https://www.mini.com.ph/en_PH/home.html
+   Title: 
+   Content type: general
+   Original length: 394651 characters
+   Cleaned length: 0 characters
+   Key info: {}
+   Crawl index: 4
+

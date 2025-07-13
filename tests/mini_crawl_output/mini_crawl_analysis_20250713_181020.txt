@@ -1,0 +1,74 @@
+MINI PHILIPPINES WEBSITE CRAWL ANALYSIS
+==================================================
+Generated: 2025-07-13 18:10:20
+
+OVERALL STATISTICS:
+--------------------
+Total pages crawled: 5
+Total content characters: 1988234
+Average content length: 397646
+Crawl time: 150.21 seconds
+URLs discovered: 54
+Success rate: 9.3%
+
+URL ANALYSIS:
+---------------
+Unique domains: 1
+Domains: www.mini.com.ph
+
+CONTENT ANALYSIS:
+------------------
+Shortest content: 16353 characters
+Longest content: 592459 characters
+Median content: 394653 characters
+
+TOP KEYWORDS:
+---------------
+</div>: 3661
+<div: 3602
+<span: 660
+important: 527
+data-loader="amdloader: 471
+</style>: 469
+<img: 458
+md-image-item: 366
+mini: 356
+class="img-fluid: 353
+<style>: 314
+@media: 314
+min-width: 310
+display: 309
+1280: 308
+none: 306
+</a>: 301
+<!--: 287
+data-sizes="auto: 251
+data-optimumx="1.60: 251
+
+PAGE DETAILS:
+---------------
+1. https://www.mini.com.ph/en_PH/home.html
+   Title: No title
+   Content length: 592459 characters
+   Crawl index: 0
+
+2. https://www.mini.com.ph/en_PH/home.html
+   Title: No title
+   Content length: 592459 characters
+   Crawl index: 1
+
+3. https://www.mini.com.ph/en_PH/home.html
+   Title: No title
+   Content length: 394653 characters
+   Crawl index: 2
+
+4. https://www.mini.com.ph/en_PH/home.html
+   Title: No title
+   Content length: 392310 characters
+   Crawl index: 3
+
+5. https://www.mini.com.ph/en_PH/home.html
+   Title: No title
+   Content length: 16353 characters
+   Crawl index: 4
+

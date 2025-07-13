@@ -131,6 +131,42 @@ async def process_uploaded_document(
         logger.error(f"Error processing uploaded document: {e}")
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
+async def get_or_create_uploads_data_source() -> str:
+    """
+    Get or create a default data source for uploaded files.
+    """
+    try:
+        # Look for existing "Uploaded Files" data source
+        result = db_client.client.table('data_sources').select('id').eq('name', 'Uploaded Files').execute()
+        
+        if result.data:
+            return result.data[0]['id']
+        
+        # Create default data source for uploads
+        data_source_data = {
+            'name': 'Uploaded Files',
+            'source_type': 'document',
+            'url': '',  # No URL for uploaded files
+            'status': 'active',
+            'metadata': {
+                'description': 'Default data source for uploaded documents',
+                'created_by': 'system',
+                'auto_created': True
+            }
+        }
+        
+        result = db_client.client.table('data_sources').insert(data_source_data).execute()
+        if result.data:
+            logger.info(f"Created default 'Uploaded Files' data source: {result.data[0]['id']}")
+            return result.data[0]['id']
+        else:
+            logger.error("Failed to create default uploads data source")
+            return ""
+            
+    except Exception as e:
+        logger.error(f"Error getting/creating uploads data source: {e}")
+        return ""
+
 async def process_document_background(document_id: str, storage_path: str, file_type: str, file_name: str):
     """
     Background task to process document: download, load, chunk, embed, and store.
@@ -144,18 +180,24 @@ async def process_document_background(document_id: str, storage_path: str, file_
         
         logger.info(f"Starting processing for document {document_id}")
         
+        # Get or create the uploads data source
+        uploads_data_source_id = await get_or_create_uploads_data_source()
+        if not uploads_data_source_id:
+            raise Exception("Failed to get or create uploads data source")
+        
         # Download file from Supabase Storage
         local_file_path = await download_from_supabase_storage(storage_path)
         
         metadata = {
-            'document_id': document_id,
+            'original_document_id': document_id,  # Keep reference to the original document record
             'original_filename': file_name,
             'storage_path': storage_path,
-            'processed_at': str(asyncio.get_event_loop().time())
+            'processed_at': str(asyncio.get_event_loop().time()),
+            'upload_method': 'file_upload'
         }
         
-        # Process the document
-        result = await pipeline.process_file(local_file_path, file_type, document_id, metadata)
+        # Process the document using the fixed pipeline
+        result = await pipeline.process_file(local_file_path, file_type, uploads_data_source_id, metadata)
         
         if result['success']:
             # Update status to COMPLETED using proper columns

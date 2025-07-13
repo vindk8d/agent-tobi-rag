@@ -1,0 +1,289 @@
+MINI PHILIPPINES WEBSITE CRAWL RESULTS
+==================================================
+Crawled at: 2025-07-13 18:27:47
+Total documents: 5
+
+
+--- DOCUMENT 1 ---
+URL: https://www.mini.com.ph/en_PH/home.html
+Title: MINI Philippines – New and used cars | MINI.com.ph
+Content Type: automotive
+Original Length: 592457
+Cleaned Length: 50
+Key Info: {'models': ['New and used', 'MINI Philippines']}
+Crawl Index: 0
+
+🧹 CLEANED CONTENT (For Copilot):
+----------------------------------------
+MINI Philippines – New and used cars | MINI.com.ph
+
+📄 ORIGINAL HTML (Reference):
+----------------------------------------
+
+<!DOCTYPE HTML>
+<!--[if IE 8 ]> <html class="md md-js no-js lt-ie10 lte-ie9 ie8" lang="en-PH"> <![endif]-->
+<!--[if IE 9 ]> <html class="md md-js no-js lt-ie10 ie9" lang="en-PH"> <![endif]-->
+<!--[if (gt IE 9)|!(IE)]><!-->
+<html class="md md-js no-js" lang="en-PH"><!--<![endif]-->
+    
+<head>
+        
+    
+    
+
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+
+    
+        <meta name="referrer" content="no-referrer-when-downgrade"/>
+    
+
+    <meta name="robots" content="all"/>
+    
+    
+    
+	
+    
+    
+	<title>MINI Philippines – New and used cars | MINI.com.ph</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+
+    <meta name="keywords"/>
+    <meta name="name" itemprop="name" content="MINI – New and used cars"/>
+    <meta name="description" itemprop="description" content="Thrill-seekers unite: it’s time your drive had kick. Check out the MINI range, design your own mode...
+==================================================
+
+--- DOCUMENT 2 ---
+URL: https://www.mini.com.ph/en_PH/home.html
+Title: 
+Content Type: general
+Original Length: 16351
+Cleaned Length: 0
+Key Info: {}
+Crawl Index: 1
+
+🧹 CLEANED CONTENT (For Copilot):
+----------------------------------------
+
+
+📄 ORIGINAL HTML (Reference):
+----------------------------------------
+
+<!DOCTYPE HTML>
+<!--[if IE 8 ]> <html class="md md-js no-js lt-ie10 lte-ie9 ie8" lang="en-PH"> <![endif]-->
+<!--[if IE 9 ]> <html class="md md-js no-js lt-ie10 ie9" lang="en-PH"> <![endif]-->
+<!--[if (gt IE 9)|!(IE)]><!-->
+<html class="md md-js no-js" lang="en-PH"><!--<![endif]-->
+    
+<head>
+        
+    
+    
+
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+
+    
+        <meta name="referrer" content="no-referrer-when-downgrade"/>
+    
+
+    <meta name="robots" content="all"/>
+    
+    
+    
+	
+    
+    
+	<title></title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+
+    <meta name="keywords"/>
+    <meta name="name" itemprop="name" content="en_PH"/>
+    <meta name="description" itemprop="description"/>
+    <meta name="image" itemprop="image"/>
+    <meta name="md:locale" content="en_PH"/>
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+        <meta name="partnerid" content="master"/...
+==================================================
+
+--- DOCUMENT 3 ---
+URL: https://www.mini.com.ph/en_PH/home.html
+Title: MINI Philippines | MINI Service Booking Online
+Content Type: automotive
+Original Length: 392308
+Cleaned Length: 46
+Key Info: {'models': ['MINI Service', 'MINI Philippines']}
+Crawl Index: 2
+
+🧹 CLEANED CONTENT (For Copilot):
+----------------------------------------
+MINI Philippines | MINI Service Booking Online
+
+📄 ORIGINAL HTML (Reference):
+----------------------------------------
+
+<!DOCTYPE HTML>
+<!--[if IE 8 ]> <html class="md md-js no-js lt-ie10 lte-ie9 ie8" lang="en-PH"> <![endif]-->
+<!--[if IE 9 ]> <html class="md md-js no-js lt-ie10 ie9" lang="en-PH"> <![endif]-->
+<!--[if (gt IE 9)|!(IE)]><!-->
+<html class="md md-js no-js" lang="en-PH"><!--<![endif]-->
+    
+<head>
+        
+    
+    
+
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+
+    
+        <meta name="referrer" content="no-referrer-when-downgrade"/>
+    
+
+    <meta name="robots" content="all"/>
+    
+    
+    
+	
+    
+    
+	<title>MINI Philippines | MINI Service Booking Online</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+
+    <meta name="keywords"/>
+    <meta name="name" itemprop="name" content="MINI Service Booking Online"/>
+    <meta name="description" itemprop="description"/>
+    <meta name="image" itemprop="image"/>
+    <meta name="md:locale" content="en_ph"/>
+    
+
+    
+
+    
+
+  ...
+==================================================
+
+--- DOCUMENT 4 ---
+URL: https://www.mini.com.ph/en_PH/home.html
+Title: MINI Philippines – New and used cars | MINI.com.ph
+Content Type: automotive
+Original Length: 592457
+Cleaned Length: 50
+Key Info: {'models': ['New and used', 'MINI Philippines']}
+Crawl Index: 3
+
+🧹 CLEANED CONTENT (For Copilot):
+----------------------------------------
+MINI Philippines – New and used cars | MINI.com.ph
+
+📄 ORIGINAL HTML (Reference):
+----------------------------------------
+
+<!DOCTYPE HTML>
+<!--[if IE 8 ]> <html class="md md-js no-js lt-ie10 lte-ie9 ie8" lang="en-PH"> <![endif]-->
+<!--[if IE 9 ]> <html class="md md-js no-js lt-ie10 ie9" lang="en-PH"> <![endif]-->
+<!--[if (gt IE 9)|!(IE)]><!-->
+<html class="md md-js no-js" lang="en-PH"><!--<![endif]-->
+    
+<head>
+        
+    
+    
+
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+
+    
+        <meta name="referrer" content="no-referrer-when-downgrade"/>
+    
+
+    <meta name="robots" content="all"/>
+    
+    
+    
+	
+    
+    
+	<title>MINI Philippines – New and used cars | MINI.com.ph</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+
+    <meta name="keywords"/>
+    <meta name="name" itemprop="name" content="MINI – New and used cars"/>
+    <meta name="description" itemprop="description" content="Thrill-seekers unite: it’s time your drive had kick. Check out the MINI range, design your own mode...
+==================================================
+
+--- DOCUMENT 5 ---
+URL: https://www.mini.com.ph/en_PH/home.html
+Title: 
+Content Type: general
+Original Length: 394651
+Cleaned Length: 0
+Key Info: {}
+Crawl Index: 4
+
+🧹 CLEANED CONTENT (For Copilot):
+----------------------------------------
+
+
+📄 ORIGINAL HTML (Reference):
+----------------------------------------
+
+<!DOCTYPE HTML>
+<!--[if IE 8 ]> <html class="md md-js no-js lt-ie10 lte-ie9 ie8" lang="en-PH"> <![endif]-->
+<!--[if IE 9 ]> <html class="md md-js no-js lt-ie10 ie9" lang="en-PH"> <![endif]-->
+<!--[if (gt IE 9)|!(IE)]><!-->
+<html class="md md-js no-js" lang="en-PH"><!--<![endif]-->
+    
+<head>
+        
+    
+    
+
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+
+    
+        <meta name="referrer" content="no-referrer-when-downgrade"/>
+    
+
+    <meta name="robots" content="all"/>
+    
+    
+    
+	
+    
+    
+	<title></title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+
+    <meta name="keywords"/>
+    <meta name="name" itemprop="name" content="error-page"/>
+    <meta name="description" itemprop="description"/>
+    <meta name="image" itemprop="image"/>
+    <meta name="md:locale" content="en_ph"/>
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+        <meta name="partnerid" content="mas...
+==================================================

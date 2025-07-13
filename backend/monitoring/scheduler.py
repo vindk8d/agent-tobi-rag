@@ -31,19 +31,20 @@ class DataSourceScheduler:
     def refresh_all_sources(self):
         logger.info("Starting daily refresh of data sources...")
         try:
-            sources = db_client.client.table("data_sources").select("id, url, status, scraping_frequency").eq("status", DataSourceStatus.ACTIVE).eq("scraping_frequency", ScrapingFrequency.DAILY).execute()
+            sources = db_client.client.table("data_sources").select("id, name, url, status, scraping_frequency").eq("status", DataSourceStatus.ACTIVE).eq("scraping_frequency", ScrapingFrequency.DAILY).execute()
             if not sources.data:
                 logger.info("No active daily data sources found.")
                 return
             for src in sources.data:
                 url = src.get("url")
                 data_source_id = src.get("id")
+                data_source_name = src.get("name", "Unknown Source")
                 if not url or not data_source_id:
                     continue
                 try:
-                    # For simplicity, treat all as web pages for now
-                    asyncio.run(self.pipeline.process_url(url, document_id=data_source_id))
-                    logger.info(f"Refreshed data source {data_source_id} ({url})")
+                    # Process using the fixed pipeline interface
+                    asyncio.run(self.pipeline.process_url(url, data_source_name=data_source_name))
+                    logger.info(f"Refreshed data source {data_source_id} ({data_source_name}: {url})")
                 except Exception as e:
                     logger.error(f"Error refreshing data source {data_source_id}: {e}")
         except Exception as e:

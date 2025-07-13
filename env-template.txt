@@ -24,6 +24,9 @@ SUPABASE_SERVICE_KEY=your_supabase_service_role_key
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
+# Spider Crawler Configuration
+SPIDER_API_KEY=your_spider_api_key_here
+
 # ======================================================================
 # OPTIONAL CONFIGURATIONS (Can be left as defaults)
 # ======================================================================
