@@ -10,7 +10,7 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 
 ### Backend/Agent Infrastructure
 - `backend/main.py` - FastAPI main application entry point with proper project structure
-- `backend/config.py` - Environment configuration and settings
+- `backend/config.py` - Environment configuration and settings with Supabase database password support for SQL tools
 - `backend/database.py` - Supabase client setup and database connections
 - `backend/api/` - API routes and endpoints organization
 - `backend/models/` - Pydantic models for data validation
@@ -21,7 +21,15 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `backend/agents/` - LangGraph agent components (structure initialized)
 - `backend/agents/state.py` - Minimal LangGraph state schema for conversational RAG agent
 - `backend/agents/rag_agent.py` - Unified tool-calling RAG agent following LangChain best practices: single agent handles both tool calling and execution
-- `backend/agents/tools.py` - Tool-calling functions with @tool decorators for semantic search and source attribution
+- `backend/agents/tools.py` - Tool-calling functions with @tool decorators for semantic search, source attribution, and secure SQL query generation for CRM data with LangChain SQLDatabase integration, restricted table access, comprehensive SQL validation using sqlparse, semantic validation for high-cardinality columns using OpenAI embeddings, query complexity limits (max 10 JOINs, 2-level subqueries, 30-second timeout), comprehensive SQL injection protection with input sanitization, parameterized queries, and advanced pattern detection, plus schema-aware SQL generation with business context prompts, natural language query processing, and intelligent result formatting
+- `backend/agents/test_sql_connection.py` - Test script for validating SQL database connection and table access restrictions
+- `backend/agents/test_sql_validation.py` - Comprehensive test suite for SQL query validation security features including DDL/DML blocking and dangerous pattern detection
+- `backend/agents/test_sql_validation_basic.py` - Basic test demonstrating core SQL validation logic without external dependencies (verified working)
+- `backend/agents/test_semantic_validation_standalone.py` - Comprehensive test suite for semantic validation of high-cardinality columns with mock embeddings (verified working)
+- `backend/agents/test_query_complexity.py` - Test script for query complexity limits validation with full LangChain dependencies
+- `backend/agents/test_query_complexity_standalone.py` - Standalone test suite for query complexity limits (JOIN counting, subquery nesting, length limits) verified working
+- `backend/agents/test_sql_injection_protection.py` - Comprehensive test suite for SQL injection protection including input sanitization, encoding attacks, and advanced patterns (verified working)
+- `backend/agents/test_sql_generation_standalone.py` - Standalone test suite for SQL generation with schema awareness and business context (verified working)
 - `backend/agents/test_tool_calling.py` - Test script demonstrating tool-calling agent functionality
 - `backend/rag/` - RAG system components
 - `backend/rag/embeddings.py` - OpenAI embedding generation
@@ -59,12 +67,14 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `supabase/migrations/001_initial_schema.sql` - Initial database schema with core tables for data sources, documents, conversations, and logging
 - `supabase/migrations/002_vector_extensions.sql` - Vector search setup with pgvector extension and similarity search functions
 - `supabase/migrations/003_rag_tables.sql` - RAG-specific tables for conflicts, metrics, feedback, and proactive suggestions
+- `supabase/migrations/20250115000000_create_crm_sales_tables.sql` - CRM system tables with branches, employees, customers, vehicles, opportunities, transactions, pricing, and activities
+- `supabase/migrations/20250115000001_insert_sample_crm_data.sql` - Sample CRM data for testing and development with realistic sales scenarios
 
 ### Configuration
 - `docker-compose.yml` - Local development environment
-- `requirements.txt` - Python dependencies with OpenAI, LangChain, and all required packages
+- `requirements.txt` - Python dependencies with OpenAI, LangChain, sqlparse for SQL validation, numpy for cosine similarity calculations, and all required packages
 - `package.json` - Node.js dependencies
-- `env-template.txt` - Environment variable template with backend and Next.js frontend configurations
+- `env-template.txt` - Environment variable template with backend and Next.js frontend configurations including SUPABASE_DB_PASSWORD for SQL tools
 - `backend/config.py` - Configuration management with validation functions for all services including Next.js
 - `backend/rag/embeddings.py` - OpenAI text embedding integration with rate limiting and error handling
 - `frontend/.env.local.example` - Next.js specific environment template with NEXT_PUBLIC_ variables
@@ -79,6 +89,7 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - Use Next.js 14 app router for modern React patterns
 - **Website Scraping Deprioritized:** Due to complexity of data gathering, HTML/JS parsing, and scraping methodologies, focus on document upload as primary data source
 - **Dependency Management**: Heavy dependencies (~~Playwright~~, Telegram bot) were removed from initial requirements.txt to optimize build times. They will be added back when their respective tasks are started (see task-specific notes).
+- **SQL Tool Dependencies**: LangChain SQL toolkit dependencies and security packages are included in requirements.txt (sqlalchemy, langchain-community, sqlparse for robust SQL validation and parsing).
 
 ## Tasks
 
@@ -116,11 +127,29 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
   - [x] 4.1 Design minimal LangGraph state schema with user query, retrieved documents, and conversation context
   - [x] 4.2 Implement simple agent graph with core nodes: retrieval, generation, and response formatting
   - [x] 4.3 Create basic tools for semantic search and source attribution (without conflict logging)
-  - [ ] 4.4 Set up LangSmith tracing integration for all agent components and conversation flows
-  - [ ] 4.5 Implement basic conversation memory for maintaining context across interactions
-  - [ ] 4.6 Configure LangChain Expression Language (LCEL) chains for retrieval and generation
-  - [ ] 4.7 Implement graceful fallback responses when no relevant information is found
-  - [ ] 4.8 Test end-to-end conversation flow with document retrieval and response generation
+  - [ ] 4.4 Build secure SQL generation tool for CRM data queries following LangChain best practices
+    - [x] 4.4.1 Set up LangChain SQLDatabase connection with restricted table access (CRM tables only: branches, employees, customers, vehicles, opportunities, transactions, pricing, activities)
+    - [x] 4.4.2 Implement SQL query validation with whitelist of allowed operations (SELECT only, no DDL/DML)
+    - [x] 4.4.3 Create semantic search validation for high-cardinality columns (customer names, vehicle models, employee names) using existing embeddings
+    - [x] 4.4.4 Configure query complexity limits (max 10 JOINs, 2-level nested subqueries, timeout protection)
+    - [x] 4.4.5 Implement SQL injection protection using parameterized queries and input sanitization
+    - [x] 4.4.6 Create SQL generation prompts with table schema awareness and business context
+    - [ ] 4.4.7 Add comprehensive logging for all SQL queries with execution metrics and security audit trail
+    - [ ] 4.4.8 Test SQL tool with various CRM query scenarios and edge cases for security validation
+  - [ ] 4.5 Set up LangSmith tracing integration for all agent components and conversation flows
+  - [ ] 4.6 Implement basic conversation memory for maintaining context across interactions
+  - [ ] 4.7 Configure LangChain Expression Language (LCEL) chains for retrieval and generation
+  - [ ] 4.8 Implement graceful fallback responses when no relevant information is found
+  - [ ] 4.9 Test end-to-end conversation flow with document retrieval and response generation
+  - [ ] 4.10 Conduct comprehensive security testing against malicious attacks and adversarial inputs
+    - [ ] 4.10.1 Test SQL injection protection with various attack vectors (UNION, DROP, comment injection, time-based attacks)
+    - [ ] 4.10.2 Validate prompt injection resistance for RAG and SQL generation components
+    - [ ] 4.10.3 Test semantic validation against adversarial embeddings and similarity attacks
+    - [ ] 4.10.4 Verify input sanitization and length limits for all user inputs
+    - [ ] 4.10.5 Test rate limiting and DoS protection for API endpoints and database queries
+    - [ ] 4.10.6 Validate access control and privilege escalation prevention
+    - [ ] 4.10.7 Test error handling to prevent information disclosure through error messages
+    - [ ] 4.10.8 Create automated security test suite for continuous validation
 
 - [ ] 5.0 Extend Agent with Advanced Features (Post-Basic RAG)
   - [ ] 5.1 Set up persistent conversation memory using LangGraph's built-in persistence with Supabase backend

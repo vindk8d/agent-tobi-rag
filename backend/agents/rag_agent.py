@@ -189,7 +189,8 @@ class UnifiedToolCallingRAGAgent:
                                             logger.info(f"documents type: {type(tool_args['documents'])}")
                                             logger.info(f"documents length: {len(tool_args['documents']) if isinstance(tool_args['documents'], list) else 'Not a list'}")
                                 
-                                if tool_name == "semantic_search":
+                                # Check if tool is async by examining the underlying function
+                                if tool_name in ["semantic_search", "query_crm_data"]:
                                     # Handle async tools
                                     tool_result = await tool.ainvoke(tool_args)
                                 else:

@@ -68,6 +68,7 @@ class SupabaseConfig(BaseSettings):
     url: str = Field(..., env="SUPABASE_URL")
     anon_key: str = Field(..., env="SUPABASE_ANON_KEY")
     service_key: str = Field(..., env="SUPABASE_SERVICE_KEY")
+    db_password: Optional[str] = Field(default=None, env="SUPABASE_DB_PASSWORD")
 
 
 class LangSmithConfig(BaseSettings):
@@ -196,6 +197,7 @@ class Settings(BaseSettings):
     supabase_url: str = Field(..., env="SUPABASE_URL")
     supabase_anon_key: str = Field(..., env="SUPABASE_ANON_KEY")
     supabase_service_key: str = Field(..., env="SUPABASE_SERVICE_KEY")
+    supabase_db_password: Optional[str] = Field(default=None, env="SUPABASE_DB_PASSWORD")
     
     # LangSmith Configuration
     langsmith_tracing_enabled: bool = Field(default=True, env="LANGCHAIN_TRACING_V2")
