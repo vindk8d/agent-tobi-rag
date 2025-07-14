@@ -4,7 +4,7 @@ Semantic retriever for similarity search with configurable threshold and source 
 from typing import List, Dict, Any, Optional
 from .embeddings import OpenAIEmbeddings
 from .vector_store import SupabaseVectorStore
-from ..config import get_settings
+from config import get_settings
 import asyncio
 import logging
 
@@ -32,10 +32,10 @@ class SemanticRetriever:
         embedding_result = await self.embedder.embed_single_text(query)
         embedding = embedding_result.embedding
         # 2. Use threshold and top_k from config if not provided
-        threshold = threshold if threshold is not None else self.settings.rag.similarity_threshold
-        top_k = top_k if top_k is not None else self.settings.rag.max_retrieved_documents
+        final_threshold: float = threshold or self.settings.rag.similarity_threshold or 0.8
+        final_top_k: int = top_k or self.settings.rag.max_retrieved_documents or 10
         # 3. Search
-        results = await self.vector_store.similarity_search(embedding, threshold=threshold, top_k=top_k)
+        results = await self.vector_store.similarity_search(embedding, threshold=final_threshold, top_k=final_top_k)
         # 4. Add source attribution
         for r in results:
             r["source"] = r.get("metadata", {}).get("source")

@@ -21,7 +21,7 @@ from langsmith import traceable
 try:
     from .state import AgentState
     from .tools import get_all_tools, get_tool_names
-    from ..config import get_settings, setup_langsmith_tracing
+    from config import get_settings, setup_langsmith_tracing
 except ImportError:
     # Fallback to absolute imports when loaded directly by LangGraph Studio
     # Use explicit path resolution WITHOUT calling resolve() to avoid os.getcwd()

@@ -11,7 +11,7 @@ import openai
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import tiktoken
 
-from ..config import get_settings
+from config import get_settings
 
 
 @dataclass
@@ -32,9 +32,9 @@ class OpenAIEmbeddings:
     
     def __init__(self):
         self.settings = None  # Will be loaded asynchronously
-        self.client = None  # Will be initialized asynchronously
-        self.model = None  # Will be set asynchronously
-        self.batch_size = None  # Will be set asynchronously
+        self.client: Optional[openai.AsyncOpenAI] = None  # Will be initialized asynchronously
+        self.model: str = "text-embedding-3-small"  # Default model
+        self.batch_size: int = 100  # Default batch size
         self.tokenizer = None  # Will be initialized asynchronously
     
     async def _init_tokenizer_async(self, model: str):
@@ -51,7 +51,7 @@ class OpenAIEmbeddings:
     
     async def _ensure_initialized(self):
         """Ensure the client is initialized asynchronously."""
-        if self.settings is None:
+        if self.client is None:
             self.settings = await get_settings()
             
             # Initialize OpenAI async client with proper configuration
@@ -61,8 +61,8 @@ class OpenAIEmbeddings:
                 max_retries=3
             )
             
-            self.model = self.settings.openai.embedding_model
-            self.batch_size = self.settings.rag.embedding_batch_size
+            self.model = self.settings.openai.embedding_model or "text-embedding-3-small"
+            self.batch_size = self.settings.rag.embedding_batch_size or 100
             
             # Initialize tokenizer asynchronously to prevent blocking calls
             self.tokenizer = await self._init_tokenizer_async(self.model)
@@ -107,6 +107,9 @@ class OpenAIEmbeddings:
     async def _create_embedding(self, text: str) -> List[float]:
         """Create a single embedding with retry logic"""
         await self._ensure_initialized()
+        
+        if self.client is None:
+            raise RuntimeError("OpenAI client not initialized")
         
         response = await self.client.embeddings.create(
             input=text,

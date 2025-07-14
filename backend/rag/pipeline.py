@@ -24,7 +24,7 @@ class DocumentProcessingPipeline:
         Store a document chunk in the document_chunks table.
         Returns the chunk document ID.
         """
-        from ..database import db_client
+        from database import db_client
         
         # Calculate content stats
         content = chunk.page_content
@@ -55,12 +55,12 @@ class DocumentProcessingPipeline:
             logger.error(f"Error storing document chunk {chunk_index}: {e}")
             return ""
 
-    def _get_or_create_data_source(self, url: str, name: str = None) -> str:
+    def _get_or_create_data_source(self, url: str, name: Optional[str] = None) -> str:
         """
         Get existing data source by URL or create a new one.
         Returns the data source ID.
         """
-        from ..database import db_client
+        from database import db_client
         
         try:
             # Try to find existing data source by URL
@@ -126,12 +126,25 @@ class DocumentProcessingPipeline:
             return {"success": False, "error": "No chunks stored"}
         
         # 4. Embed chunks
-        embedded_chunks = await self.embedder.embed_documents(chunk_dicts)
+        # Extract just the text content for embedding
+        texts_to_embed = [chunk_dict["content"] for chunk_dict in chunk_dicts]
+        embeddings = await self.embedder.embed_documents(texts_to_embed)
+        
+        # Combine embeddings with chunk metadata
+        embedded_chunks = []
+        for i, (chunk_dict, embedding) in enumerate(zip(chunk_dicts, embeddings)):
+            embedded_chunks.append({
+                "id": chunk_dict["id"],
+                "content": chunk_dict["content"],
+                "embedding": embedding,
+                "metadata": chunk_dict["metadata"],
+                "embedding_model": getattr(self.embedder, 'model', None) or "text-embedding-3-small"
+            })
         
         # 5. Store embeddings in vector DB
         embedding_ids = []
         for chunk in embedded_chunks:
-            chunk_id = self.vector_store.upsert_embedding(
+            chunk_id = await self.vector_store.upsert_embedding(
                 document_chunk_id=chunk["id"],  # Use the chunk document ID
                 embedding=chunk["embedding"],
                 model_name=chunk.get("embedding_model", "text-embedding-3-small"),

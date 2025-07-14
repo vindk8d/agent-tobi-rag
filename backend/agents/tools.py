@@ -12,8 +12,8 @@ from langchain_core.tools import tool
 from pydantic.v1 import BaseModel, Field
 from langsmith import traceable
 
-from ..rag.retriever import SemanticRetriever
-from ..config import get_settings
+from rag.retriever import SemanticRetriever
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 

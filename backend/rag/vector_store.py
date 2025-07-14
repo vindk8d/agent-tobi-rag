@@ -3,7 +3,7 @@ Supabase Vector Store operations for RAG system: upsert, similarity search, and 
 """
 
 from typing import List, Dict, Any, Optional
-from ..database import db_client
+from database import db_client
 import logging
 import asyncio
 
@@ -14,12 +14,7 @@ class SupabaseVectorStore:
     Vector store for storing and searching embeddings in Supabase (pgvector).
     """
     def __init__(self):
-        self.client = None  # Will be initialized asynchronously
-
-    async def _ensure_client(self):
-        """Ensure the database client is initialized asynchronously."""
-        if self.client is None:
-            self.client = await db_client.async_client()
+        self.client = db_client.client  # Use the synchronous client directly
 
     async def upsert_embedding(self, document_chunk_id: str, embedding: List[float], model_name: str = "text-embedding-3-small", metadata: Optional[Dict[str, Any]] = None) -> str:
         """
@@ -27,7 +22,6 @@ class SupabaseVectorStore:
         Returns the embedding row id.
         """
         try:
-            await self._ensure_client()
             data = {
                 "document_chunk_id": document_chunk_id,
                 "embedding": embedding,
@@ -54,7 +48,6 @@ class SupabaseVectorStore:
         Get all embeddings with their associated document content.
         """
         try:
-            await self._ensure_client()
             # Join embeddings with document_chunks to get content
             result = await asyncio.to_thread(
                 lambda: self.client.table("embeddings").select(
@@ -95,7 +88,6 @@ class SupabaseVectorStore:
         Get embeddings for a specific data source.
         """
         try:
-            await self._ensure_client()
             # Get data source ID first
             ds_result = await asyncio.to_thread(
                 lambda: self.client.table("data_sources").select("id").eq("name", source_name).execute()
@@ -131,8 +123,6 @@ class SupabaseVectorStore:
         Get statistics about stored embeddings.
         """
         try:
-            await self._ensure_client()
-            
             # Get basic counts
             embeddings_result = await asyncio.to_thread(
                 lambda: self.client.table("embeddings").select("id, document_chunk_id, model_name, created_at").execute()
@@ -165,8 +155,6 @@ class SupabaseVectorStore:
         Perform similarity search using the database's similarity_search function.
         """
         try:
-            await self._ensure_client()
-            
             # Use the existing similarity_search function
             # Note: Database function uses > instead of >=, so we subtract a small epsilon
             adjusted_threshold = max(0.0, threshold - 0.001)
@@ -199,8 +187,6 @@ class SupabaseVectorStore:
         Perform hybrid search using the database's hybrid_search function.
         """
         try:
-            await self._ensure_client()
-            
             # Use the existing hybrid_search function
             # Note: Database function uses > instead of >=, so we subtract a small epsilon
             adjusted_threshold = max(0.0, threshold - 0.001)

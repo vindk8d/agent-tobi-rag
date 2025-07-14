@@ -9,7 +9,7 @@ import requests
 from bs4 import BeautifulSoup
 import os
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from ..config import get_settings_sync
+from config import get_settings_sync
 
 class DocumentLoader:
     """
@@ -80,7 +80,7 @@ async def split_documents(
     Split a list of LangChain Document objects into text chunks using RecursiveCharacterTextSplitter.
     Uses chunk size and overlap from config if not provided.
     """
-    from ..config import get_settings
+    from config import get_settings
     settings = await get_settings()
     chunk_size = chunk_size or settings.rag.chunk_size
     chunk_overlap = chunk_overlap or settings.rag.chunk_overlap
