@@ -12,6 +12,8 @@ import concurrent.futures
 import threading
 import html
 import urllib.parse
+import functools
+import hashlib
 from typing import List, Dict, Any, Optional, Set, Tuple
 
 from langchain_core.tools import tool
@@ -38,6 +40,10 @@ _retriever = None
 _settings = None
 _sql_database = None
 _embeddings = None
+
+# Simple cache for search results (in production, use Redis or similar)
+_search_cache = {}
+_cache_max_size = 50
 
 # Define CRM table names that are allowed for SQL queries
 CRM_TABLES = [
@@ -898,6 +904,25 @@ async def _get_embeddings():
     if _embeddings is None:
         _embeddings = OpenAIEmbeddings()
     return _embeddings
+
+def _get_cache_key(query: str, top_k: int, threshold: float) -> str:
+    """Generate a cache key for search results."""
+    return hashlib.md5(f"{query}:{top_k}:{threshold}".encode()).hexdigest()
+
+def _get_cached_result(cache_key: str) -> Optional[str]:
+    """Get cached result if available."""
+    return _search_cache.get(cache_key)
+
+def _cache_result(cache_key: str, result: str):
+    """Cache a search result with LRU eviction."""
+    global _search_cache
+    
+    # Simple LRU: if cache is full, remove oldest entry
+    if len(_search_cache) >= _cache_max_size:
+        oldest_key = next(iter(_search_cache))
+        del _search_cache[oldest_key]
+    
+    _search_cache[cache_key] = result
 
 def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     """Calculate cosine similarity between two vectors."""
@@ -1794,6 +1819,13 @@ async def semantic_search(query: str, top_k: Optional[int] = None, threshold: Op
         top_k = top_k or settings.rag_max_retrieved_documents
         threshold = threshold or settings.rag_similarity_threshold
         
+        # Check cache first
+        cache_key = _get_cache_key(query, top_k, threshold)
+        cached_result = _get_cached_result(cache_key)
+        if cached_result:
+            logger.info(f"Returning cached result for: {query}")
+            return cached_result
+        
         logger.info(f"Performing semantic search for: {query}")
         
         # Retrieve documents
@@ -1826,7 +1858,11 @@ async def semantic_search(query: str, top_k: Optional[int] = None, threshold: Op
                 "metadata": doc.get("metadata", {})
             })
         
-        return json.dumps(results, indent=2)
+        # Cache the result before returning
+        result_json = json.dumps(results, indent=2)
+        _cache_result(cache_key, result_json)
+        
+        return result_json
         
     except Exception as e:
         logger.error(f"Error in semantic search: {str(e)}")
@@ -1930,48 +1966,7 @@ def build_context(documents: Optional[List[Dict[str, Any]]] = None) -> str:
         return f"Error building document context: {str(e)}"
 
 
-@tool("get_conversation_summary")
-@traceable(name="get_conversation_summary_tool")
-def get_conversation_summary(conversation_history: Optional[List[Dict[str, str]]] = None) -> str:
-    """
-    Get a summary of the recent conversation for context.
-    
-    Use this tool to understand the conversation context before answering questions.
-    If no conversation history is provided, returns a default message.
-    """
-    try:
-        if conversation_history is None:
-            conversation_history = []
-        
-        if not conversation_history or not isinstance(conversation_history, list):
-            logger.info(f"get_conversation_summary called with: {type(conversation_history)}")
-            return "No previous conversation available."
-        
-        if len(conversation_history) == 0:
-            return "No previous conversation available."
-        
-        # Get last 5 messages for context
-        recent_messages = conversation_history[-5:]
-        
-        summary_parts = []
-        for msg in recent_messages:
-            if not isinstance(msg, dict):
-                logger.warning(f"Invalid message format: {type(msg)}")
-                continue
-                
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            if content:  # Only include messages with content
-                summary_parts.append(f"{role.capitalize()}: {content}")
-        
-        if not summary_parts:
-            return "No meaningful conversation history found."
-        
-        return "Recent conversation:\n" + "\n".join(summary_parts)
-        
-    except Exception as e:
-        logger.error(f"Error getting conversation summary: {str(e)}")
-        return f"Error getting conversation summary: {str(e)}"
+# get_conversation_summary tool removed - context is now directly appended to messages in the moving context window
 
 
 async def _generate_sql_with_context(question: str, time_period: Optional[str] = None) -> str:
@@ -2424,7 +2419,7 @@ def get_all_tools():
         semantic_search,
         format_sources,
         build_context,
-        get_conversation_summary,
+        # get_conversation_summary tool removed - context is now directly appended to messages
         query_crm_data
     ]
 

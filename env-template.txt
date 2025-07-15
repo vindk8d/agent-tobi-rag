@@ -21,6 +21,9 @@ SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_KEY=your_supabase_service_role_key
 SUPABASE_DB_PASSWORD=your_database_password_here
 
+# Note: SUPABASE_DB_PASSWORD is required for LangGraph PostgreSQL persistence
+# You can find this in your Supabase dashboard under Settings > Database
+
 # Supabase Configuration (Frontend - Next.js)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
@@ -33,7 +36,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 # ======================================================================
 
 # LangSmith Configuration (for monitoring - optional)
-LANGSMITH_TRACING=true
+LANGCHAIN_TRACING_V2=true
 LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
 LANGCHAIN_API_KEY=your_langsmith_api_key_here
 LANGCHAIN_PROJECT=salesperson-copilot-rag

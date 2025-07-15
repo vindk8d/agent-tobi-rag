@@ -9,7 +9,6 @@ from .tools import (
     semantic_search,
     format_sources,
     build_context,
-    get_conversation_summary,
     get_all_tools,
     get_tool_names
 )
@@ -24,7 +23,6 @@ __all__ = [
     "semantic_search",
     "format_sources",
     "build_context",
-    "get_conversation_summary",
     "get_all_tools",
     "get_tool_names"
 ] 

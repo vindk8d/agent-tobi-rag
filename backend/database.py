@@ -26,14 +26,14 @@ class DatabaseClient:
         try:
             # Load environment variables directly without blocking calls
             supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_ANON_KEY")
+            supabase_service_key = os.getenv("SUPABASE_SERVICE_KEY")
             
-            if not supabase_url or not supabase_key:
-                raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be set")
+            if not supabase_url or not supabase_service_key:
+                raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
             
-            # Create client without blocking calls
-            self._client = create_client(supabase_url, supabase_key)
-            logger.info("Supabase client initialized successfully")
+            # Create client with service key for backend operations (bypasses RLS)
+            self._client = create_client(supabase_url, supabase_service_key)
+            logger.info("Supabase client initialized successfully with service key")
             
         except Exception as e:
             logger.error(f"Failed to initialize Supabase client: {e}")
@@ -46,13 +46,13 @@ class DatabaseClient:
             
         try:
             supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_ANON_KEY")
+            supabase_service_key = os.getenv("SUPABASE_SERVICE_KEY")
             
-            if not supabase_url or not supabase_key:
-                raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be set")
+            if not supabase_url or not supabase_service_key:
+                raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
             
-            self._client = create_client(supabase_url, supabase_key)
-            logger.info("Supabase client initialized successfully")
+            self._client = create_client(supabase_url, supabase_service_key)
+            logger.info("Supabase client initialized successfully with service key")
             
         except Exception as e:
             logger.error(f"Failed to initialize Supabase client: {e}")

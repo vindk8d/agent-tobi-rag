@@ -62,7 +62,7 @@ class OpenAIEmbeddings:
             )
             
             self.model = self.settings.openai.embedding_model or "text-embedding-3-small"
-            self.batch_size = self.settings.rag.embedding_batch_size or 100
+            self.batch_size = min(self.settings.rag.embedding_batch_size or 100, 50)
             
             # Initialize tokenizer asynchronously to prevent blocking calls
             self.tokenizer = await self._init_tokenizer_async(self.model)

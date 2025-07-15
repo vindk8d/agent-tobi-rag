@@ -52,23 +52,8 @@ class OpenAIConfig(BaseSettings):
     api_key: str = Field(..., env="OPENAI_API_KEY")
     embedding_model: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     chat_model: str = Field(default="gpt-4o-mini", env="OPENAI_CHAT_MODEL")
-    max_tokens: int = Field(default=4000, env="OPENAI_MAX_TOKENS")
+    max_tokens: int = Field(default=1500, env="OPENAI_MAX_TOKENS")
     temperature: float = Field(default=0.3, env="OPENAI_TEMPERATURE")
-
-
-class SupabaseConfig(BaseSettings):
-    """Supabase configuration"""
-    model_config = SettingsConfigDict(
-        env_prefix="SUPABASE_",
-        # REMOVED: env_file to prevent automatic .env discovery and os.getcwd() calls
-        case_sensitive=False,
-        extra='allow'
-    )
-    
-    url: str = Field(..., env="SUPABASE_URL")
-    anon_key: str = Field(..., env="SUPABASE_ANON_KEY")
-    service_key: str = Field(..., env="SUPABASE_SERVICE_KEY")
-    db_password: Optional[str] = Field(default=None, env="SUPABASE_DB_PASSWORD")
 
 
 class LangSmithConfig(BaseSettings):
@@ -190,7 +175,7 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")
     openai_embedding_model: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     openai_chat_model: str = Field(default="gpt-4o-mini", env="OPENAI_CHAT_MODEL")
-    openai_max_tokens: int = Field(default=4000, env="OPENAI_MAX_TOKENS")
+    openai_max_tokens: int = Field(default=1500, env="OPENAI_MAX_TOKENS")
     openai_temperature: float = Field(default=0.3, env="OPENAI_TEMPERATURE")
     
     # Supabase Configuration
@@ -236,10 +221,31 @@ class Settings(BaseSettings):
     @property 
     def supabase(self):
         from types import SimpleNamespace
+        
+        # Generate PostgreSQL connection string for LangGraph persistence
+        def get_postgresql_connection_string():
+            if not self.supabase_db_password:
+                raise ValueError("SUPABASE_DB_PASSWORD is required for PostgreSQL connection")
+            
+            # Extract project ID from Supabase URL
+            # URL format: https://your-project-id.supabase.co
+            import re
+            match = re.match(r'https://([^.]+)\.supabase\.co', self.supabase_url)
+            if not match:
+                raise ValueError("Invalid Supabase URL format")
+            
+            project_id = match.group(1)
+            
+            # Use pooler connection format for better compatibility (supports both IPv4 and IPv6)
+            # Format: postgres://postgres.{project_id}:{password}@aws-0-{region}.pooler.supabase.com:5432/postgres
+            # Using ap-southeast-1 as the correct region for this project
+            return f"postgres://postgres.{project_id}:{self.supabase_db_password}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres"
+        
         return SimpleNamespace(
             url=self.supabase_url,
             anon_key=self.supabase_anon_key,
-            service_key=self.supabase_service_key
+            service_key=self.supabase_service_key,
+            postgresql_connection_string=get_postgresql_connection_string()
         )
     
     @property

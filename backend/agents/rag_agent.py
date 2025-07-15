@@ -5,7 +5,7 @@ Single agent node handles both tool calling and execution.
 
 from typing import Dict, Any, List
 from datetime import datetime
-from uuid import uuid4
+from uuid import uuid4, UUID
 import logging
 import json
 import sys
@@ -14,14 +14,15 @@ import asyncio
 
 from langgraph.graph import StateGraph, START, END
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage, BaseMessage
 from langsmith import traceable
 
 # Handle both relative and absolute imports for LangGraph Studio compatibility
 try:
     from .state import AgentState
     from .tools import get_all_tools, get_tool_names
-    from config import get_settings, setup_langsmith_tracing
+    from .memory_manager import memory_manager
+    from ..config import get_settings, setup_langsmith_tracing
 except ImportError:
     # Fallback to absolute imports when loaded directly by LangGraph Studio
     # Use explicit path resolution WITHOUT calling resolve() to avoid os.getcwd()
@@ -46,6 +47,7 @@ except ImportError:
     # Now import with absolute paths
     from backend.agents.state import AgentState
     from backend.agents.tools import get_all_tools, get_tool_names
+    from backend.agents.memory_manager import memory_manager
     from backend.config import get_settings, setup_langsmith_tracing
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,10 @@ class UnifiedToolCallingRAGAgent:
         # Load settings asynchronously
         self.settings = await get_settings()
         
+        # Initialize memory manager first
+        await memory_manager._ensure_initialized()
+        self.memory_manager = memory_manager
+        
         # Initialize LangSmith tracing asynchronously
         await setup_langsmith_tracing()
         
@@ -92,7 +98,8 @@ class UnifiedToolCallingRAGAgent:
         # Create a tool lookup for execution
         self.tool_map = {tool.name: tool for tool in self.tools}
         
-        self.graph = self._build_graph()
+        # Build graph with persistence
+        self.graph = await self._build_graph()
         
         # Log tracing status
         if self.settings.langsmith.tracing_enabled:
@@ -102,21 +109,132 @@ class UnifiedToolCallingRAGAgent:
             
         self._initialized = True
     
-    def _build_graph(self) -> StateGraph:
-        """Build a simple graph with unified agent node."""
+
+    
+    async def _build_graph(self) -> StateGraph:
+        """Build a graph with automatic checkpointing and state persistence between agent steps."""
+        # Import memory manager using absolute import for LangGraph Studio compatibility
+        try:
+            from .memory_manager import memory_manager
+        except ImportError:
+            # Fallback to absolute import when loaded directly by LangGraph Studio
+            from backend.agents.memory_manager import memory_manager
+        
+        # Get checkpointer for persistence
+        checkpointer = await memory_manager.get_checkpointer()
+        
         graph = StateGraph(AgentState)
         
-        # Single agent node that handles everything
+        # Add nodes with automatic checkpointing between steps
+        graph.add_node("memory_preparation", self._memory_preparation_node)
         graph.add_node("agent", self._unified_agent_node)
+        graph.add_node("memory_update", self._memory_update_node)
         
-        # Simple linear flow
-        graph.add_edge(START, "agent")
-        graph.add_edge("agent", END)
+        # Graph flow with automatic checkpointing between each step
+        graph.add_edge(START, "memory_preparation")
+        graph.add_edge("memory_preparation", "agent")
+        graph.add_edge("agent", "memory_update")
+        graph.add_edge("memory_update", END)
         
-        return graph.compile()
+        # Compile with checkpointer for automatic persistence between steps
+        return graph.compile(checkpointer=checkpointer)
+    
+
+    
+
+    
+
+    
+
+
+    @traceable(name="memory_preparation_node")
+    async def _memory_preparation_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Prepare conversation memory before agent execution.
+        With proper LangGraph persistence, this mainly handles conversation tracking.
+        """
+        try:
+            await self._ensure_initialized()
+            
+            messages = state.get("messages", [])
+            conversation_id = state.get("conversation_id")
+            user_id = state.get("user_id")
+            
+            # Extract thread_id from config if no conversation_id is provided
+            # This ensures persistence works in LangGraph Studio
+            if not conversation_id and config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+                if thread_id:
+                    conversation_id = UUID(thread_id)
+                    logger.info(f"Using thread_id {thread_id} as conversation_id for persistence")
+            
+            logger.info(f"Memory preparation for conversation {conversation_id}: {len(messages)} messages")
+            
+            # Load additional context from database if needed
+            if conversation_id:
+                long_term_context = await self.memory_manager.load_conversation_context(conversation_id, user_id or "anonymous")
+                if long_term_context:
+                    logger.info(f"Loaded additional context from database for conversation {conversation_id}")
+            
+            # Return state with minimal changes - LangGraph handles message persistence
+            return {
+                "messages": messages,  # LangGraph manages message history automatically
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "conversation_summary": state.get("conversation_summary"),
+                "retrieved_docs": state.get("retrieved_docs", []),
+                "sources": state.get("sources", [])
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in memory preparation node: {str(e)}")
+            # Return original state on error
+            return state
+    
+    @traceable(name="memory_update_node")
+    async def _memory_update_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Update conversation memory after agent execution.
+        With proper LangGraph persistence, this mainly handles database synchronization.
+        """
+        try:
+            await self._ensure_initialized()
+            
+            messages = state.get("messages", [])
+            conversation_id = state.get("conversation_id")
+            user_id = state.get("user_id")
+            current_summary = state.get("conversation_summary")
+            
+            # Extract thread_id from config if no conversation_id is provided
+            if not conversation_id and config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+                if thread_id:
+                    conversation_id = UUID(thread_id)
+                    logger.info(f"Using thread_id {thread_id} as conversation_id for persistence")
+            
+            logger.info(f"Memory update for conversation {conversation_id}: {len(messages)} messages")
+            
+            # Save to database for additional context (complements LangGraph persistence)
+            if conversation_id:
+                await self.memory_manager.save_conversation_to_database(
+                    conversation_id, 
+                    user_id or "anonymous",
+                    messages,
+                    current_summary
+                )
+            
+            logger.info(f"Memory update complete: conversation state saved to database")
+            
+            # Return state unchanged - LangGraph handles persistence automatically
+            return state
+            
+        except Exception as e:
+            logger.error(f"Error in memory update node: {str(e)}")
+            # Return original state on error
+            return state
     
     @traceable(name="unified_agent_node")
-    async def _unified_agent_node(self, state: AgentState) -> Dict[str, Any]:
+    async def _unified_agent_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Unified agent node that handles tool calling and execution.
         Follows LangChain best practices for tool calling workflow.
@@ -125,25 +243,43 @@ class UnifiedToolCallingRAGAgent:
             # Ensure initialization before processing
             await self._ensure_initialized()
             
-            logger.info(f"Agent processing query: {state.get('user_query', 'No query')}")
+            # Extract current query from messages for logging
+            original_messages = state.get("messages", [])
+            current_query = "No query"
+            for msg in reversed(original_messages):
+                if hasattr(msg, 'type') and msg.type == 'human':
+                    current_query = msg.content
+                    break
+                elif isinstance(msg, dict) and msg.get('role') == 'user':
+                    current_query = msg.get('content', '')
+                    break
             
-            # Build initial messages
-            messages = [
-                SystemMessage(content=self._get_system_prompt()),
-                HumanMessage(content=self._build_user_prompt(state))
+            # Log thread_id and conversation_id for debugging
+            conversation_id = state.get("conversation_id")
+            thread_id = config.get("configurable", {}).get("thread_id") if config else None
+            logger.info(f"Agent processing query: {current_query}")
+            logger.info(f"Thread ID: {thread_id}, Conversation ID: {conversation_id}")
+            
+            # Preserve original messages and add system prompt
+            # Instead of creating a new messages list, work with the original state
+            processing_messages = [
+                SystemMessage(content=self._get_system_prompt())
             ]
             
+            # Add original messages to preserve the conversation context
+            processing_messages.extend(original_messages)
+            
             # Step 3: Tool calling - let model decide when to use tools
-            max_iterations = 3  # Prevent infinite loops
+            max_tool_iterations = 3  # Allow more tool calls if needed
             iteration = 0
             
-            while iteration < max_iterations:
+            while iteration < max_tool_iterations:
                 iteration += 1
                 logger.info(f"Agent iteration {iteration}")
                 
                 # Call the model
-                response = await self.llm.ainvoke(messages)
-                messages.append(response)
+                response = await self.llm.ainvoke(processing_messages)
+                processing_messages.append(response)
                 
                 # Check if model wants to use tools
                 if hasattr(response, 'tool_calls') and response.tool_calls:
@@ -161,34 +297,6 @@ class UnifiedToolCallingRAGAgent:
                             # Get the tool and execute it
                             tool = self.tool_map.get(tool_name)
                             if tool:
-                                # Add extra validation for specific tools
-                                if tool_name == "format_sources":
-                                    logger.info(f"format_sources called with args: {tool_args}")
-                                    logger.info(f"args type: {type(tool_args)}")
-                                    if isinstance(tool_args, dict):
-                                        logger.info(f"args keys: {list(tool_args.keys())}")
-                                        if 'sources' in tool_args:
-                                            logger.info(f"sources type: {type(tool_args['sources'])}")
-                                            logger.info(f"sources length: {len(tool_args['sources']) if isinstance(tool_args['sources'], list) else 'Not a list'}")
-                                
-                                elif tool_name == "get_conversation_summary":
-                                    logger.info(f"get_conversation_summary called with args: {tool_args}")
-                                    logger.info(f"args type: {type(tool_args)}")
-                                    if isinstance(tool_args, dict):
-                                        logger.info(f"args keys: {list(tool_args.keys())}")
-                                        if 'conversation_history' in tool_args:
-                                            logger.info(f"conversation_history type: {type(tool_args['conversation_history'])}")
-                                            logger.info(f"conversation_history length: {len(tool_args['conversation_history']) if isinstance(tool_args['conversation_history'], list) else 'Not a list'}")
-                                
-                                elif tool_name == "build_context":
-                                    logger.info(f"build_context called with args: {tool_args}")
-                                    logger.info(f"args type: {type(tool_args)}")
-                                    if isinstance(tool_args, dict):
-                                        logger.info(f"args keys: {list(tool_args.keys())}")
-                                        if 'documents' in tool_args:
-                                            logger.info(f"documents type: {type(tool_args['documents'])}")
-                                            logger.info(f"documents length: {len(tool_args['documents']) if isinstance(tool_args['documents'], list) else 'Not a list'}")
-                                
                                 # Check if tool is async by examining the underlying function
                                 if tool_name in ["semantic_search", "query_crm_data"]:
                                     # Handle async tools
@@ -203,7 +311,7 @@ class UnifiedToolCallingRAGAgent:
                                     tool_call_id=tool_call_id,
                                     name=tool_name
                                 )
-                                messages.append(tool_message)
+                                processing_messages.append(tool_message)
                                 
                             else:
                                 # Tool not found
@@ -214,7 +322,7 @@ class UnifiedToolCallingRAGAgent:
                                     tool_call_id=tool_call_id,
                                     name=tool_name
                                 )
-                                messages.append(tool_message)
+                                processing_messages.append(tool_message)
                                 
                         except Exception as e:
                             # Tool execution failed
@@ -226,7 +334,7 @@ class UnifiedToolCallingRAGAgent:
                                 tool_call_id=tool_call_id,
                                 name=tool_name
                             )
-                            messages.append(tool_message)
+                            processing_messages.append(tool_message)
                     
                     # Continue to next iteration to let model process tool results
                     continue
@@ -235,32 +343,62 @@ class UnifiedToolCallingRAGAgent:
                     logger.info("Model provided final response without tool calls")
                     break
             
-            # Extract final response
-            final_response = self._extract_final_response(messages)
-            sources = self._extract_sources_from_messages(messages)
-            tools_used = self._get_tools_used_from_messages(messages)
+            # If we exited the loop due to max iterations, ensure we get a final response
+            if iteration >= max_tool_iterations:
+                logger.info("Max tool iterations reached, getting final response")
+                # Make one final call to get a proper response
+                final_response = await self.llm.ainvoke(processing_messages)
+                processing_messages.append(final_response)
+                logger.info("Generated final response after tool execution")
             
+            # Extract sources from messages and update state
+            sources = self._extract_sources_from_messages(processing_messages)
+            
+            # Update the original messages with the AI responses (excluding system message)
+            updated_messages = list(original_messages)
+            for msg in processing_messages[1:]:  # Skip system message
+                if hasattr(msg, 'type') and msg.type in ['ai', 'tool']:
+                    updated_messages.append(msg)
+            
+            # Extract thread_id from config if needed for conversation_id
+            conversation_id = state.get("conversation_id")
+            if not conversation_id and config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+                if thread_id:
+                    conversation_id = UUID(thread_id)
+            
+            # Update state with original messages preserved plus new responses
             return {
-                "messages": messages,
-                "response": final_response,
+                "messages": updated_messages,
                 "sources": sources,
-                "response_metadata": {
-                    "generation_timestamp": datetime.now().isoformat(),
-                    "model_used": self.settings.openai_chat_model if self.settings else "gpt-4o-mini",
-                    "tools_used": tools_used,
-                    "iterations": iteration
-                },
-                "current_step": "agent_complete",
-                "timestamp": datetime.now()
+                "retrieved_docs": state.get("retrieved_docs", []),
+                "conversation_id": conversation_id,
+                "user_id": state.get("user_id"),
+                "conversation_summary": state.get("conversation_summary")  # Preserve existing summary
             }
             
         except Exception as e:
             logger.error(f"Error in unified agent node: {str(e)}")
+            # Add error message to the conversation
+            original_messages = state.get("messages", [])
+            error_message = AIMessage(content="I apologize, but I encountered an error while processing your request.")
+            updated_messages = list(original_messages)
+            updated_messages.append(error_message)
+            
+            # Extract thread_id from config if needed for conversation_id
+            conversation_id = state.get("conversation_id")
+            if not conversation_id and config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+                if thread_id:
+                    conversation_id = UUID(thread_id)
+            
             return {
-                "messages": state.get("messages", []),
-                "response": "I apologize, but I encountered an error while processing your request.",
-                "error_message": f"Agent error: {str(e)}",
-                "current_step": "agent_failed"
+                "messages": updated_messages,
+                "sources": state.get("sources", []),
+                "retrieved_docs": state.get("retrieved_docs", []),
+                "conversation_id": conversation_id,
+                "user_id": state.get("user_id"),
+                "conversation_summary": state.get("conversation_summary")  # Preserve existing summary
             }
     
     def _get_system_prompt(self) -> str:
@@ -280,7 +418,7 @@ Tool Usage Examples:
 - semantic_search: {{"query": "your search query", "top_k": 5}}
 - build_context: {{"documents": [list of documents from semantic_search]}}
 - format_sources: {{"sources": [list of documents from semantic_search]}}
-- get_conversation_summary: {{"conversation_history": [list of conversation messages]}} or {{}} for no history
+- query_crm_data: {{"question": "specific business question about sales, customers, vehicles, pricing"}}
 
 Guidelines:
 - Always search for documents first when answering questions
@@ -290,50 +428,18 @@ Guidelines:
 - If no relevant documents are found, clearly indicate this
 - You can use multiple tools in sequence as needed
 - When using format_sources, pass the documents array from semantic_search results as the sources parameter
-- Use get_conversation_summary to understand previous conversation context when needed
+
+**Important Context Handling:**
+- Previous conversation context is automatically provided in your messages, so you don't need to ask for it
+- If a user asks a vague question like "How much is it?" or "What about both?", check the previous conversation context in your current message to understand what they're referring to
+- For specific product/vehicle questions, use query_crm_data to get current pricing and availability
+- Be helpful by suggesting common items they might be asking about if context is unclear
 
 Important: Use the tools to help you provide the best possible assistance to the user."""
     
-    def _build_user_prompt(self, state: AgentState) -> str:
-        """Build the user prompt with context."""
-        user_query = state.get("user_query", "")
-        
-        # If user_query is empty, try to extract from messages (LangGraph Studio format)
-        if not user_query:
-            messages = state.get("messages", [])
-            for msg in messages:
-                if hasattr(msg, 'type') and msg.type == 'human':
-                    user_query = msg.content
-                    break
-                elif isinstance(msg, dict) and msg.get('role') == 'user':
-                    user_query = msg.get('content', '')
-                    break
-        
-        conversation_history = state.get("conversation_history", [])
-        
-        prompt_parts = []
-        
-        if conversation_history:
-            prompt_parts.append("Previous conversation context:")
-            for msg in conversation_history[-3:]:  # Last 3 messages
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                prompt_parts.append(f"{role.capitalize()}: {content}")
-            prompt_parts.append("")
-        
-        prompt_parts.append(f"User's question: {user_query}")
-        
-        return "\n".join(prompt_parts)
+
     
-    def _extract_final_response(self, messages: List) -> str:
-        """Extract the final response from the message chain."""
-        # Get the last AI message that's not a tool call
-        for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and not (hasattr(msg, 'tool_calls') and msg.tool_calls):
-                return msg.content
-        
-        # If no final response found, return a default message
-        return "I apologize, but I couldn't generate a proper response."
+
     
     def _extract_sources_from_messages(self, messages: List) -> List[Dict[str, Any]]:
         """Extract sources from tool call results in messages."""
@@ -355,47 +461,65 @@ Important: Use the tools to help you provide the best possible assistance to the
         
         return sources
     
-    def _get_tools_used_from_messages(self, messages: List) -> List[str]:
-        """Get list of tools used from the messages."""
-        tools_used = []
-        
-        for message in messages:
-            if isinstance(message, AIMessage) and hasattr(message, 'tool_calls') and message.tool_calls:
-                for tool_call in message.tool_calls:
-                    tool_name = tool_call.get("name")
-                    if tool_name and tool_name not in tools_used:
-                        tools_used.append(tool_name)
-        
-        return tools_used
+
     
     @traceable(name="rag_agent_invoke")
     async def invoke(self, user_query: str, conversation_id: str = None, user_id: str = None, conversation_history: List = None) -> Dict[str, Any]:
         """
-        Invoke the unified tool-calling RAG agent.
+        Invoke the unified tool-calling RAG agent with thread-based persistence.
         """
         # Ensure initialization before invoking
         await self._ensure_initialized()
         
-        # Initialize state
+        # Generate conversation_id if not provided
+        if not conversation_id:
+            conversation_id = str(uuid4())
+            
+        # Set up thread-based config for persistence
+        config = await self.memory_manager.get_conversation_config(UUID(conversation_id))
+        
+        # Try to load existing conversation state from our memory manager
+        existing_state = await self.memory_manager.load_conversation_state(UUID(conversation_id))
+        
+        # Initialize messages - start with existing messages or empty list
+        messages = []
+        
+        if existing_state and existing_state.get('messages'):
+            # Use existing messages from our conversation state
+            messages = existing_state.get('messages', [])
+            logger.info(f"Continuing conversation with {len(messages)} existing messages")
+        elif conversation_history:
+            # Only add conversation_history if this is a new conversation
+            for msg in conversation_history:
+                if isinstance(msg, dict):
+                    content = msg.get("content")
+                    if content:  # Only add messages with actual content
+                        if msg.get("role") == "user":
+                            messages.append(HumanMessage(content=content))
+                        elif msg.get("role") == "assistant":
+                            messages.append(AIMessage(content=content))
+                elif isinstance(msg, BaseMessage):
+                    messages.append(msg)
+        
+        # Add the current user query as a human message
+        messages.append(HumanMessage(content=user_query))
+        
+        # Initialize state with existing conversation context
         initial_state = AgentState(
-            user_query=user_query,
-            conversation_id=conversation_id or str(uuid4()),
+            messages=messages,
+            conversation_id=UUID(conversation_id),
             user_id=user_id,
-            retrieved_docs=[],
-            retrieval_metadata={},
-            conversation_history=conversation_history or [],
-            response="",
-            response_metadata={},
-            current_step="initialized",
-            error_message=None,
-            timestamp=datetime.now(),
-            sources=[],
-            confidence_score=None,
-            messages=[]
+            retrieved_docs=existing_state.get('retrieved_docs', []) if existing_state else [],
+            sources=existing_state.get('sources', []) if existing_state else [],
+            conversation_summary=existing_state.get('summary') if existing_state else None
         )
         
-        # Execute the graph
-        result = await self.graph.ainvoke(initial_state)
+        # Execute the graph with thread-based persistence
+        # The memory preparation and update nodes handle automatic checkpointing and state persistence
+        result = await self.graph.ainvoke(initial_state, config=config)
+        
+        # Memory management (sliding window, summarization, and persistence) is now handled
+        # automatically by the graph nodes with checkpointing between each step
         
         return result
 
@@ -415,30 +539,24 @@ async def get_graph():
     await _agent_instance._ensure_initialized()
     return _agent_instance.graph
 
-# For LangGraph Studio compatibility, create a synchronous wrapper
-# This will be used by Studio to access the graph
-def create_sync_graph():
-    """Create a graph synchronously for LangGraph Studio."""
-    import asyncio
+# For LangGraph Studio compatibility, create the graph with persistence
+async def create_graph():
+    """Create a graph with full persistence for LangGraph Studio."""
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If we're already in an async context, we can't use asyncio.run()
-            # LangGraph Studio should handle this differently
-            logger.warning("Cannot create graph synchronously in async context. Graph will be created on first use.")
-            return None
-        else:
-            return asyncio.run(get_graph())
-    except RuntimeError:
-        # No event loop, create one
-        return asyncio.run(get_graph())
+        # Create a new agent instance
+        agent = UnifiedToolCallingRAGAgent()
+        
+        # Initialize asynchronously with full persistence
+        await agent._ensure_initialized()
+        
+        return agent.graph
+        
+    except Exception as e:
+        logger.error(f"Error creating graph: {e}")
+        raise
 
-# For LangGraph Studio - try to create graph, but handle async context gracefully
-try:
-    graph = create_sync_graph()
-except Exception as e:
-    logger.warning(f"Could not create graph synchronously: {e}. Graph will be created on first use.")
-    graph = None
+# LangGraph Studio will call create_graph() directly
+# No need to initialize graph here - keep it simple
 
 # Export for LangGraph Studio
-__all__ = ["UnifiedToolCallingRAGAgent", "ToolCallingRAGAgent", "SimpleRAGAgent", "LinearToolCallingRAGAgent", "graph", "get_graph"] 
+__all__ = ["UnifiedToolCallingRAGAgent", "ToolCallingRAGAgent", "SimpleRAGAgent", "LinearToolCallingRAGAgent", "create_graph", "get_graph"] 
