@@ -12,14 +12,14 @@ import requests
 from uuid import uuid4
 from pydantic import BaseModel
 
-from models.base import APIResponse
-from models.document import (
+from backend.models.base import APIResponse
+from backend.models.document import (
     DocumentModel, DocumentUploadRequest, DocumentUploadResponse, 
     DocumentStatus, DocumentType
 )
-from rag.pipeline import DocumentProcessingPipeline
-from database import db_client
-from config import get_settings
+from backend.rag.pipeline import DocumentProcessingPipeline
+from backend.database import db_client
+from backend.config import get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

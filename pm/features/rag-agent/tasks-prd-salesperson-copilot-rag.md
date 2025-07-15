@@ -21,7 +21,7 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `backend/agents/` - LangGraph agent components (structure initialized)
 - `backend/agents/state.py` - Minimal LangGraph state schema for conversational RAG agent
 - `backend/agents/rag_agent.py` - Unified tool-calling RAG agent following LangChain best practices: single agent handles both tool calling and execution
-- `backend/agents/tools.py` - Tool-calling functions with @tool decorators for semantic search and source attribution
+- `backend/agents/tools.py` - Tool-calling functions with @tool decorators for semantic search, source attribution, and CRM data queries
 - `backend/agents/test_tool_calling.py` - Test script demonstrating tool-calling agent functionality
 - `backend/rag/` - RAG system components
 - `backend/rag/embeddings.py` - OpenAI embedding generation
@@ -59,6 +59,10 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `supabase/migrations/001_initial_schema.sql` - Initial database schema with core tables for data sources, documents, conversations, and logging
 - `supabase/migrations/002_vector_extensions.sql` - Vector search setup with pgvector extension and similarity search functions
 - `supabase/migrations/003_rag_tables.sql` - RAG-specific tables for conflicts, metrics, feedback, and proactive suggestions
+- `supabase/migrations/20250115000000_create_crm_sales_tables.sql` - Comprehensive CRM sales management schema with 8 core tables for branches, employees, customers, vehicles, opportunities, transactions, pricing, and activities
+- `supabase/migrations/20250115000001_insert_sample_crm_data.sql` - Sample CRM data with realistic sales scenarios, employee hierarchy, and customer interactions
+- `supabase/database_schema.md` - Complete database schema documentation including CRM tables and relationships
+- `docs/crm-sales-system.md` - Comprehensive CRM system documentation with usage examples and business logic
 
 ### Configuration
 - `docker-compose.yml` - Local development environment
@@ -78,6 +82,7 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - Integrate LangSmith from the beginning for comprehensive tracing
 - Use Next.js 14 app router for modern React patterns
 - **Website Scraping Deprioritized:** Due to complexity of data gathering, HTML/JS parsing, and scraping methodologies, focus on document upload as primary data source
+- **CRM Integration Completed:** Comprehensive CRM database schema with 8 core tables enables natural language queries for sales data, pricing, inventory, customer management, and performance analytics
 - **Dependency Management**: Heavy dependencies (~~Playwright~~, Telegram bot) were removed from initial requirements.txt to optimize build times. They will be added back when their respective tasks are started (see task-specific notes).
 
 ## Tasks
@@ -112,49 +117,59 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
   - [x] 3.8 Design responsive UI using Tailwind CSS with professional blue/white theme
   - [x] 3.9 Implement real-time updates for document processing status using Supabase realtime subscriptions
 
-- [ ] 4.0 Develop Basic LangGraph Agent with Conversational RAG
-  - [x] 4.1 Design minimal LangGraph state schema with user query, retrieved documents, and conversation context
-  - [x] 4.2 Implement simple agent graph with core nodes: retrieval, generation, and response formatting
-  - [x] 4.3 Create basic tools for semantic search and source attribution (without conflict logging)
-  - [ ] 4.4 Set up LangSmith tracing integration for all agent components and conversation flows
-  - [ ] 4.5 Implement basic conversation memory for maintaining context across interactions
-  - [ ] 4.6 Configure LangChain Expression Language (LCEL) chains for retrieval and generation
-  - [ ] 4.7 Implement graceful fallback responses when no relevant information is found
-  - [ ] 4.8 Test end-to-end conversation flow with document retrieval and response generation
+- [x] 4.0 Implement CRM Database Integration for Sales Data Access
+  - [x] 4.1 Create comprehensive CRM database schema with 8 core tables: branches, employees, customers, vehicles, opportunities, transactions, pricing, and activities
+  - [x] 4.2 Implement CRM migration files with proper relationships, indexes, and constraints for automotive sales management
+  - [x] 4.3 Create sample CRM data migration with realistic sales scenarios, employee hierarchy, and customer interactions
+  - [x] 4.4 Develop natural language to SQL query engine for safe CRM data access with security validation
+  - [x] 4.5 Implement query_crm_data tool with comprehensive schema documentation and business context understanding
+  - [x] 4.6 Create CRM query capabilities for pricing, inventory, sales performance, customer management, and opportunity tracking
+  - [x] 4.7 Integrate CRM tool with existing RAG agent architecture for seamless document and CRM data access
+  - [x] 4.8 Implement comprehensive CRM documentation with usage examples and business logic explanations
 
-- [ ] 5.0 Extend Agent with Advanced Features (Post-Basic RAG)
-  - [ ] 5.1 Set up persistent conversation memory using LangGraph's built-in persistence with Supabase backend
-  - [ ] 5.2 Add conflict detection logic that logs to console and responds appropriately to users
-  - [ ] 5.3 Implement proactive suggestion logic based on conversation context and available documents
-  - [ ] 5.4 Enhance tools with conflict logging capabilities
-  - [ ] 5.5 Optimize performance with advanced LCEL patterns and caching strategies
+- [ ] 5.0 Develop Basic LangGraph Agent with Conversational RAG
+  - [x] 5.1 Design minimal LangGraph state schema with user query, retrieved documents, and conversation context
+  - [x] 5.2 Implement simple agent graph with core nodes: retrieval, generation, and response formatting
+  - [x] 5.3 Create basic tools for semantic search and source attribution (without conflict logging)
+  - [ ] 5.4 Set up LangSmith tracing integration for all agent components and conversation flows
+  - [ ] 5.5 Implement basic conversation memory for maintaining context across interactions
+  - [ ] 5.6 Configure LangChain Expression Language (LCEL) chains for retrieval and generation
+  - [ ] 5.7 Implement graceful fallback responses when no relevant information is found
+  - [ ] 5.8 Test end-to-end conversation flow with document retrieval and response generation
 
-- [ ] 6.0 Implement Monitoring, Testing, and Deployment Infrastructure
-  - [ ] 6.1 Integrate LangSmith tracing throughout the agent pipeline for comprehensive monitoring
-  - [ ] 6.2 Set up custom metrics tracking for response accuracy, query resolution, and performance
-  - [ ] 6.3 Implement comprehensive error handling with proper logging and alerting mechanisms
-  - [ ] 6.4 Create unit tests for RAG components using pytest with proper mocking of external APIs
-  - [ ] 6.5 Set up integration tests for agent workflows and conversation flows
-  - [ ] 6.6 Configure performance monitoring with response time tracking and concurrent user support
-  - [ ] 6.7 Implement rate limiting and API security measures for production deployment
-  - [ ] 6.8 Set up automated backup strategies for vector embeddings and conversation history
+- [ ] 6.0 Extend Agent with Advanced Features (Post-Basic RAG)
+  - [ ] 6.1 Set up persistent conversation memory using LangGraph's built-in persistence with Supabase backend
+  - [ ] 6.2 Add conflict detection logic that logs to console and responds appropriately to users
+  - [ ] 6.3 Implement proactive suggestion logic based on conversation context and available documents
+  - [ ] 6.4 Enhance tools with conflict logging capabilities
+  - [ ] 6.5 Optimize performance with advanced LCEL patterns and caching strategies
 
-- [ ] 7.0 Build Temporary Chat Interface for Testing and Development
-  - [ ] 7.1 Create simple React chat component with message history and real-time updates
-  - [ ] 7.2 Implement WebSocket or SSE connection for streaming agent responses
-  - [ ] 7.3 Add debugging features showing retrieved documents, confidence scores, and processing steps
-  - [ ] 7.4 Create test scenarios for different query types and edge cases
-  - [ ] 7.5 Implement conversation reset and context management for testing different scenarios
-  - [ ] 7.6 Add developer tools for inspecting agent state, memory, and decision processes
-  - [ ] 7.7 Create performance testing interface to validate concurrent user support (up to 100 users)
+- [ ] 7.0 Implement Monitoring, Testing, and Deployment Infrastructure
+  - [ ] 7.1 Integrate LangSmith tracing throughout the agent pipeline for comprehensive monitoring
+  - [ ] 7.2 Set up custom metrics tracking for response accuracy, query resolution, and performance
+  - [ ] 7.3 Implement comprehensive error handling with proper logging and alerting mechanisms
+  - [ ] 7.4 Create unit tests for RAG components using pytest with proper mocking of external APIs
+  - [ ] 7.5 Set up integration tests for agent workflows and conversation flows
+  - [ ] 7.6 Configure performance monitoring with response time tracking and concurrent user support
+  - [ ] 7.7 Implement rate limiting and API security measures for production deployment
+  - [ ] 7.8 Set up automated backup strategies for vector embeddings and conversation history
 
-- [ ] 8.0 Integrate Telegram Bot Interface with Production Deployment
-  - [ ] 8.1 Set up Telegram Bot API and configure webhook endpoints for secure message handling
+- [ ] 8.0 Build Temporary Chat Interface for Testing and Development
+  - [ ] 8.1 Create simple React chat component with message history and real-time updates
+  - [ ] 8.2 Implement WebSocket or SSE connection for streaming agent responses
+  - [ ] 8.3 Add debugging features showing retrieved documents, confidence scores, and processing steps
+  - [ ] 8.4 Create test scenarios for different query types and edge cases
+  - [ ] 8.5 Implement conversation reset and context management for testing different scenarios
+  - [ ] 8.6 Add developer tools for inspecting agent state, memory, and decision processes
+  - [ ] 8.7 Create performance testing interface to validate concurrent user support (up to 100 users)
+
+- [ ] 9.0 Integrate Telegram Bot Interface with Production Deployment
+  - [ ] 9.1 Set up Telegram Bot API and configure webhook endpoints for secure message handling
     - **NOTE**: Add back Telegram bot dependency to requirements.txt when starting this task: `python-telegram-bot==20.7`
-  - [ ] 8.2 Implement Telegram bot handlers with proper message parsing and user session management
-  - [ ] 8.3 Adapt agent responses for Telegram format with inline keyboards for proactive suggestions
-  - [ ] 8.4 Configure production deployment with proper scaling and load balancing
-  - [ ] 8.5 Implement user authentication and session persistence across Telegram conversations
-  - [ ] 8.6 Set up production monitoring and alerting for bot uptime and response performance
-  - [ ] 8.7 Create deployment scripts and CI/CD pipeline for automated updates
-  - [ ] 8.8 Hide/remove temporary chat interface and finalize production configuration 
+  - [ ] 9.2 Implement Telegram bot handlers with proper message parsing and user session management
+  - [ ] 9.3 Adapt agent responses for Telegram format with inline keyboards for proactive suggestions
+  - [ ] 9.4 Configure production deployment with proper scaling and load balancing
+  - [ ] 9.5 Implement user authentication and session persistence across Telegram conversations
+  - [ ] 9.6 Set up production monitoring and alerting for bot uptime and response performance
+  - [ ] 9.7 Create deployment scripts and CI/CD pipeline for automated updates
+  - [ ] 9.8 Hide/remove temporary chat interface and finalize production configuration 

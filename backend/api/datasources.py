@@ -11,14 +11,14 @@ from uuid import uuid4
 import validators
 from pydantic import BaseModel, Field, HttpUrl
 
-from models.base import APIResponse
-from models.datasource import (
+from backend.models.base import APIResponse
+from backend.models.datasource import (
     DataSourceModel, DataSourceRequest, DataSourceType, DataSourceStatus, 
     ScrapingFrequency
 )
-from database import db_client
-from config import get_settings
-from rag.pipeline import DocumentProcessingPipeline
+from backend.database import db_client
+from backend.config import get_settings
+from backend.rag.pipeline import DocumentProcessingPipeline
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

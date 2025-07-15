@@ -16,7 +16,7 @@ from typing import List, Dict, Any, Optional, Set, Tuple
 
 from langchain_core.tools import tool
 from langchain_community.utilities import SQLDatabase
-from langchain_community.agent_toolkits import SQLDatabaseToolkit
+from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from pydantic.v1 import BaseModel, Field
 from langsmith import traceable
 import sqlalchemy
@@ -27,9 +27,9 @@ from sqlparse.sql import Statement, Token
 from sqlparse.tokens import Keyword, DML
 import numpy as np
 
-from rag.retriever import SemanticRetriever
-from rag.embeddings import OpenAIEmbeddings
-from config import get_settings
+from backend.rag.retriever import SemanticRetriever
+from backend.rag.embeddings import OpenAIEmbeddings
+from backend.config import get_settings
 
 logger = logging.getLogger(__name__)
 
