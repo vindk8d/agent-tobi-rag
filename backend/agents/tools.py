@@ -1104,7 +1104,7 @@ def _get_known_values_for_column(table: str, column: str) -> List[str]:
     }
     
     cache_key = column_mapping.get((table, column))
-    return KNOWN_VALUES_CACHE.get(cache_key, [])
+    return KNOWN_VALUES_CACHE.get(cache_key, []) if cache_key else []
 
 async def _calculate_semantic_similarities(
     embeddings: OpenAIEmbeddings, 
@@ -1552,7 +1552,7 @@ async def _execute_query_with_timeout(db: SQLDatabase, query: str, timeout_secon
 async def _execute_parameterized_query(
     db: SQLDatabase, 
     query_template: str, 
-    parameters: Dict[str, Any] = None,
+    parameters: Optional[Dict[str, Any]] = None,
     timeout_seconds: int = 30
 ) -> str:
     """
@@ -1840,7 +1840,7 @@ async def semantic_search(query: str, top_k: Optional[int] = None, threshold: Op
 
 @tool("format_sources", args_schema=SourceFormattingInput, return_direct=False)
 @traceable(name="format_sources_tool")
-def format_sources(sources: List[Dict[str, Any]] = None) -> str:
+def format_sources(sources: Optional[List[Dict[str, Any]]] = None) -> str:
     """
     Format document sources for user-friendly display.
     
@@ -1890,7 +1890,7 @@ def format_sources(sources: List[Dict[str, Any]] = None) -> str:
 
 @tool("build_context", args_schema=ContextBuildingInput, return_direct=False)
 @traceable(name="build_context_tool")
-def build_context(documents: List[Dict[str, Any]] = None) -> str:
+def build_context(documents: Optional[List[Dict[str, Any]]] = None) -> str:
     """
     Build a formatted context string from retrieved documents.
     
@@ -1932,7 +1932,7 @@ def build_context(documents: List[Dict[str, Any]] = None) -> str:
 
 @tool("get_conversation_summary", args_schema=ConversationSummaryInput, return_direct=False)
 @traceable(name="get_conversation_summary_tool")
-def get_conversation_summary(conversation_history: List[Dict[str, str]] = None) -> str:
+def get_conversation_summary(conversation_history: Optional[List[Dict[str, str]]] = None) -> str:
     """
     Get a summary of the recent conversation for context.
     
