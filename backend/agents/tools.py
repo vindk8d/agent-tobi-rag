@@ -1539,7 +1539,7 @@ async def _execute_query_with_timeout(db: SQLDatabase, query: str, timeout_secon
             # Submit the query to thread pool and wait with timeout
             future = loop.run_in_executor(executor, _run_query)
             result = await asyncio.wait_for(future, timeout=timeout_seconds)
-            return result
+            return str(result)
             
     except asyncio.TimeoutError:
         logger.error(f"Query execution timed out after {timeout_seconds} seconds")
@@ -1777,7 +1777,7 @@ class CRMQueryInput(BaseModel):
     time_period: Optional[str] = Field(default=None, description="Optional time period filter like 'last 30 days', 'this quarter', 'this year', or specific date range")
 
 
-@tool("semantic_search", args_schema=SemanticSearchInput, return_direct=False)
+@tool("semantic_search")
 @traceable(name="semantic_search_tool")
 async def semantic_search(query: str, top_k: Optional[int] = None, threshold: Optional[float] = None) -> str:
     """
@@ -1838,7 +1838,7 @@ async def semantic_search(query: str, top_k: Optional[int] = None, threshold: Op
         })
 
 
-@tool("format_sources", args_schema=SourceFormattingInput, return_direct=False)
+@tool("format_sources")
 @traceable(name="format_sources_tool")
 def format_sources(sources: Optional[List[Dict[str, Any]]] = None) -> str:
     """
@@ -1888,7 +1888,7 @@ def format_sources(sources: Optional[List[Dict[str, Any]]] = None) -> str:
         return f"Error formatting sources: {str(e)}"
 
 
-@tool("build_context", args_schema=ContextBuildingInput, return_direct=False)
+@tool("build_context")
 @traceable(name="build_context_tool")
 def build_context(documents: Optional[List[Dict[str, Any]]] = None) -> str:
     """
@@ -1930,7 +1930,7 @@ def build_context(documents: Optional[List[Dict[str, Any]]] = None) -> str:
         return f"Error building document context: {str(e)}"
 
 
-@tool("get_conversation_summary", args_schema=ConversationSummaryInput, return_direct=False)
+@tool("get_conversation_summary")
 @traceable(name="get_conversation_summary_tool")
 def get_conversation_summary(conversation_history: Optional[List[Dict[str, str]]] = None) -> str:
     """
@@ -2041,7 +2041,7 @@ RESPOND WITH ONLY THE SQL QUERY (NO SEMICOLON AT THE END), NO EXPLANATIONS OR CO
             temperature=0.1  # Low temperature for more consistent SQL generation
         )
         
-        generated_sql = response.choices[0].message.content.strip()
+        generated_sql = (response.choices[0].message.content or "").strip()
         
         # Clean up the response (remove markdown formatting if present)
         if generated_sql.startswith("```sql"):
@@ -2238,7 +2238,7 @@ def _build_time_filter(time_period: str) -> str:
     return ""
 
 
-@tool("query_crm_data", args_schema=CRMQueryInput, return_direct=False)
+@tool("query_crm_data")
 @traceable(name="query_crm_data_tool")
 async def query_crm_data(question: str, time_period: Optional[str] = None) -> str:
     """
