@@ -3,8 +3,8 @@ import pytest
 from uuid import uuid4
 from langchain_core.messages import HumanMessage, AIMessage
 
-from backend.agents.memory_manager import memory_manager
-from backend.agents.rag_agent import UnifiedToolCallingRAGAgent
+from backend.agents.memory import memory_manager
+from backend.agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
 
 
 async def test_conversation_persistence():

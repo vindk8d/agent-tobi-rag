@@ -3,7 +3,7 @@
     "./backend"
   ],
   "graphs": {
-    "rag_agent": "./backend/agents/rag_agent.py:create_graph"
+    "rag_agent": "./backend/agents/tobi_sales_copilot/rag_agent.py:create_graph"
   },
   "env": ".env"
 } 

@@ -13,9 +13,9 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from agents.rag_agent import UnifiedToolCallingRAGAgent
-from agents.memory_manager import memory_manager
-from config import validate_all_configs
+from backend.agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+from backend.agents.memory import memory_manager
+from backend.config import validate_all_configs
 
 async def test_persistence_configuration():
     """Test the persistence layer configuration."""

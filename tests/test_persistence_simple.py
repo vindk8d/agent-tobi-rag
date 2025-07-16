@@ -13,7 +13,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from backend.agents.memory_manager import memory_manager
+from backend.agents.memory import memory_manager
 from backend.config import get_settings
 
 async def test_persistence_setup():
@@ -92,7 +92,7 @@ async def test_basic_state_schema():
     print("\n🧪 Testing basic state schema...")
     
     try:
-        from backend.agents.state import AgentState
+        from backend.agents.tobi_sales_copilot.state import AgentState
         from langchain_core.messages import HumanMessage
         from uuid import uuid4
         

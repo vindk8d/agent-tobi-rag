@@ -8,39 +8,15 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 
 ## Relevant Files
 
-### Backend/Agent Infrastructure
-- `backend/main.py` - FastAPI main application entry point with proper project structure
-- `backend/config.py` - Environment configuration and settings
-- `backend/database.py` - Supabase client setup and database connections
-- `backend/api/` - API routes and endpoints organization
-- `backend/models/` - Pydantic models for data validation
-- `backend/models/base.py` - Base model classes with common functionality
-- `backend/models/conversation.py` - Conversation and chat models
-- `backend/models/document.py` - Document and file management models
-- `backend/models/datasource.py` - Data source and document upload models
-- `backend/agents/` - LangGraph agent components (structure initialized)
-- `backend/agents/state.py` - Simplified LangGraph state schema optimized for persistent memory with essential fields including conversation_summary for periodic context retention
-- `backend/agents/rag_agent.py` - Unified tool-calling RAG agent following LangChain best practices: single agent handles both tool calling and execution
-- `backend/agents/tools.py` - Tool-calling functions with @tool decorators for semantic search, source attribution, and CRM data queries
-- `backend/agents/test_tool_calling.py` - Test script demonstrating tool-calling agent functionality
-- `backend/agents/test_langsmith_tracing.py` - Comprehensive test script for LangSmith tracing integration validation
-- `backend/agents/memory_manager.py` - ConversationMemoryManager class with sliding window context management (configurable size, default 10 messages) and periodic summary generation (every 8-10 messages) using LLM-based summarization
-- `backend/agents/test_memory_manager.py` - Test script for ConversationMemoryManager sliding window context management and LLM-based summarization functionality
-- `backend/agents/test_checkpointing_persistence.py` - Test script for automatic checkpointing and state persistence with conversation_summary field serialization
-- `backend/rag/` - RAG system components
-- `backend/rag/embeddings.py` - OpenAI embedding generation
-- `backend/rag/document_loader.py` - Modular LangChain-based loader for PDFs, Word docs, and other document formats
-- `backend/rag/vector_store.py` - Supabase vector store operations for upsert, similarity, and hybrid search
-- `backend/rag/pipeline.py` - Document processing pipeline: load, chunk, embed, and store documents
-- `backend/rag/retriever.py` - Semantic retriever for similarity search with configurable threshold and source attribution
-- ~~`backend/scrapers/` - Web scraping infrastructure (DEPRIORITIZED)~~
-- ~~`backend/scrapers/web_scraper.py` - Web scraping utility (DEPRIORITIZED)~~
-- `backend/telegram/` - Telegram bot integration (structure initialized)
-- `backend/monitoring/` - Monitoring and observability (structure initialized)
-- `backend/tests/` - Test files for all backend components (structure initialized)
-- `backend/monitoring/scheduler.py` - Daily refresh scheduler for document sources with error handling
+#### Backend/Agents
+- `backend/agents/tobi_sales_copilot/rag_agent.py` - Main RAG agent implementation using LangGraph StateGraph with proper message persistence via PostgreSQL checkpointer
+- `backend/agents/tobi_sales_copilot/state.py` - Simplified AgentState schema with essential persistent fields only (messages, conversation_id, user_id, retrieved_docs, sources, conversation_summary)
+- `backend/agents/memory.py` - Consolidated memory system combining short-term (LangGraph checkpointer), long-term (Supabase Store), and conversation consolidation
+- `backend/agents/memory_nodes.py` - Simplified LangGraph memory nodes (context retrieval and storage only)
+- `backend/agents/tools.py` - RAG tools for document retrieval and response generation
 
 ### Frontend/Dashboard
+
 - `frontend/app/` - Next.js 14 app router structure with TypeScript
 - `frontend/app/page.tsx` - Modern dashboard page with system status and features overview
 - `frontend/app/layout.tsx` - Professional layout with header, footer, and responsive design
@@ -59,6 +35,7 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `frontend/.prettierrc` - Code formatting configuration
 
 ### Database/Migrations
+
 - `supabase/migrations/` - Database migration files
 - `supabase/migrations/001_initial_schema.sql` - Initial database schema with core tables for data sources, documents, conversations, and logging
 - `supabase/migrations/002_vector_extensions.sql` - Vector search setup with pgvector extension and similarity search functions
@@ -67,8 +44,11 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `supabase/migrations/20250115000001_insert_sample_crm_data.sql` - Sample CRM data with realistic sales scenarios, employee hierarchy, and customer interactions
 - `supabase/database_schema.md` - Complete database schema documentation including CRM tables and relationships
 - `docs/crm-sales-system.md` - Comprehensive CRM system documentation with usage examples and business logic
+- `supabase/migrations/20250120000000_add_long_term_memory_tables.sql` - Long-term memory database schema following LangGraph Store best practices with semantic search support
+- `supabase/migrations/20250120000001_optimize_memory_performance.sql` - Performance optimization for long-term memory with vector indexes, query optimization, and maintenance functions
 
 ### Configuration
+
 - `docker-compose.yml` - Local development environment
 - `requirements.txt` - Python dependencies with OpenAI, LangChain, and all required packages
 - `package.json` - Node.js dependencies
@@ -142,13 +122,21 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
     - [x] 5.5.1 Configure LangGraph built-in persistence layer (SqliteSaver/PostgresSaver) for short-term memory with thread-based conversation management and enhanced state schema including conversation_summary field
     - [x] 5.5.2 Implement ConversationMemoryManager class with sliding window context management (configurable size, default 10 messages) and periodic summary generation (every 8-10 messages) using LLM-based summarization
     - [x] 5.5.3 Set up automatic checkpointing and state persistence between agent steps using LangGraph's persistence layer with conversation_summary field included in state serialization
-    - [ ] 5.5.4 Create long-term memory integration with existing conversations and messages tables for historical context storage, including conversation_summary in database metadata
-    - [ ] 5.5.5 Implement conversation consolidation logic to move old conversations from short-term to long-term storage with summary preservation for context retrieval
-    - [ ] 5.5.6 Add semantic search over conversation history for contextual conversation retrieval using both message content and conversation summaries
-    - [ ] 5.5.7 Create smart context pruning system to maintain token limits while preserving conversation coherence using conversation summaries to maintain context when message history is pruned
-  - [ ] 5.6 Configure LangChain Expression Language (LCEL) chains for retrieval and generation
-  - [ ] 5.7 Implement graceful fallback responses when no relevant information is found
-  - [ ] 5.8 Test end-to-end conversation flow with document retrieval and response generation
+    - [ ] 5.5.4 Implement long-term memory integration following LangGraph Store best practices:
+       - **Database Schema:** Long-term memory tables with vector embeddings, conversation summaries, and access patterns
+       - **LangGraph Store Implementation:** Custom SupabaseLongTermMemoryStore extending BaseStore interface
+       - **Conversation Consolidation:** Automated transition from short-term to long-term memory with LLM summarization
+       - **Enhanced Memory Manager:** Integration with long-term memory capabilities and semantic search
+       - **Simplified State Management:** Clean AgentState schema with only essential persistent fields:
+         - Core: messages, conversation_id, user_id (LangGraph essentials)
+         - RAG: retrieved_docs, sources (current session context)
+         - Summary: conversation_summary (for long conversations)
+         - Transient data (context, preferences, stats) retrieved by nodes when needed
+       - **Memory Nodes:** LangGraph nodes for context retrieval, consolidation, and user preference management
+       - **Performance Optimization:** Vector indexes, query optimization, and maintenance functions
+    - [ ] 5.6 Configure LangChain Expression Language (LCEL) chains for retrieval and generation
+    - [ ] 5.7 Implement graceful fallback responses when no relevant information is found
+    - [ ] 5.8 Test end-to-end conversation flow with document retrieval and response generation
 
 - [x] 6.0 Quota Usage Optimization and Rate Limiting
   - [x] 6.1 Implement token usage tracking and monitoring system for OpenAI API calls
@@ -197,4 +185,4 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
   - [ ] 10.5 Implement user authentication and session persistence across Telegram conversations
   - [ ] 10.6 Set up production monitoring and alerting for bot uptime and response performance
   - [ ] 10.7 Create deployment scripts and CI/CD pipeline for automated updates
-  - [ ] 10.8 Hide/remove temporary chat interface and finalize production configuration 
+  - [ ] 10.8 Hide/remove temporary chat interface and finalize production configuration

@@ -13,8 +13,8 @@ import json
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from backend.agents.rag_agent import UnifiedToolCallingRAGAgent
-from backend.agents.memory_manager import ConversationMemoryManager
+from backend.agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+from backend.agents.memory import MemoryManager
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -56,7 +56,7 @@ async def test_agent_state_persistence():
     
     # Create a simple graph with memory saver for testing
     from langgraph.graph import StateGraph, START, END
-    from backend.agents.state import AgentState
+    from backend.agents.tobi_sales_copilot.state import AgentState
     
     # Create a simple test agent with memory
     memory_saver = MemorySaver()
@@ -144,7 +144,7 @@ async def test_conversation_summary_serialization():
     """Test that conversation_summary is properly included in state."""
     print("\n🧪 Testing conversation_summary serialization...")
     
-    from backend.agents.state import AgentState
+    from backend.agents.tobi_sales_copilot.state import AgentState
     
     # Test state with conversation summary
     test_state = {

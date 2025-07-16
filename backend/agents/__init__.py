@@ -3,8 +3,8 @@ Agent components for the RAG system.
 Includes agent graph, state management, and tools.
 """
 
-from .state import AgentState, ConversationMemory, RetrievalContext
-from .rag_agent import SimpleRAGAgent, ToolCallingRAGAgent, UnifiedToolCallingRAGAgent
+from .tobi_sales_copilot.state import AgentState, ConversationMemory, RetrievalContext
+from .tobi_sales_copilot.rag_agent import SimpleRAGAgent, ToolCallingRAGAgent, UnifiedToolCallingRAGAgent
 from .tools import (
     semantic_search,
     format_sources,

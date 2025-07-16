@@ -12,8 +12,8 @@ from uuid import uuid4
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 from langchain_core.messages import HumanMessage, AIMessage
-from agents.rag_agent import UnifiedToolCallingRAGAgent
-from agents.state import AgentState
+from backend.agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+from backend.agents.tobi_sales_copilot.state import AgentState
 
 async def test_memory_preparation():
     """Test the memory preparation node directly."""

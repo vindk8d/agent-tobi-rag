@@ -20,9 +20,9 @@ from langsmith import traceable
 # Handle both relative and absolute imports for LangGraph Studio compatibility
 try:
     from .state import AgentState
-    from .tools import get_all_tools, get_tool_names
-    from .memory_manager import memory_manager
-    from ..config import get_settings, setup_langsmith_tracing
+    from ..tools import get_all_tools, get_tool_names
+    from ..memory import memory_manager, memory_scheduler
+    from ...config import get_settings, setup_langsmith_tracing
 except ImportError:
     # Fallback to absolute imports when loaded directly by LangGraph Studio
     # Use explicit path resolution WITHOUT calling resolve() to avoid os.getcwd()
@@ -32,10 +32,11 @@ except ImportError:
     current_file = pathlib.Path(__file__).absolute()
     
     # Navigate to parent directories without using resolve()
-    # This file is in backend/agents/rag_agent.py, so we need to go up two levels
-    agents_dir = current_file.parent  # backend/agents/
-    backend_dir = agents_dir.parent   # backend/
-    project_root = backend_dir.parent  # project root
+    # This file is in backend/agents/tobi_sales_copilot/rag_agent.py, so we need to go up three levels
+    copilot_dir = current_file.parent   # backend/agents/tobi_sales_copilot/
+    agents_dir = copilot_dir.parent     # backend/agents/
+    backend_dir = agents_dir.parent     # backend/
+    project_root = backend_dir.parent   # project root
     
     # Use absolute path without resolve() to avoid blocking calls
     project_root_str = str(project_root)
@@ -45,12 +46,18 @@ except ImportError:
         sys.path.insert(0, project_root_str)
     
     # Now import with absolute paths
-    from backend.agents.state import AgentState
+    from backend.agents.tobi_sales_copilot.state import AgentState
     from backend.agents.tools import get_all_tools, get_tool_names
-    from backend.agents.memory_manager import memory_manager
+    from backend.agents.memory import memory_manager, memory_scheduler
     from backend.config import get_settings, setup_langsmith_tracing
 
 logger = logging.getLogger(__name__)
+
+
+
+
+
+
 
 
 class UnifiedToolCallingRAGAgent:
@@ -79,6 +86,12 @@ class UnifiedToolCallingRAGAgent:
         # Initialize memory manager first
         await memory_manager._ensure_initialized()
         self.memory_manager = memory_manager
+        
+        # Register RAG-specific memory plugins
+        await self._register_memory_plugins()
+        
+        # Start background memory scheduler
+        await memory_scheduler.start()
         
         # Initialize LangSmith tracing asynchronously
         await setup_langsmith_tracing()
@@ -115,10 +128,10 @@ class UnifiedToolCallingRAGAgent:
         """Build a graph with automatic checkpointing and state persistence between agent steps."""
         # Import memory manager using absolute import for LangGraph Studio compatibility
         try:
-            from .memory_manager import memory_manager
+            from ..memory import memory_manager
         except ImportError:
             # Fallback to absolute import when loaded directly by LangGraph Studio
-            from backend.agents.memory_manager import memory_manager
+            from backend.agents.memory import memory_manager
         
         # Get checkpointer for persistence
         checkpointer = await memory_manager.get_checkpointer()
@@ -150,8 +163,8 @@ class UnifiedToolCallingRAGAgent:
     @traceable(name="memory_preparation_node")
     async def _memory_preparation_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Prepare conversation memory before agent execution.
-        With proper LangGraph persistence, this mainly handles conversation tracking.
+        Prepare conversation memory with long-term context retrieval.
+        LangGraph handles short-term persistence automatically.
         """
         try:
             await self._ensure_initialized()
@@ -161,7 +174,6 @@ class UnifiedToolCallingRAGAgent:
             user_id = state.get("user_id")
             
             # Extract thread_id from config if no conversation_id is provided
-            # This ensures persistence works in LangGraph Studio
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
                 if thread_id:
@@ -170,20 +182,32 @@ class UnifiedToolCallingRAGAgent:
             
             logger.info(f"Memory preparation for conversation {conversation_id}: {len(messages)} messages")
             
-            # Load additional context from database if needed
-            if conversation_id:
-                long_term_context = await self.memory_manager.load_conversation_context(conversation_id, user_id or "anonymous")
-                if long_term_context:
-                    logger.info(f"Loaded additional context from database for conversation {conversation_id}")
+            # Get relevant long-term context if we have a user query
+            long_term_context = []
+            if user_id and messages:
+                # Extract current query for context retrieval
+                current_query = ""
+                for msg in reversed(messages):
+                    if hasattr(msg, 'type') and msg.type == 'human':
+                        current_query = msg.content
+                        break
+                
+                if current_query:
+                    long_term_context = await self.memory_manager.get_relevant_context(
+                        user_id, current_query, max_contexts=3
+                    )
+                    if long_term_context:
+                        logger.info(f"Retrieved {len(long_term_context)} relevant context items")
             
-            # Return state with minimal changes - LangGraph handles message persistence
+            # Return state with long-term context
             return {
-                "messages": messages,  # LangGraph manages message history automatically
+                "messages": messages,
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "conversation_summary": state.get("conversation_summary"),
                 "retrieved_docs": state.get("retrieved_docs", []),
-                "sources": state.get("sources", [])
+                "sources": state.get("sources", []),
+                "long_term_context": long_term_context
             }
             
         except Exception as e:
@@ -194,8 +218,8 @@ class UnifiedToolCallingRAGAgent:
     @traceable(name="memory_update_node")
     async def _memory_update_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Update conversation memory after agent execution.
-        With proper LangGraph persistence, this mainly handles database synchronization.
+        Update long-term memory after agent execution.
+        LangGraph handles short-term persistence automatically.
         """
         try:
             await self._ensure_initialized()
@@ -214,16 +238,17 @@ class UnifiedToolCallingRAGAgent:
             
             logger.info(f"Memory update for conversation {conversation_id}: {len(messages)} messages")
             
-            # Save to database for additional context (complements LangGraph persistence)
-            if conversation_id:
-                await self.memory_manager.save_conversation_to_database(
-                    conversation_id, 
-                    user_id or "anonymous",
-                    messages,
-                    current_summary
-                )
+            # Store important information in long-term memory
+            if user_id and messages and len(messages) >= 2:
+                # Check if this conversation contains storable information using generic infrastructure
+                if await self.memory_manager.should_store_memory("rag", messages):
+                    # Extract and store insights using RAG-specific plugins
+                    recent_messages = messages[-3:] if len(messages) >= 3 else messages
+                    await self.memory_manager.store_conversation_insights(
+                        "rag", user_id, recent_messages, conversation_id
+                    )
             
-            logger.info(f"Memory update complete: conversation state saved to database")
+            logger.info(f"Memory update complete: long-term context processed")
             
             # Return state unchanged - LangGraph handles persistence automatically
             return state
@@ -403,7 +428,7 @@ class UnifiedToolCallingRAGAgent:
     
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the unified agent."""
-        return f"""You are a helpful sales assistant with access to company documents and tools.
+        return f"""You are a helpful sales assistant with access to company documents, tools, and user context.
 
 Available tools:
 {', '.join(self.tool_names)}
@@ -431,9 +456,11 @@ Guidelines:
 
 **Important Context Handling:**
 - Previous conversation context is automatically provided in your messages, so you don't need to ask for it
+- Long-term context about user preferences and facts is available in the conversation state
 - If a user asks a vague question like "How much is it?" or "What about both?", check the previous conversation context in your current message to understand what they're referring to
 - For specific product/vehicle questions, use query_crm_data to get current pricing and availability
 - Be helpful by suggesting common items they might be asking about if context is unclear
+- Use any available long-term context to personalize responses based on user preferences
 
 Important: Use the tools to help you provide the best possible assistance to the user."""
     
@@ -460,6 +487,74 @@ Important: Use the tools to help you provide the best possible assistance to the
                     continue
         
         return sources
+    
+    async def _register_memory_plugins(self) -> None:
+        """Register RAG-specific memory plugins with the memory manager."""
+        # Register RAG-specific memory filter
+        async def rag_memory_filter(messages: List[BaseMessage]) -> bool:
+            """RAG-specific logic for determining if memory should be stored."""
+            if len(messages) < 2:
+                return False
+            
+            # Check if recent messages contain storable information
+            recent_messages = messages[-3:] if len(messages) >= 3 else messages
+            
+            for message in recent_messages:
+                content = str(message.content).lower()
+                
+                # RAG-specific patterns (preferences, facts, tool-related insights)
+                if any(phrase in content for phrase in [
+                    "i prefer", "i like", "i want", "i need",
+                    "my name is", "i am", "i work at", "i live in",
+                    "remember", "next time", "always", "never",
+                    "search for", "find me", "look up"  # RAG-specific patterns
+                ]):
+                    return True
+            
+            return False
+        
+        # Register RAG-specific insight extractor
+        async def rag_insight_extractor(messages: List[BaseMessage], conversation_id: UUID) -> List[Dict[str, Any]]:
+            """RAG-specific logic for extracting insights from conversations."""
+            insights = []
+            for message in messages:
+                if hasattr(message, 'type') and message.type == 'human':
+                    content = message.content.lower()
+                    
+                    # Extract preferences
+                    if any(phrase in content for phrase in ["i prefer", "i like", "i want"]):
+                        insights.append({
+                            "type": "preference",
+                            "content": message.content,
+                            "extracted_at": datetime.now().isoformat(),
+                            "agent_type": "rag"
+                        })
+                    
+                    # Extract facts
+                    elif any(phrase in content for phrase in ["my name is", "i am", "i work at"]):
+                        insights.append({
+                            "type": "personal_fact",
+                            "content": message.content,
+                            "extracted_at": datetime.now().isoformat(),
+                            "agent_type": "rag"
+                        })
+                    
+                    # Extract RAG-specific search patterns
+                    elif any(phrase in content for phrase in ["search for", "find me", "look up"]):
+                        insights.append({
+                            "type": "search_pattern",
+                            "content": message.content,
+                            "extracted_at": datetime.now().isoformat(),
+                            "agent_type": "rag"
+                        })
+            
+            return insights
+        
+        # Register the plugins
+        self.memory_manager.register_memory_filter("rag", rag_memory_filter)
+        self.memory_manager.register_insight_extractor("rag", rag_insight_extractor)
+        
+        logger.info("RAG-specific memory plugins registered")
     
 
     
@@ -559,4 +654,11 @@ async def create_graph():
 # No need to initialize graph here - keep it simple
 
 # Export for LangGraph Studio
-__all__ = ["UnifiedToolCallingRAGAgent", "ToolCallingRAGAgent", "SimpleRAGAgent", "LinearToolCallingRAGAgent", "create_graph", "get_graph"] 
+__all__ = [
+    "UnifiedToolCallingRAGAgent", 
+    "ToolCallingRAGAgent", 
+    "SimpleRAGAgent", 
+    "LinearToolCallingRAGAgent", 
+    "create_graph", 
+    "get_graph"
+] 

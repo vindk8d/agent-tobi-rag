@@ -11,7 +11,7 @@ from uuid import uuid4
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from backend.agents.memory_manager import ConversationMemoryManager
+from backend.agents.memory import MemoryManager
 from langchain_core.messages import HumanMessage, AIMessage
 
 async def test_sliding_window_context_management():
