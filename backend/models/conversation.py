@@ -19,9 +19,14 @@ class ConversationType(str, Enum):
 
 class MessageRole(str, Enum):
     """Role of the message sender"""
-    USER = "user"
-    ASSISTANT = "assistant"
-    SYSTEM = "system"
+    HUMAN = "human"
+    BOT = "bot"
+    HITL = "HITL"
+    
+    # Keep deprecated aliases for backward compatibility
+    USER = "human"  # Deprecated: use HUMAN
+    ASSISTANT = "bot"  # Deprecated: use BOT
+    SYSTEM = "human"  # Deprecated: system messages treated as human
 
 
 class Message(BaseModel):

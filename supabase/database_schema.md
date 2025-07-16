@@ -103,7 +103,8 @@ The RAG-Tobi salesperson copilot system uses a Supabase PostgreSQL database with
 ```sql
 - id: UUID (Primary Key)
 - conversation_id: UUID - Foreign key to conversations
-- role: VARCHAR(20) - user, assistant, system
+- user_id: UUID - Foreign key to users (identifies which user is associated with this message)
+- role: VARCHAR(20) - bot, human, HITL (human-in-the-loop)
 - content: TEXT - Message content
 - metadata: JSONB - Additional message data
 - created_at: TIMESTAMP

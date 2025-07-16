@@ -15,7 +15,7 @@ CREATE INDEX IF NOT EXISTS idx_long_term_memories_embedding_hnsw
 
 CREATE INDEX IF NOT EXISTS idx_conversation_summaries_embedding_hnsw 
     ON conversation_summaries 
-    USING hnsw (embedding vector_cosine_ops)
+    USING hnsw (summary_embedding vector_cosine_ops)
     WITH (m = 16, ef_construction = 64);
 
 -- 2. B-tree indexes for frequent query patterns
@@ -31,12 +31,11 @@ CREATE INDEX IF NOT EXISTS idx_long_term_memories_user_namespace
 
 -- Key-based lookups
 CREATE INDEX IF NOT EXISTS idx_long_term_memories_namespace_key 
-    ON long_term_memories (namespace, key) 
-    WHERE expires_at IS NULL OR expires_at > NOW();
+    ON long_term_memories (namespace, key);
 
 -- Access pattern optimization
 CREATE INDEX IF NOT EXISTS idx_long_term_memories_access_pattern 
-    ON long_term_memories (last_accessed DESC, access_count DESC);
+    ON long_term_memories (accessed_at DESC, access_count DESC);
 
 -- 3. Conversation-specific indexes
 -- User conversations with message count
@@ -45,8 +44,8 @@ CREATE INDEX IF NOT EXISTS idx_conversations_user_message_count
 
 -- Active conversations for consolidation
 CREATE INDEX IF NOT EXISTS idx_conversations_consolidation_candidates 
-    ON conversations (user_id, updated_at, is_archived) 
-    WHERE is_archived = false;
+    ON conversations (user_id, updated_at, archival_status) 
+    WHERE archival_status = 'active';
 
 -- Message pattern analysis
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_created 
@@ -54,10 +53,10 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
 
 -- 4. Memory access pattern indexes
 CREATE INDEX IF NOT EXISTS idx_memory_access_patterns_user_time 
-    ON memory_access_patterns (user_id, access_time DESC);
+    ON memory_access_patterns (user_id, last_accessed_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_memory_access_patterns_memory_frequency 
-    ON memory_access_patterns (memory_id, access_frequency DESC);
+    ON memory_access_patterns (memory_namespace, access_frequency DESC);
 
 -- 5. Composite indexes for complex queries
 -- Conversation summaries by user and date
@@ -66,25 +65,23 @@ CREATE INDEX IF NOT EXISTS idx_conversation_summaries_user_date
 
 -- Long-term memories by expiration
 CREATE INDEX IF NOT EXISTS idx_long_term_memories_expiration 
-    ON long_term_memories (expires_at) 
-    WHERE expires_at IS NOT NULL;
+    ON long_term_memories (expiry_at) 
+    WHERE expiry_at IS NOT NULL;
 
 -- 6. Partial indexes for common filter conditions
 -- Active memories only
 CREATE INDEX IF NOT EXISTS idx_long_term_memories_active 
-    ON long_term_memories (namespace, created_at DESC) 
-    WHERE expires_at IS NULL OR expires_at > NOW();
+    ON long_term_memories (namespace, created_at DESC);
 
 -- Recent conversations
 CREATE INDEX IF NOT EXISTS idx_conversations_recent 
-    ON conversations (user_id, updated_at DESC) 
-    WHERE updated_at > NOW() - INTERVAL '30 days';
+    ON conversations (user_id, updated_at DESC);
 
 -- 7. Full-text search indexes
 -- Search conversation summaries by content
 CREATE INDEX IF NOT EXISTS idx_conversation_summaries_summary_fulltext 
     ON conversation_summaries 
-    USING gin (to_tsvector('english', summary));
+    USING gin (to_tsvector('english', summary_text));
 
 -- Search long-term memories by value content
 CREATE INDEX IF NOT EXISTS idx_long_term_memories_value_fulltext 
@@ -96,9 +93,9 @@ CREATE OR REPLACE VIEW memory_performance_stats AS
 SELECT 
     'long_term_memories' as table_name,
     COUNT(*) as total_rows,
-    COUNT(*) FILTER (WHERE expires_at IS NULL OR expires_at > NOW()) as active_rows,
+    COUNT(*) FILTER (WHERE expiry_at IS NULL OR expiry_at > NOW()) as active_rows,
     AVG(access_count) as avg_access_count,
-    MAX(last_accessed) as latest_access,
+    MAX(accessed_at) as latest_access,
     pg_size_pretty(pg_total_relation_size('long_term_memories')) as table_size
 FROM long_term_memories
 UNION ALL
@@ -114,7 +111,7 @@ UNION ALL
 SELECT 
     'conversations' as table_name,
     COUNT(*) as total_rows,
-    COUNT(*) FILTER (WHERE is_archived = false) as active_rows,
+    COUNT(*) FILTER (WHERE archival_status = 'active') as active_rows,
     0 as avg_access_count,
     MAX(updated_at) as latest_access,
     pg_size_pretty(pg_total_relation_size('conversations')) as table_size
@@ -150,7 +147,7 @@ BEGIN
         ltm.access_count
     FROM long_term_memories ltm
     WHERE 
-        (ltm.expires_at IS NULL OR ltm.expires_at > NOW())
+        (ltm.expiry_at IS NULL OR ltm.expiry_at > NOW())
         AND (namespace_prefix IS NULL OR ltm.namespace[1:array_length(namespace_prefix, 1)] = namespace_prefix)
         AND ltm.namespace[1] = user_id_param
         AND (ltm.embedding <=> query_embedding) < (1 - similarity_threshold)
@@ -168,8 +165,8 @@ CREATE OR REPLACE FUNCTION search_conversation_summaries_optimized(
 ) RETURNS TABLE (
     id UUID,
     conversation_id UUID,
-    summary TEXT,
-    topics TEXT[],
+    summary_text TEXT,
+    summary_type VARCHAR(50),
     similarity_score FLOAT,
     created_at TIMESTAMP WITH TIME ZONE,
     message_count INTEGER
@@ -179,16 +176,16 @@ BEGIN
     SELECT 
         cs.id,
         cs.conversation_id,
-        cs.summary,
-        cs.topics,
-        (cs.embedding <=> query_embedding) AS similarity_score,
+        cs.summary_text,
+        cs.summary_type,
+        (cs.summary_embedding <=> query_embedding) AS similarity_score,
         cs.created_at,
         cs.message_count
     FROM conversation_summaries cs
     WHERE 
         cs.user_id = user_id_param
-        AND (cs.embedding <=> query_embedding) < (1 - similarity_threshold)
-    ORDER BY cs.embedding <=> query_embedding
+        AND (cs.summary_embedding <=> query_embedding) < (1 - similarity_threshold)
+    ORDER BY cs.summary_embedding <=> query_embedding
     LIMIT limit_param;
 END;
 $$ LANGUAGE plpgsql;
@@ -200,17 +197,17 @@ DECLARE
     deleted_count INTEGER;
 BEGIN
     DELETE FROM long_term_memories 
-    WHERE expires_at IS NOT NULL AND expires_at < NOW();
+    WHERE expiry_at IS NOT NULL AND expiry_at < NOW();
     
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     
     -- Log cleanup activity
     INSERT INTO memory_access_patterns (
-        user_id, memory_id, access_type, access_time, 
-        query_embedding, similarity_score, access_frequency
+        user_id, memory_namespace, memory_key, access_frequency, 
+        last_accessed_at, context_relevance, access_context, retrieval_method
     ) VALUES (
-        'system', gen_random_uuid(), 'cleanup', NOW(), 
-        NULL, 0, deleted_count
+        'system', ARRAY['system'], 'cleanup', deleted_count, 
+        NOW(), 0.0, 'System cleanup', 'system'
     );
     
     RETURN deleted_count;
@@ -218,35 +215,36 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Update access patterns for optimization
+DROP FUNCTION IF EXISTS update_memory_access_pattern CASCADE;
 CREATE OR REPLACE FUNCTION update_memory_access_pattern(
     p_user_id TEXT,
-    p_memory_id UUID,
-    p_access_type TEXT,
-    p_query_embedding VECTOR(1536) DEFAULT NULL,
-    p_similarity_score FLOAT DEFAULT NULL
+    p_memory_namespace TEXT[],
+    p_memory_key TEXT,
+    p_access_context TEXT DEFAULT NULL,
+    p_retrieval_method VARCHAR(50) DEFAULT 'direct'
 ) RETURNS VOID AS $$
 BEGIN
     -- Update access count in long_term_memories
     UPDATE long_term_memories 
     SET 
         access_count = access_count + 1,
-        last_accessed = NOW()
-    WHERE id = p_memory_id;
+        accessed_at = NOW()
+    WHERE namespace = p_memory_namespace AND key = p_memory_key;
     
     -- Insert or update access pattern
     INSERT INTO memory_access_patterns (
-        user_id, memory_id, access_type, access_time,
-        query_embedding, similarity_score, access_frequency
+        user_id, memory_namespace, memory_key, access_frequency,
+        last_accessed_at, access_context, retrieval_method
     ) VALUES (
-        p_user_id, p_memory_id, p_access_type, NOW(),
-        p_query_embedding, p_similarity_score, 1
+        p_user_id, p_memory_namespace, p_memory_key, 1,
+        NOW(), p_access_context, p_retrieval_method
     )
-    ON CONFLICT (user_id, memory_id, access_type) 
+    ON CONFLICT (user_id, memory_namespace, memory_key) 
     DO UPDATE SET
-        access_time = NOW(),
+        last_accessed_at = NOW(),
         access_frequency = memory_access_patterns.access_frequency + 1,
-        query_embedding = EXCLUDED.query_embedding,
-        similarity_score = EXCLUDED.similarity_score;
+        access_context = EXCLUDED.access_context,
+        retrieval_method = EXCLUDED.retrieval_method;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -270,7 +268,7 @@ BEGIN
             ELSE 'ok'
         END as status
     FROM long_term_memories
-    WHERE expires_at IS NULL OR expires_at > NOW()
+    WHERE expiry_at IS NULL OR expiry_at > NOW()
     
     UNION ALL
     
@@ -283,7 +281,7 @@ BEGIN
             ELSE 'ok'
         END
     FROM long_term_memories
-    WHERE expires_at IS NULL OR expires_at > NOW()
+    WHERE expiry_at IS NULL OR expiry_at > NOW()
     
     UNION ALL
     
@@ -297,7 +295,7 @@ BEGIN
             ELSE 'ok'
         END
     FROM long_term_memories
-    WHERE expires_at IS NOT NULL AND expires_at < NOW()
+    WHERE expiry_at IS NOT NULL AND expiry_at < NOW()
     
     UNION ALL
     
@@ -311,7 +309,7 @@ BEGIN
             ELSE 'ok'
         END
     FROM conversations
-    WHERE is_archived = false;
+    WHERE archival_status = 'active';
 END;
 $$ LANGUAGE plpgsql;
 
@@ -363,9 +361,9 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS user_memory_summary AS
 SELECT 
     namespace[1] as user_id,
     COUNT(*) as total_memories,
-    COUNT(*) FILTER (WHERE expires_at IS NULL OR expires_at > NOW()) as active_memories,
+    COUNT(*) FILTER (WHERE expiry_at IS NULL OR expiry_at > NOW()) as active_memories,
     AVG(access_count) as avg_access_count,
-    MAX(last_accessed) as last_access,
+    MAX(accessed_at) as last_access,
     MIN(created_at) as oldest_memory,
     MAX(created_at) as newest_memory,
     array_agg(DISTINCT namespace[2]) FILTER (WHERE array_length(namespace, 1) >= 2) as memory_types
@@ -392,11 +390,13 @@ COMMENT ON INDEX idx_conversation_summaries_embedding_hnsw IS 'HNSW index for co
 
 -- 15. Row-level security optimization
 -- Create policies that work well with indexes
-CREATE POLICY IF NOT EXISTS "long_term_memories_user_access" ON long_term_memories
+DROP POLICY IF EXISTS "long_term_memories_user_access" ON long_term_memories;
+CREATE POLICY "long_term_memories_user_access" ON long_term_memories
     FOR ALL 
     USING (namespace[1] = current_setting('app.current_user', true));
 
-CREATE POLICY IF NOT EXISTS "conversation_summaries_user_access" ON conversation_summaries
+DROP POLICY IF EXISTS "conversation_summaries_user_access" ON conversation_summaries;
+CREATE POLICY "conversation_summaries_user_access" ON conversation_summaries
     FOR ALL 
     USING (user_id = current_setting('app.current_user', true));
 

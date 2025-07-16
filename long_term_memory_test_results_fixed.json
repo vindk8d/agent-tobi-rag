@@ -1,0 +1,107 @@
+{
+  "summary": {
+    "passed": 1,
+    "failed": 11,
+    "success_rate": 8.333333333333332,
+    "timestamp": "2025-07-17T01:50:02.154029"
+  },
+  "results": [
+    {
+      "test": "search_conversation_summaries_function",
+      "passed": false,
+      "details": "",
+      "error": "Function failed: 'DatabaseClient' object has no attribute 'execute_query'",
+      "timestamp": "2025-07-17T01:50:01.434839"
+    },
+    {
+      "test": "cleanup_expired_memories_function",
+      "passed": false,
+      "details": "",
+      "error": "Function failed: 'DatabaseClient' object has no attribute 'execute_query'",
+      "timestamp": "2025-07-17T01:50:01.434853"
+    },
+    {
+      "test": "update_memory_access_pattern_function",
+      "passed": false,
+      "details": "",
+      "error": "Function failed: 'DatabaseClient' object has no attribute 'execute_query'",
+      "timestamp": "2025-07-17T01:50:01.434859"
+    },
+    {
+      "test": "search_long_term_memories_function",
+      "passed": false,
+      "details": "",
+      "error": "Function failed: 'DatabaseClient' object has no attribute 'execute_query'",
+      "timestamp": "2025-07-17T01:50:01.434869"
+    },
+    {
+      "test": "new_helper_functions",
+      "passed": false,
+      "details": "",
+      "error": "Helper functions failed: 'DatabaseClient' object has no attribute 'execute_query'",
+      "timestamp": "2025-07-17T01:50:01.434877"
+    },
+    {
+      "test": "store_interface_test",
+      "passed": false,
+      "details": "",
+      "error": "Store interface test failed: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\nTraceback (most recent call last):\n  File \"/Users/vinperez/Desktop/agent-tobi-rag/tests/test_long_term_memory_fixed.py\", line 212, in test_store_interface\n    embeddings = OpenAIEmbeddings(model=\"text-embedding-3-small\")\nTypeError: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\n",
+      "timestamp": "2025-07-17T01:50:01.435261"
+    },
+    {
+      "test": "memory_manager_store",
+      "passed": false,
+      "details": "",
+      "error": "Failed to store memory via MemoryManager",
+      "timestamp": "2025-07-17T01:50:02.152772"
+    },
+    {
+      "test": "memory_manager_context",
+      "passed": false,
+      "details": "",
+      "error": "No relevant contexts found",
+      "timestamp": "2025-07-17T01:50:02.152924"
+    },
+    {
+      "test": "memory_manager_consolidation",
+      "passed": true,
+      "details": "Consolidation completed: {'consolidated_count': 0, 'error': \"'coroutine' object does not support the asynchronous context manager protocol\"}",
+      "error": "",
+      "timestamp": "2025-07-17T01:50:02.153075"
+    },
+    {
+      "test": "error_handling_test",
+      "passed": false,
+      "details": "",
+      "error": "Error handling test failed: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\nTraceback (most recent call last):\n  File \"/Users/vinperez/Desktop/agent-tobi-rag/tests/test_long_term_memory_fixed.py\", line 401, in test_error_handling\n    embeddings = OpenAIEmbeddings(model=\"text-embedding-3-small\")\nTypeError: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\n",
+      "timestamp": "2025-07-17T01:50:02.153321"
+    },
+    {
+      "test": "performance_optimization",
+      "passed": false,
+      "details": "",
+      "error": "Performance test failed: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\nTraceback (most recent call last):\n  File \"/Users/vinperez/Desktop/agent-tobi-rag/tests/test_long_term_memory_fixed.py\", line 483, in test_performance_optimization\n    embeddings = OpenAIEmbeddings(model=\"text-embedding-3-small\")\nTypeError: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\n",
+      "timestamp": "2025-07-17T01:50:02.153586"
+    },
+    {
+      "test": "ttl_expiration",
+      "passed": false,
+      "details": "",
+      "error": "TTL expiration test failed: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\nTraceback (most recent call last):\n  File \"/Users/vinperez/Desktop/agent-tobi-rag/tests/test_long_term_memory_fixed.py\", line 539, in test_ttl_expiration\n    embeddings = OpenAIEmbeddings(model=\"text-embedding-3-small\")\nTypeError: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\n",
+      "timestamp": "2025-07-17T01:50:02.153717"
+    }
+  ],
+  "errors": [
+    "search_conversation_summaries_function: Function failed: 'DatabaseClient' object has no attribute 'execute_query'",
+    "cleanup_expired_memories_function: Function failed: 'DatabaseClient' object has no attribute 'execute_query'",
+    "update_memory_access_pattern_function: Function failed: 'DatabaseClient' object has no attribute 'execute_query'",
+    "search_long_term_memories_function: Function failed: 'DatabaseClient' object has no attribute 'execute_query'",
+    "new_helper_functions: Helper functions failed: 'DatabaseClient' object has no attribute 'execute_query'",
+    "store_interface_test: Store interface test failed: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\nTraceback (most recent call last):\n  File \"/Users/vinperez/Desktop/agent-tobi-rag/tests/test_long_term_memory_fixed.py\", line 212, in test_store_interface\n    embeddings = OpenAIEmbeddings(model=\"text-embedding-3-small\")\nTypeError: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\n",
+    "memory_manager_store: Failed to store memory via MemoryManager",
+    "memory_manager_context: No relevant contexts found",
+    "error_handling_test: Error handling test failed: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\nTraceback (most recent call last):\n  File \"/Users/vinperez/Desktop/agent-tobi-rag/tests/test_long_term_memory_fixed.py\", line 401, in test_error_handling\n    embeddings = OpenAIEmbeddings(model=\"text-embedding-3-small\")\nTypeError: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\n",
+    "performance_optimization: Performance test failed: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\nTraceback (most recent call last):\n  File \"/Users/vinperez/Desktop/agent-tobi-rag/tests/test_long_term_memory_fixed.py\", line 483, in test_performance_optimization\n    embeddings = OpenAIEmbeddings(model=\"text-embedding-3-small\")\nTypeError: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\n",
+    "ttl_expiration: TTL expiration test failed: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\nTraceback (most recent call last):\n  File \"/Users/vinperez/Desktop/agent-tobi-rag/tests/test_long_term_memory_fixed.py\", line 539, in test_ttl_expiration\n    embeddings = OpenAIEmbeddings(model=\"text-embedding-3-small\")\nTypeError: OpenAIEmbeddings.__init__() got an unexpected keyword argument 'model'\n"
+  ]
+}

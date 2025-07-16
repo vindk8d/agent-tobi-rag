@@ -3,7 +3,7 @@ Unified Tool-calling RAG Agent following LangChain best practices.
 Single agent node handles both tool calling and execution.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 from datetime import datetime
 from uuid import uuid4, UUID
 import logging
@@ -182,6 +182,18 @@ class UnifiedToolCallingRAGAgent:
             
             logger.info(f"Memory preparation for conversation {conversation_id}: {len(messages)} messages")
             
+            # Store incoming user messages to database
+            if messages and config:
+                # Find the most recent human message to store
+                for msg in reversed(messages):
+                    if hasattr(msg, 'type') and msg.type == 'human':
+                        await self.memory_manager.store_message_from_agent(
+                            message=msg,
+                            config=config,
+                            agent_type="rag"
+                        )
+                        break
+            
             # Get relevant long-term context if we have a user query
             long_term_context = []
             if user_id and messages:
@@ -238,6 +250,18 @@ class UnifiedToolCallingRAGAgent:
             
             logger.info(f"Memory update for conversation {conversation_id}: {len(messages)} messages")
             
+            # Store agent response messages to database
+            if messages and config:
+                # Find the most recent AI message to store
+                for msg in reversed(messages):
+                    if hasattr(msg, 'type') and msg.type == 'ai':
+                        await self.memory_manager.store_message_from_agent(
+                            message=msg,
+                            config=config,
+                            agent_type="rag"
+                        )
+                        break
+            
             # Store important information in long-term memory
             if user_id and messages and len(messages) >= 2:
                 # Check if this conversation contains storable information using generic infrastructure
@@ -275,7 +299,7 @@ class UnifiedToolCallingRAGAgent:
                 if hasattr(msg, 'type') and msg.type == 'human':
                     current_query = msg.content
                     break
-                elif isinstance(msg, dict) and msg.get('role') == 'user':
+                elif isinstance(msg, dict) and msg.get('role') == 'human':
                     current_query = msg.get('content', '')
                     break
             
@@ -445,6 +469,50 @@ Tool Usage Examples:
 - format_sources: {{"sources": [list of documents from semantic_search]}}
 - query_crm_data: {{"question": "specific business question about sales, customers, vehicles, pricing"}}
 
+**CRM Database Schema Context:**
+Your CRM database contains the following information that you can query using query_crm_data:
+
+**EMPLOYEES & ORGANIZATION:**
+- Employee count and details (positions: sales_agent, account_executive, manager, director, admin)
+- Branch information (regions: north, south, east, west, central)
+- Employee hierarchy and reporting structure
+
+**VEHICLE INVENTORY:**
+- Vehicle specifications (brand, model, year, type, color, power, acceleration, fuel_type, transmission)
+- Stock quantities and availability status
+- Vehicle types: sedan, suv, hatchback, pickup, van, motorcycle, truck
+- Available brands: Toyota, Honda, Ford, Nissan, BMW, Mercedes, Audi
+- Popular models: Camry, RAV4, Civic, CR-V, F-150, Altima, Prius
+
+**PRICING INFORMATION:**
+- Base prices, final prices, and discount amounts
+- Insurance and LTO (Land Transport Office) fees
+- Warranty information and promotional offers
+- Add-on items and their prices
+
+**CUSTOMER DATA:**
+- Customer contact information and company details
+- Business vs. individual customers
+- Customer count and segmentation
+
+**SALES PERFORMANCE:**
+- Sales opportunities and pipeline stages (New, Contacted, Consideration, Purchase Intent, Won, Lost)
+- Lead warmth levels (hot, warm, cold, dormant)
+- Transaction status and revenue tracking
+- Sales agent performance and conversion rates
+
+**ACTIVITIES & INTERACTIONS:**
+- Customer interaction history (call, email, meeting, demo, follow_up, proposal_sent, contract_signed)
+- Activity scheduling and completion tracking
+
+Use query_crm_data for questions about:
+- "How many employees/customers/vehicles do we have?"
+- "What's the price of [vehicle model]?"
+- "How many [vehicle model] are available in inventory?"
+- "Show me sales performance"
+- "What opportunities are in the pipeline?"
+- "Which branches do we have?"
+
 Guidelines:
 - Always search for documents first when answering questions
 - Use the context from documents to provide accurate answers
@@ -589,9 +657,9 @@ Important: Use the tools to help you provide the best possible assistance to the
                 if isinstance(msg, dict):
                     content = msg.get("content")
                     if content:  # Only add messages with actual content
-                        if msg.get("role") == "user":
+                        if msg.get("role") == "human":
                             messages.append(HumanMessage(content=content))
-                        elif msg.get("role") == "assistant":
+                        elif msg.get("role") == "bot":
                             messages.append(AIMessage(content=content))
                 elif isinstance(msg, BaseMessage):
                     messages.append(msg)
