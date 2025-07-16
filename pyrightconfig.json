@@ -1,6 +1,6 @@
 {
   "exclude": [
-    "venv-langgraph-studio/**",
+    "venv/**",
     "backend/logs/**",
     "tests/mini_crawl_output/**",
     "frontend/node_modules/**",

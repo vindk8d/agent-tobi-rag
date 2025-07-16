@@ -33,7 +33,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
-venv-langgraph-studio/
+venv/
 
 # Testing
 .coverage
