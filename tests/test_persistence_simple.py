@@ -13,8 +13,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from agents.memory_manager import memory_manager
-from config import get_settings
+from backend.agents.memory_manager import memory_manager
+from backend.config import get_settings
 
 async def test_persistence_setup():
     """Test the persistence layer setup."""
@@ -92,7 +92,7 @@ async def test_basic_state_schema():
     print("\n🧪 Testing basic state schema...")
     
     try:
-        from agents.state import AgentState
+        from backend.agents.state import AgentState
         from langchain_core.messages import HumanMessage
         from uuid import uuid4
         
