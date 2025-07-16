@@ -29,27 +29,11 @@ The copilot operates through a Telegram bot interface for salespeople and includ
 - **As a salesperson**, I want to access the copilot through Telegram so that I can get information quickly while on calls or meetings with clients
 - **As a salesperson**, I want my conversation history to be preserved so that I can reference previous queries and build context over time
 
-### CRM-Related Salesperson Stories
-- **As a salesperson**, I want to ask "What's the price of the Honda Civic?" so that I can provide accurate pricing information to customers
-- **As a salesperson**, I want to query "Who are my active customers this month?" so that I can prioritize my follow-up activities
-- **As a salesperson**, I want to ask "What vehicles are available in stock?" so that I can match customer preferences with available inventory
-- **As a salesperson**, I want to query "What's my sales performance this quarter?" so that I can track my progress toward goals
-- **As a salesperson**, I want to ask "What opportunities are in my pipeline?" so that I can manage my sales activities effectively
-- **As a salesperson**, I want to query "Which customers have pending activities?" so that I can prioritize my follow-up tasks
-- **As a salesperson**, I want to ask "What's the profit margin on the Toyota Camry?" so that I can optimize pricing during negotiations
-- **As a salesperson**, I want to query "What promotions are currently active?" so that I can present the best offers to customers
-
 ### Administrator Stories
 - **As a sales manager**, I want to upload documents to the system so that the copilot has access to the latest marketing materials and product information
 - **As an IT admin**, I want to upload internal documents to the system so that sales materials are available to the copilot
 - **As a sales manager**, I want to monitor which documents are successfully indexed so that I can ensure all relevant information is available
 - **As an admin**, I want to receive alerts when document processing fails so that I can address data source issues promptly
-
-### CRM-Related Administrator Stories
-- **As a sales manager**, I want to ask "What's the team's conversion rate this month?" so that I can assess team performance
-- **As a sales manager**, I want to query "Which salespeople have the highest closing rates?" so that I can identify top performers and best practices
-- **As a branch manager**, I want to ask "How is our inventory turnover compared to other branches?" so that I can optimize inventory management
-- **As an admin**, I want to query "What's the average time from lead to close?" so that I can identify bottlenecks in the sales process
 
 ## Functional Requirements
 
@@ -91,18 +75,6 @@ The copilot operates through a Telegram bot interface for salespeople and includ
 27. The system must use Supabase for data persistence and user session management
 28. The frontend must be built using Next.js and Tailwind CSS
 
-### CRM Integration Requirements
-29. The system must provide access to CRM data through natural language queries about sales, customers, inventory, and performance
-30. The system must support queries about vehicle pricing, specifications, and availability from the CRM database
-31. The system must enable salespeople to query their personal sales pipeline, opportunities, and customer activities
-32. The system must provide access to employee information, branch data, and organizational hierarchy through conversational queries
-33. The system must support customer lookup by name, company, or contact information through natural language questions
-34. The system must enable inventory queries including vehicle availability, stock levels, and specifications
-35. The system must provide sales performance analytics accessible through conversational queries
-36. The system must support transaction and pricing information queries including discounts and promotions
-37. The system must maintain data security and access control when querying CRM information
-38. The system must provide accurate and up-to-date CRM information with source attribution
-
 ## Non-Goals (Out of Scope)
 
 - **Multi-language Support:** Initial version will only support English
@@ -137,12 +109,10 @@ The copilot operates through a Telegram bot interface for salespeople and includ
 - **Backend:** Python-based microservices using FastAPI
 - **Agent Framework:** LangChain for RAG pipeline, LangGraph for conversation management
 - **Database:** Supabase (PostgreSQL) with vector extensions for embeddings
-- **CRM Database:** Supabase (PostgreSQL) with comprehensive sales management schema including branches, employees, customers, vehicles, opportunities, transactions, pricing, and activities tables
 - **LLM Provider:** OpenAI GPT-4 for generation, text-embedding-3-small for embeddings
 - **Monitoring:** LangSmith for agent tracing and performance monitoring
 - **Message Queue:** Redis for handling concurrent Telegram bot requests
 - **Document Processing:** Python libraries for PDF, Word, and other document formats
-- **CRM Query Engine:** Natural language to SQL conversion with security validation for safe CRM data access
 
 ### Performance Requirements
 - **Response Time:** <3 seconds for 95% of queries
@@ -170,12 +140,6 @@ The copilot operates through a Telegram bot interface for salespeople and includ
 3. **Document Coverage:** Target >95% of uploaded documents successfully processed daily
 4. **Conversation Engagement:** Target >3 queries per conversation session
 
-### CRM Integration Metrics
-1. **CRM Query Accuracy:** Target >95% accuracy for CRM-related queries (pricing, inventory, customer data)
-2. **CRM Query Usage:** Target 60% of queries to include CRM data requests within 2 months of deployment
-3. **Sales Process Efficiency:** Target 30% reduction in time spent looking up customer, vehicle, and pricing information
-4. **CRM Data Coverage:** Target >90% of CRM queries successfully resolved without manual intervention
-
 ## Open Questions
 
 1. **Data Source Prioritization:** How should the system handle conflicting information from sources of different authority levels?
@@ -184,5 +148,4 @@ The copilot operates through a Telegram bot interface for salespeople and includ
 4. **Error Recovery:** What should be the retry policy for failed document processing attempts?
 5. **Performance Monitoring:** What specific LangSmith metrics should trigger alerts for system administrators?
 6. **Document Versioning:** How should the system handle updates to uploaded documents?
-7. **Telegram Bot Security:** What measures should be implemented to prevent unauthorized access to the bot?
-8. **CRM Data Access Control:** How should the system handle role-based access to sensitive CRM data (e.g., sales performance, customer contact information)? 
+7. **Telegram Bot Security:** What measures should be implemented to prevent unauthorized access to the bot? 
