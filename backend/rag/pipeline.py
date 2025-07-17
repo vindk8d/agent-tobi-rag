@@ -60,7 +60,7 @@ class DocumentProcessingPipeline:
         Get existing data source by URL or create a new one.
         Returns the data source ID.
         """
-        from backend.database import db_client
+        from database import db_client
         
         try:
             # Try to find existing data source by URL

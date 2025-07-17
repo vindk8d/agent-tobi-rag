@@ -23,8 +23,8 @@ from langchain_core.language_models import BaseLanguageModel
 from langchain_core.embeddings import Embeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-from backend.config import get_settings
-from backend.database import db_client
+from config import get_settings
+from database import db_client
 
 logger = logging.getLogger(__name__)
 
@@ -941,7 +941,7 @@ class MemoryManager:
             await self._ensure_conversation_exists(conversation_id, user_id)
             
             # Use Supabase client directly for message storage
-            from backend.database import db_client
+            from database import db_client
             
             message_data = {
                 'conversation_id': conversation_id,
@@ -1082,7 +1082,7 @@ class MemoryManager:
             # Create anonymous user record if needed
             if anonymous_user_created:
                 try:
-                    from backend.database import db_client
+                    from database import db_client
                     user_data = {
                         'id': user_id,
                         'email': f'anonymous_{user_id[:8]}@system.generated',

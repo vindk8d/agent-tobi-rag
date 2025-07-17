@@ -46,10 +46,10 @@ except ImportError:
         sys.path.insert(0, project_root_str)
     
     # Now import with absolute paths
-    from backend.agents.tobi_sales_copilot.state import AgentState
-    from backend.agents.tools import get_all_tools, get_tool_names
-    from backend.agents.memory import memory_manager, memory_scheduler
-    from backend.config import get_settings, setup_langsmith_tracing
+    from agents.tobi_sales_copilot.state import AgentState
+    from agents.tools import get_all_tools, get_tool_names
+    from agents.memory import memory_manager, memory_scheduler
+    from config import get_settings, setup_langsmith_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ class UnifiedToolCallingRAGAgent:
             from ..memory import memory_manager
         except ImportError:
             # Fallback to absolute import when loaded directly by LangGraph Studio
-            from backend.agents.memory import memory_manager
+            from agents.memory import memory_manager
         
         # Get checkpointer for persistence
         checkpointer = await memory_manager.get_checkpointer()

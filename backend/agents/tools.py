@@ -37,9 +37,9 @@ from sqlparse.sql import Statement, Token
 from sqlparse.tokens import Keyword, DML
 import numpy as np
 
-from backend.rag.retriever import SemanticRetriever
-from backend.rag.embeddings import OpenAIEmbeddings
-from backend.config import get_settings
+from rag.retriever import SemanticRetriever
+from rag.embeddings import OpenAIEmbeddings
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 
