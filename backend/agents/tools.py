@@ -81,7 +81,16 @@ async def _get_sql_database():
             if database_url.startswith("postgres://"):
                 database_url = database_url.replace("postgres://", "postgresql://", 1)
             logger.info(f"Connecting to database for SQL toolkit")
-            _sql_db = SQLDatabase.from_uri(database_url)
+            
+            # Try direct connection first (avoid threading complications)
+            try:
+                import psycopg2  # Ensure psycopg2 is available
+                _sql_db = SQLDatabase.from_uri(database_url)
+                logger.info("SQL database connection established successfully")
+            except ImportError as ie:
+                logger.error(f"psycopg2 import failed in main thread: {ie}")
+                return None
+                
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
             return None
@@ -221,24 +230,16 @@ async def _ensure_embeddings():
     """Ensure embeddings are initialized."""
     global _embeddings
     if _embeddings is None:
-        settings = await get_settings()
-        _embeddings = OpenAIEmbeddings(
-            api_key=settings.openai_api_key,
-            model="text-embedding-3-large"
-        )
+        # OpenAIEmbeddings loads settings asynchronously, no parameters needed
+        _embeddings = OpenAIEmbeddings()
     return _embeddings
 
 async def _ensure_retriever():
     """Ensure retriever is initialized."""
     global _retriever
     if _retriever is None:
-        settings = await get_settings()
-        embeddings = await _ensure_embeddings()
-        _retriever = SemanticRetriever(
-            supabase_url=settings.supabase_url,
-            supabase_key=settings.supabase_anon_key,
-            embeddings=embeddings
-        )
+        # SemanticRetriever loads its own settings and dependencies
+        _retriever = SemanticRetriever()
     return _retriever
 
 # Database connection cache
@@ -311,10 +312,10 @@ async def semantic_search(query: str, limit: int = 5, similarity_threshold: floa
         retriever = await _ensure_retriever()
         
         # Perform semantic search
-        results = await retriever.search(
+        results = await retriever.retrieve(
             query=query,
-            limit=limit,
-            similarity_threshold=similarity_threshold
+            top_k=limit,
+            threshold=similarity_threshold
         )
         
         if not results:

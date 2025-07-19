@@ -34,8 +34,8 @@ RUN pip install --no-cache-dir --timeout 100 --retries 5 -r requirements.txt && 
 # Create non-root user before copying files
 RUN adduser --disabled-password --gecos '' appuser
 
-# Copy project files
-COPY . .
+# Copy backend project files
+COPY ./backend .
 
 # Change ownership
 RUN chown -R appuser /app

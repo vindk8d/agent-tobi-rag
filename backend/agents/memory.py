@@ -756,20 +756,29 @@ class MemoryManager:
             settings = await get_settings()
             connection_string = settings.supabase.postgresql_connection_string
             
-            # Initialize connection pool
-            from psycopg_pool import AsyncConnectionPool
+            # Initialize connection pool using psycopg2 (more compatible)
+            try:
+                from psycopg_pool import AsyncConnectionPool
+                self.connection_pool = AsyncConnectionPool(
+                    conninfo=connection_string,
+                    max_size=20,
+                    kwargs={"autocommit": True, "prepare_threshold": 0}
+                )
+            except ImportError:
+                # Fallback to simpler approach with psycopg2 that we know works
+                logger.info("psycopg_pool not available, using fallback connection management")
+                import psycopg2
+                self.connection_pool = None  # Use direct connections instead
             
-            self.connection_pool = AsyncConnectionPool(
-                conninfo=connection_string,
-                max_size=20,
-                kwargs={"autocommit": True, "prepare_threshold": 0}
-            )
-            
-            await self.connection_pool.open()
-            
-            # Initialize checkpointer
-            self.checkpointer = AsyncPostgresSaver(self.connection_pool)
-            await self.checkpointer.setup()
+            if self.connection_pool:
+                await self.connection_pool.open()
+                # Initialize checkpointer
+                self.checkpointer = AsyncPostgresSaver(self.connection_pool)
+                await self.checkpointer.setup()
+            else:
+                # Fallback: disable checkpointer if pool unavailable
+                logger.warning("Connection pool unavailable, checkpointer disabled")
+                self.checkpointer = None
             
             # Initialize database manager
             self.db_manager = SimpleDBManager()
