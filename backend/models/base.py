@@ -3,9 +3,11 @@ Base model classes for the RAG-Tobi application
 """
 
 from pydantic import BaseModel as PydanticBaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Generic, TypeVar
 from datetime import datetime
 from uuid import UUID, uuid4
+
+T = TypeVar('T')
 
 
 class BaseModel(PydanticBaseModel):
@@ -42,16 +44,16 @@ class IdentifiedModel(TimestampedModel):
     id: UUID = Field(default_factory=uuid4)
     
 
-class APIResponse(BaseModel):
+class APIResponse(BaseModel, Generic[T]):
     """Standard API response format"""
     
     success: bool = True
     message: str = "Success"
-    data: Optional[Dict[str, Any]] = None
+    data: Optional[T] = None
     error: Optional[str] = None
     
     @classmethod
-    def success_response(cls, data: Optional[Dict[str, Any]] = None, message: str = "Success"):
+    def success_response(cls, data: Optional[T] = None, message: str = "Success"):
         return cls(success=True, message=message, data=data)
     
     @classmethod

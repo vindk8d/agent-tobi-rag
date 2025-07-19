@@ -347,7 +347,7 @@ class UnifiedToolCallingRAGAgent:
                             tool = self.tool_map.get(tool_name)
                             if tool:
                                 # Check if tool is async by examining the underlying function
-                                if tool_name in ["semantic_search", "query_crm_data"]:
+                                if tool_name in ["lcel_rag", "lcel_retrieval", "lcel_generation", "query_crm_data"]:
                                     # Handle async tools
                                     tool_result = await tool.ainvoke(tool_args)
                                 else:
@@ -457,16 +457,23 @@ class UnifiedToolCallingRAGAgent:
 Available tools:
 {', '.join(self.tool_names)}
 
-Your workflow:
-1. When a user asks a question, use semantic_search to find relevant documents
-2. If documents are found, use build_context to create a comprehensive context
-3. Answer the user's question based on the context
-4. If you want to format sources, use format_sources with the documents list from semantic_search results
+Your workflow options:
+
+**Option 1 - Complete RAG Pipeline (RECOMMENDED):**
+1. Use lcel_rag for complete RAG pipeline (retrieval + generation in one step)
+2. This automatically optimizes search queries, retrieves documents, and generates comprehensive responses with source citations
+
+**Option 2 - Step-by-step RAG approach:**
+1. Use lcel_retrieval to find relevant documents with query optimization
+2. Use lcel_generation to generate responses based on retrieved documents
+
+**Option 3 - CRM Data Queries:**
+1. Use query_crm_data for specific business questions about sales, customers, vehicles, pricing, and performance metrics
 
 Tool Usage Examples:
-- semantic_search: {{"query": "your search query", "top_k": 5}}
-- build_context: {{"documents": [list of documents from semantic_search]}}
-- format_sources: {{"sources": [list of documents from semantic_search]}}
+- lcel_rag: {{"question": "user's complete question", "top_k": 5, "similarity_threshold": 0.7}}
+- lcel_retrieval: {{"question": "user's question for document search", "top_k": 5, "similarity_threshold": 0.7}}
+- lcel_generation: {{"question": "user's question", "documents": [retrieved_documents]}}
 - query_crm_data: {{"question": "specific business question about sales, customers, vehicles, pricing"}}
 
 **CRM Database Schema Context:**
@@ -514,13 +521,13 @@ Use query_crm_data for questions about:
 - "Which branches do we have?"
 
 Guidelines:
-- Always search for documents first when answering questions
-- Use the context from documents to provide accurate answers
+- Use lcel_rag for comprehensive document-based answers (recommended approach)
+- For step-by-step control, use lcel_retrieval then lcel_generation
+- Use query_crm_data for specific business data questions
 - Be concise but thorough in your responses
-- Always provide source attribution when you have sources
+- LCEL tools automatically provide source attribution when documents are found
 - If no relevant documents are found, clearly indicate this
-- You can use multiple tools in sequence as needed
-- When using format_sources, pass the documents array from semantic_search results as the sources parameter
+- Choose the most appropriate tool based on the user's question type
 
 **Important Context Handling:**
 - Previous conversation context is automatically provided in your messages, so you don't need to ask for it
@@ -541,17 +548,35 @@ Important: Use the tools to help you provide the best possible assistance to the
         sources = []
         
         for message in messages:
-            if isinstance(message, ToolMessage) and message.name == "semantic_search":
+            # Extract sources from LCEL-based RAG tools
+            if isinstance(message, ToolMessage) and message.name in ["lcel_rag", "lcel_retrieval"]:
                 try:
-                    content = json.loads(message.content)
-                    if isinstance(content, dict) and "documents" in content:
-                        for doc in content["documents"]:
-                            if doc.get("source"):
-                                sources.append({
-                                    "source": doc["source"],
-                                    "similarity": doc.get("similarity", 0.0)
-                                })
-                except (json.JSONDecodeError, KeyError):
+                    # LCEL tools return formatted text with source information
+                    # Extract sources from the formatted response
+                    content = message.content
+                    if "Sources (" in content:
+                        # Parse sources from lcel_rag output format
+                        sources_section = content.split("Sources (")[1].split("):")[1] if "):" in content else ""
+                        for line in sources_section.split('\n'):
+                            if line.strip().startswith('•'):
+                                source = line.strip()[1:].strip()
+                                if source:
+                                    sources.append({
+                                        "source": source,
+                                        "similarity": 0.0  # LCEL tools don't expose individual similarity scores
+                                    })
+                    elif "**Retrieved Documents (" in content:
+                        # Parse sources from lcel_retrieval output format
+                        lines = content.split('\n')
+                        for line in lines:
+                            if line.startswith("Source: "):
+                                source = line.replace("Source: ", "").strip()
+                                if source:
+                                    sources.append({
+                                        "source": source,
+                                        "similarity": 0.0
+                                    })
+                except Exception:
                     continue
         
         return sources

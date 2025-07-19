@@ -274,4 +274,117 @@ export interface ThemeConfig {
     lg: string;
     xl: string;
   };
-} 
+}
+
+// Memory Debug Interface Types
+export interface User extends BaseEntity {
+  email: string;
+  name?: string;
+  role?: string;
+}
+
+export enum MemoryType {
+  SEMANTIC = "semantic",
+  EPISODIC = "episodic", 
+  PROCEDURAL = "procedural",
+}
+
+export enum ConversationSummaryType {
+  PERIODIC = "periodic",
+  FINAL = "final",
+  TOPIC_BASED = "topic_based",
+}
+
+export enum ConsolidationStatus {
+  ACTIVE = "active",
+  ARCHIVED = "archived",
+  CONSOLIDATED = "consolidated",
+}
+
+export interface LongTermMemory extends BaseEntity {
+  namespace: string[];
+  key: string;
+  value: any;
+  embedding?: number[];
+  accessed_at: string;
+  access_count: number;
+  memory_type: MemoryType;
+  source_thread_id?: string;
+  expiry_at?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface ConversationSummary extends BaseEntity {
+  conversation_id: string;
+  user_id: string;
+  summary_text: string;
+  summary_type: ConversationSummaryType;
+  message_count: number;
+  start_message_id?: string;
+  end_message_id?: string;
+  summary_embedding?: number[];
+  consolidation_status: ConsolidationStatus;
+  metadata?: Record<string, any>;
+}
+
+export interface MemoryAccessPattern extends BaseEntity {
+  user_id: string;
+  memory_namespace: string[];
+  memory_key?: string;
+  access_frequency: number;
+  last_accessed_at: string;
+  context_relevance: number;
+  access_context?: string;
+  retrieval_method?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface CustomerData extends BaseEntity {
+  first_name: string;
+  last_name: string;
+  email?: string;
+  phone?: string;
+  status: string;
+  branch_id: string;
+  warmth_score?: number;
+  // Additional CRM fields as needed
+}
+
+// Database message structure for memory debug interface
+export interface DatabaseMessage extends BaseEntity {
+  conversation_id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  metadata?: Record<string, any>;
+}
+
+export interface Branch extends BaseEntity {
+  name: string;
+  address?: string;
+  phone?: string;
+  manager_id?: string;
+}
+
+// Debug interface state management
+export interface MemoryDebugState {
+  selectedUserId: string;
+  users: User[];
+  userCrmData: CustomerData | null;
+  longTermMemories: LongTermMemory[];
+  conversationSummaries: ConversationSummary[];
+  memoryAccessPatterns: MemoryAccessPattern[];
+  messages: Message[];
+  loading: boolean;
+  error: string | null;
+}
+
+// API endpoints for memory debug operations
+export interface MemoryDebugAPI {
+  getUsers(): Promise<APIResponse<User[]>>;
+  getUserCrmData(userId: string): Promise<APIResponse<CustomerData>>;
+  getLongTermMemories(userId: string): Promise<APIResponse<LongTermMemory[]>>;
+  getConversationSummaries(userId: string): Promise<APIResponse<ConversationSummary[]>>;
+  getMemoryAccessPatterns(userId: string): Promise<APIResponse<MemoryAccessPattern[]>>;
+  triggerMemoryConsolidation(userId: string): Promise<APIResponse<any>>;
+  searchMemories(query: string, userId?: string): Promise<APIResponse<LongTermMemory[]>>;
+}
