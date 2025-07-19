@@ -950,7 +950,13 @@ class MemoryManager:
             await self._ensure_conversation_exists(conversation_id, user_id)
             
             # Use Supabase client directly for message storage
-            from database import db_client
+            try:
+                from database import db_client
+            except ImportError:
+                # Handle Docker environment
+                import sys
+                sys.path.append('/app')
+                from database import db_client
             
             message_data = {
                 'conversation_id': conversation_id,
@@ -980,7 +986,16 @@ class MemoryManager:
     async def _ensure_conversation_exists(self, conversation_id: str, user_id: str) -> None:
         """Ensure conversation record exists in the conversations table."""
         try:
-            from backend.database import db_client
+            try:
+                from backend.database import db_client
+            except ImportError:
+                # Handle Docker environment
+                try:
+                    from database import db_client
+                except ImportError:
+                    import sys
+                    sys.path.append('/app')
+                    from database import db_client
             
             # Check if conversation exists - wrap in asyncio.to_thread
             result = await asyncio.to_thread(
@@ -1021,7 +1036,8 @@ class MemoryManager:
     
     async def store_message_from_agent(self, message: Union[BaseMessage, Dict[str, Any]], 
                                      config: Dict[str, Any],
-                                     agent_type: str = "unknown") -> Optional[str]:
+                                     agent_type: str = "unknown",
+                                     user_id: Optional[str] = None) -> Optional[str]:
         """
         High-level method to store message from agent processing.
         Designed to be reusable across different agents.
@@ -1041,19 +1057,23 @@ class MemoryManager:
                 logger.warning(f"No conversation ID found in config for {agent_type} agent")
                 return None
             
-            # Extract user ID from message
-            user_id = self._extract_user_id_from_message(message)
+            # Use provided user_id or try to extract from message
+            if not user_id:
+                user_id = self._extract_user_id_from_message(message)
+            
             anonymous_user_created = False
             if not user_id:
                 # Generate a UUID for anonymous users to comply with database schema
                 user_id = str(uuid4())
-                logger.warning(f"No user_id found in message, generated UUID: {user_id}")
+                logger.warning(f"No user_id provided or found in message, generated UUID: {user_id}")
                 anonymous_user_created = True
             elif user_id == "anonymous":
                 # Replace "anonymous" with a proper UUID
                 user_id = str(uuid4())
                 logger.warning(f"Replaced 'anonymous' with UUID: {user_id}")
                 anonymous_user_created = True
+            else:
+                logger.info(f"Using provided user_id: {user_id}")
             
             # Extract message content and role
             content = ""
@@ -1091,7 +1111,13 @@ class MemoryManager:
             # Create anonymous user record if needed
             if anonymous_user_created:
                 try:
-                    from database import db_client
+                    try:
+                        from database import db_client
+                    except ImportError:
+                        # Handle Docker environment
+                        import sys
+                        sys.path.append('/app')
+                        from database import db_client
                     user_data = {
                         'id': user_id,
                         'email': f'anonymous_{user_id[:8]}@system.generated',
@@ -1162,7 +1188,8 @@ class MemoryManager:
             state = {}
             
             if checkpointer_state:
-                state.update(checkpointer_state.values or {})
+                # CheckpointTuple has checkpoint.channel_values, not .values
+                state.update(checkpointer_state.checkpoint.get('channel_values', {}))
             
             if long_term_context:
                 state['long_term_context'] = long_term_context

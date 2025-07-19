@@ -190,7 +190,8 @@ class UnifiedToolCallingRAGAgent:
                         await self.memory_manager.store_message_from_agent(
                             message=msg,
                             config=config,
-                            agent_type="rag"
+                            agent_type="rag",
+                            user_id=user_id
                         )
                         break
             
@@ -258,7 +259,8 @@ class UnifiedToolCallingRAGAgent:
                         await self.memory_manager.store_message_from_agent(
                             message=msg,
                             config=config,
-                            agent_type="rag"
+                            agent_type="rag",
+                            user_id=user_id
                         )
                         break
             
