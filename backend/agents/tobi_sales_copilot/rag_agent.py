@@ -177,7 +177,7 @@ class UnifiedToolCallingRAGAgent:
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
                 if thread_id:
-                    conversation_id = UUID(thread_id)
+                    conversation_id = str(thread_id)  # Keep as string, not UUID object
                     logger.info(f"Using thread_id {thread_id} as conversation_id for persistence")
             
             logger.info(f"Memory preparation for conversation {conversation_id}: {len(messages)} messages")
@@ -195,8 +195,34 @@ class UnifiedToolCallingRAGAgent:
                         )
                         break
             
-            # Get relevant long-term context if we have a user query
+            # Get cross-conversation user context (ensures latest summary encompasses all previous conversations)
+            user_context = {}
             long_term_context = []
+            if user_id:
+                print(f"         🔍 Getting user context for: {user_id}")
+                user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
+                
+                # Add user's latest conversation summary to the conversation
+                if user_context.get("has_history", False):
+                    latest_summary = user_context.get("latest_summary", "")
+                    print(f"         📚 Found user history: {len(latest_summary)} chars")
+                    
+                    # Create system message with user's context from latest conversation
+                    from langchain_core.messages import SystemMessage
+                    system_context = SystemMessage(content=f"""
+USER CONTEXT (from latest conversation summary):
+
+{latest_summary}
+
+CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
+
+Use this context to provide personalized, contextually aware responses that build on previous interactions.
+""")
+                    # Add system context to the beginning of messages
+                    messages = [system_context] + messages
+                    print(f"         ✅ Added comprehensive user context to conversation")
+            
+            # Get relevant long-term context if we have a user query  
             if user_id and messages:
                 # Extract current query for context retrieval
                 current_query = ""
@@ -234,6 +260,8 @@ class UnifiedToolCallingRAGAgent:
         Update long-term memory after agent execution.
         LangGraph handles short-term persistence automatically.
         """
+        print(f"\n🚨 MEMORY UPDATE NODE CALLED! 🚨")
+        print(f"   ⏰ Timestamp: {datetime.now()}")
         try:
             await self._ensure_initialized()
             
@@ -242,11 +270,21 @@ class UnifiedToolCallingRAGAgent:
             user_id = state.get("user_id")
             current_summary = state.get("conversation_summary")
             
+            print(f"\n🔄 MEMORY UPDATE NODE DEBUG:")
+            print(f"   📊 State info:")
+            print(f"      - Messages count: {len(messages)}")
+            print(f"      - Conversation ID: {conversation_id}")
+            print(f"      - User ID: {user_id}")
+            print(f"      - Has summary: {current_summary is not None}")
+            print(f"      - Config available: {config is not None}")
+            
             # Extract thread_id from config if no conversation_id is provided
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
+                print(f"      - Thread ID from config: {thread_id}")
                 if thread_id:
                     conversation_id = UUID(thread_id)
+                    print(f"      ✅ Using thread_id {thread_id} as conversation_id")
                     logger.info(f"Using thread_id {thread_id} as conversation_id for persistence")
             
             logger.info(f"Memory update for conversation {conversation_id}: {len(messages)} messages")
@@ -274,12 +312,42 @@ class UnifiedToolCallingRAGAgent:
                         "rag", user_id, recent_messages, conversation_id
                     )
             
+            # Check if automatic conversation summarization should be triggered
+            print(f"\n   🤖 SUMMARIZATION CHECK:")
+            if user_id and conversation_id:
+                print(f"      ✅ Prerequisites met (user_id: {user_id[:12]}..., conversation_id: {str(conversation_id)[:8]}...)")
+                try:
+                    print(f"      🔍 Calling check_and_trigger_summarization...")
+                    summary = await self.memory_manager.consolidator.check_and_trigger_summarization(
+                        str(conversation_id), user_id
+                    )
+                    if summary:
+                        print(f"      ✅ SUMMARIZATION TRIGGERED! Summary length: {len(summary)} chars")
+                        logger.info(f"Conversation {conversation_id} automatically summarized")
+                    else:
+                        print(f"      ℹ️  No summarization triggered (likely insufficient messages)")
+                except Exception as e:
+                    print(f"      ❌ Error in automatic summarization: {e}")
+                    logger.error(f"Error in automatic summarization: {e}")
+            else:
+                print(f"      ❌ Prerequisites not met:")
+                print(f"         - user_id present: {user_id is not None}")
+                print(f"         - conversation_id present: {conversation_id is not None}")
+            
             logger.info(f"Memory update complete: long-term context processed")
+            
+            print(f"\n   ✅ MEMORY UPDATE NODE COMPLETED")
+            print(f"      📊 Final status:")
+            print(f"         - Messages processed: {len(messages)}")
+            print(f"         - Long-term storage: {'✅' if user_id and len(messages) >= 2 else '❌'}")
+            print(f"         - Summarization check: {'✅' if user_id and conversation_id else '❌'}")
+            print(f"      🔄 Returning state to LangGraph...")
             
             # Return state unchanged - LangGraph handles persistence automatically
             return state
             
         except Exception as e:
+            print(f"\n   ❌ MEMORY UPDATE NODE ERROR: {str(e)}")
             logger.error(f"Error in memory update node: {str(e)}")
             # Return original state on error
             return state
@@ -666,10 +734,10 @@ Important: Use the tools to help you provide the best possible assistance to the
             conversation_id = str(uuid4())
             
         # Set up thread-based config for persistence
-        config = await self.memory_manager.get_conversation_config(UUID(conversation_id))
+        config = await self.memory_manager.get_conversation_config(conversation_id)
         
         # Try to load existing conversation state from our memory manager
-        existing_state = await self.memory_manager.load_conversation_state(UUID(conversation_id))
+        existing_state = await self.memory_manager.load_conversation_state(conversation_id)
         
         # Initialize messages - start with existing messages or empty list
         messages = []
@@ -697,7 +765,7 @@ Important: Use the tools to help you provide the best possible assistance to the
         # Initialize state with existing conversation context
         initial_state = AgentState(
             messages=messages,
-            conversation_id=UUID(conversation_id),
+            conversation_id=conversation_id,  # Keep as string, not UUID object
             user_id=user_id,
             retrieved_docs=existing_state.get('retrieved_docs', []) if existing_state else [],
             sources=existing_state.get('sources', []) if existing_state else [],

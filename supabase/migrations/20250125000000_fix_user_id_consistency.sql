@@ -99,14 +99,7 @@ BEGIN
         PERFORM ensure_user_exists(user_id_record.user_id);
     END LOOP;
     
-    -- Create users for all existing response_feedback
-    FOR user_id_record IN 
-        SELECT DISTINCT user_id 
-        FROM response_feedback 
-        WHERE user_id IS NOT NULL
-    LOOP
-        PERFORM ensure_user_exists(user_id_record.user_id);
-    END LOOP;
+    -- Skip response_feedback table as it doesn't exist in current schema
     
     -- Create users for long_term_memories namespace patterns
     FOR user_id_record IN 
@@ -123,16 +116,8 @@ END $$;
 -- 6. Add foreign key constraints to existing user_id columns
 -- Note: Adding constraints to existing columns, not creating new ones
 
--- Add foreign key to conversations.user_id (drop first if exists)
-DO $$
-BEGIN
-    ALTER TABLE conversations DROP CONSTRAINT IF EXISTS fk_conversations_user_id;
-    ALTER TABLE conversations ADD CONSTRAINT fk_conversations_user_id 
-        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE;
-EXCEPTION
-    WHEN duplicate_object THEN
-        NULL; -- Ignore if constraint already exists
-END $$;
+-- Skip conversations foreign key - it already exists and references users.id (UUID to UUID)
+-- conversations.user_id (UUID) already has constraint conversations_user_id_fkey -> users.id (UUID)
 
 -- Add foreign key to conversation_summaries.user_id
 DO $$
@@ -156,16 +141,7 @@ EXCEPTION
         NULL; -- Ignore if constraint already exists
 END $$;
 
--- Add foreign key to response_feedback.user_id
-DO $$
-BEGIN
-    ALTER TABLE response_feedback DROP CONSTRAINT IF EXISTS fk_response_feedback_user_id;
-    ALTER TABLE response_feedback ADD CONSTRAINT fk_response_feedback_user_id 
-        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE;
-EXCEPTION
-    WHEN duplicate_object THEN
-        NULL; -- Ignore if constraint already exists
-END $$;
+-- Skip response_feedback foreign key as table doesn't exist in current schema
 
 -- 7. Update the user_profiles view to be more useful
 DROP VIEW IF EXISTS user_profiles;
@@ -228,10 +204,10 @@ USING (
 );
 
 -- 10. Create indexes for the new foreign key constraints
-CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
+-- Skip conversations index as it should already exist for existing foreign key
 CREATE INDEX IF NOT EXISTS idx_conversation_summaries_user_id ON conversation_summaries(user_id);
 CREATE INDEX IF NOT EXISTS idx_memory_access_patterns_user_id ON memory_access_patterns(user_id);
-CREATE INDEX IF NOT EXISTS idx_response_feedback_user_id ON response_feedback(user_id);
+-- Skip response_feedback index as table doesn't exist in current schema
 
 -- 11. Log completion
 DO $$ 

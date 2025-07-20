@@ -219,6 +219,7 @@ END;
 $$;
 
 -- 7. Add function to get memory by exact namespace and key
+DROP FUNCTION IF EXISTS get_long_term_memory(TEXT[], TEXT);
 CREATE OR REPLACE FUNCTION get_long_term_memory(
     p_namespace TEXT[],
     p_key TEXT

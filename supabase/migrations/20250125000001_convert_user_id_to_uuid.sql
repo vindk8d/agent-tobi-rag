@@ -17,14 +17,7 @@ DROP POLICY IF EXISTS "Allow users to create messages in their conversations" ON
 DROP POLICY IF EXISTS "Allow users to update messages in their conversations" ON messages;
 DROP POLICY IF EXISTS "Allow users to delete messages from their conversations" ON messages;
 
--- Query logs policies (depend on conversations.user_id)
-DROP POLICY IF EXISTS "Allow users to read query logs from their conversations" ON query_logs;
-DROP POLICY IF EXISTS "Allow users to create query logs in their conversations" ON query_logs;
-
--- Response feedback policies
-DROP POLICY IF EXISTS "Allow users to create response feedback" ON response_feedback;
-DROP POLICY IF EXISTS "Allow users to read their own response feedback" ON response_feedback;
-DROP POLICY IF EXISTS "Allow users to update their own response feedback" ON response_feedback;
+-- Skip query_logs and response_feedback policies - tables don't exist
 
 -- Conversation summaries policies
 DROP POLICY IF EXISTS "Users can access their own conversation summaries" ON conversation_summaries;
@@ -47,17 +40,14 @@ DROP POLICY IF EXISTS "Users can view their own sessions" ON user_sessions;
 DROP VIEW IF EXISTS active_user_sessions;
 DROP VIEW IF EXISTS user_profiles;
 
--- Step 3: Add temporary UUID columns to tables with text user_id (skip views)
-ALTER TABLE conversations ADD COLUMN user_id_uuid UUID;
+-- Step 3: Add temporary UUID columns to tables with text user_id (skip views and non-existent tables)
+-- Skip conversations - already has UUID user_id
 ALTER TABLE conversation_summaries ADD COLUMN user_id_uuid UUID;
 ALTER TABLE memory_access_patterns ADD COLUMN user_id_uuid UUID;
-ALTER TABLE response_feedback ADD COLUMN user_id_uuid UUID;
+-- Skip response_feedback - table doesn't exist
 
 -- Step 4: Populate UUID columns by looking up users.id based on users.user_id
-UPDATE conversations 
-SET user_id_uuid = users.id 
-FROM users 
-WHERE conversations.user_id = users.user_id;
+-- Skip conversations - already has UUID user_id
 
 UPDATE conversation_summaries 
 SET user_id_uuid = users.id 
@@ -69,38 +59,34 @@ SET user_id_uuid = users.id
 FROM users 
 WHERE memory_access_patterns.user_id = users.user_id;
 
-UPDATE response_feedback 
-SET user_id_uuid = users.id 
-FROM users 
-WHERE response_feedback.user_id = users.user_id;
+-- Skip response_feedback - table doesn't exist
 
 -- Step 5: Drop existing foreign key constraints
-ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_user_id_fkey;
+-- Skip conversations - will keep existing UUID constraint
 ALTER TABLE conversation_summaries DROP CONSTRAINT IF EXISTS conversation_summaries_user_id_fkey;
 ALTER TABLE memory_access_patterns DROP CONSTRAINT IF EXISTS memory_access_patterns_user_id_fkey;
-ALTER TABLE response_feedback DROP CONSTRAINT IF EXISTS response_feedback_user_id_fkey;
+-- Skip response_feedback - table doesn't exist
 
--- Step 6: Drop old text user_id columns
-ALTER TABLE conversations DROP COLUMN user_id;
+-- Step 6: Drop old text user_id columns  
+-- Skip conversations - already has UUID user_id
 ALTER TABLE conversation_summaries DROP COLUMN user_id;
 ALTER TABLE memory_access_patterns DROP COLUMN user_id;
-ALTER TABLE response_feedback DROP COLUMN user_id;
+-- Skip response_feedback - table doesn't exist
 
 -- Step 7: Rename UUID columns to user_id
-ALTER TABLE conversations RENAME COLUMN user_id_uuid TO user_id;
+-- Skip conversations - already has UUID user_id
 ALTER TABLE conversation_summaries RENAME COLUMN user_id_uuid TO user_id;
 ALTER TABLE memory_access_patterns RENAME COLUMN user_id_uuid TO user_id;
-ALTER TABLE response_feedback RENAME COLUMN user_id_uuid TO user_id;
+-- Skip response_feedback - table doesn't exist
 
 -- Step 8: Set NOT NULL constraints where needed
-ALTER TABLE conversations ALTER COLUMN user_id SET NOT NULL;
+-- Skip conversations - already has NOT NULL UUID user_id
 ALTER TABLE conversation_summaries ALTER COLUMN user_id SET NOT NULL;
 ALTER TABLE memory_access_patterns ALTER COLUMN user_id SET NOT NULL;
-ALTER TABLE response_feedback ALTER COLUMN user_id SET NOT NULL;
+-- Skip response_feedback - table doesn't exist
 
 -- Step 9: Add foreign key constraints to users.id
-ALTER TABLE conversations ADD CONSTRAINT conversations_user_id_fkey 
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+-- Skip conversations - already has UUID constraint to users.id
 
 ALTER TABLE conversation_summaries ADD CONSTRAINT conversation_summaries_user_id_fkey 
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
@@ -108,16 +94,15 @@ ALTER TABLE conversation_summaries ADD CONSTRAINT conversation_summaries_user_id
 ALTER TABLE memory_access_patterns ADD CONSTRAINT memory_access_patterns_user_id_fkey 
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 
-ALTER TABLE response_feedback ADD CONSTRAINT response_feedback_user_id_fkey 
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+-- Skip response_feedback - table doesn't exist
 
 -- Step 10: Update user_sessions table to also reference users.id (it's already UUID)
 ALTER TABLE user_sessions DROP CONSTRAINT IF EXISTS user_sessions_user_id_fkey;
 ALTER TABLE user_sessions ADD CONSTRAINT user_sessions_user_id_fkey 
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 
--- Step 11: Drop the users.user_id text field (no longer needed)
-ALTER TABLE users DROP COLUMN user_id;
+-- Step 11: Keep users.user_id for now - it might still be referenced elsewhere
+-- ALTER TABLE users DROP COLUMN user_id;
 
 -- Step 12: Recreate views with the new UUID structure
 CREATE VIEW user_profiles AS
@@ -201,13 +186,7 @@ DROP POLICY IF EXISTS "Allow anonymous users to create messages" ON messages;
 DROP POLICY IF EXISTS "Allow anonymous users to read messages" ON messages;
 DROP POLICY IF EXISTS "Allow anonymous users to update messages" ON messages;
 
-DROP POLICY IF EXISTS "Allow service role full access to query logs" ON query_logs;
-DROP POLICY IF EXISTS "Allow anonymous users to create query logs" ON query_logs;
-DROP POLICY IF EXISTS "Allow anonymous users to read query logs" ON query_logs;
-
-DROP POLICY IF EXISTS "Allow service role full access to response feedback" ON response_feedback;
-DROP POLICY IF EXISTS "Allow anonymous users to create response feedback" ON response_feedback;
-DROP POLICY IF EXISTS "Allow anonymous users to read response feedback" ON response_feedback;
+-- Skip query_logs and response_feedback policies - tables don't exist
 
 DROP POLICY IF EXISTS "Service role full access to conversation summaries" ON conversation_summaries;
 DROP POLICY IF EXISTS "Service role full access to memory patterns" ON memory_access_patterns;
@@ -241,25 +220,7 @@ CREATE POLICY "Allow anonymous users to read messages" ON messages
 CREATE POLICY "Allow anonymous users to update messages" ON messages
     FOR UPDATE TO anon USING (true);
 
--- Query logs policies
-CREATE POLICY "Allow service role full access to query logs" ON query_logs
-    FOR ALL TO service_role USING (true);
-
-CREATE POLICY "Allow anonymous users to create query logs" ON query_logs
-    FOR INSERT TO anon WITH CHECK (true);
-
-CREATE POLICY "Allow anonymous users to read query logs" ON query_logs
-    FOR SELECT TO anon USING (true);
-
--- Response feedback policies
-CREATE POLICY "Allow service role full access to response feedback" ON response_feedback
-    FOR ALL TO service_role USING (true);
-
-CREATE POLICY "Allow anonymous users to create response feedback" ON response_feedback
-    FOR INSERT TO anon WITH CHECK (true);
-
-CREATE POLICY "Allow anonymous users to read response feedback" ON response_feedback
-    FOR SELECT TO anon USING (true);
+-- Skip policies for query_logs and response_feedback - tables don't exist
 
 -- Conversation summaries policies
 CREATE POLICY "Service role full access to conversation summaries" ON conversation_summaries

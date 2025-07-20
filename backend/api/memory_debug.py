@@ -3,6 +3,7 @@ Memory Debug API endpoints for debugging and monitoring memory system
 """
 
 import logging
+import json
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -62,6 +63,14 @@ class DatabaseMessage(BaseModel):
     content: str
     created_at: str
     metadata: Optional[Dict[str, Any]] = None
+
+class UserSummary(BaseModel):
+    """User summary based on latest conversation summary"""
+    user_id: str
+    latest_summary: str
+    conversation_count: int
+    has_history: bool
+    latest_conversation_id: Optional[str] = None
 
 class CustomerData(BaseModel):
     """CRM customer data structure"""
@@ -193,12 +202,32 @@ async def get_user_long_term_memories(user_id: str):
         
         memories = []
         for memory in result.data or []:
+            # Parse JSON fields that might be stored as strings
+            try:
+                value = memory['value']
+                if isinstance(value, str):
+                    value = json.loads(value)
+                
+                embedding = memory.get('embedding')
+                if embedding and isinstance(embedding, str):
+                    embedding = json.loads(embedding)
+                
+                metadata = memory.get('metadata')
+                if metadata and isinstance(metadata, str):
+                    metadata = json.loads(metadata)
+                    
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse JSON fields for memory {memory['id']}: {e}")
+                value = memory['value'] if not isinstance(memory['value'], str) else {}
+                embedding = None
+                metadata = memory.get('metadata')
+            
             memories.append(LongTermMemoryItem(
                 id=memory['id'],
                 namespace=memory['namespace'],
                 key=memory['key'],
-                value=memory['value'],
-                embedding=memory.get('embedding'),
+                value=value,
+                embedding=embedding,
                 created_at=memory['created_at'],
                 updated_at=memory['updated_at'],
                 accessed_at=memory['accessed_at'],
@@ -206,7 +235,7 @@ async def get_user_long_term_memories(user_id: str):
                 memory_type=memory['memory_type'],
                 source_thread_id=memory.get('source_thread_id'),
                 expiry_at=memory.get('expiry_at'),
-                metadata=memory.get('metadata')
+                metadata=metadata
             ))
 
         return APIResponse(
@@ -250,6 +279,40 @@ async def get_user_conversation_summaries(user_id: str):
     except Exception as e:
         logger.error(f"Error retrieving conversation summaries for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve summaries: {str(e)}")
+
+@router.get("/users/{user_id}/summary", response_model=APIResponse[UserSummary])
+async def get_user_summary(user_id: str):
+    """Get user summary based on latest conversation summary"""
+    try:
+        # Use the new database function to get user context
+        result = db_client.client.rpc('get_user_context_from_conversations', {'target_user_id': user_id}).execute()
+        
+        if result.data and len(result.data) > 0:
+            context = result.data[0]
+            user_summary = UserSummary(
+                user_id=user_id,
+                latest_summary=context.get('latest_summary', ''),
+                conversation_count=context.get('conversation_count', 0),
+                has_history=context.get('has_history', False),
+                latest_conversation_id=str(context.get('latest_conversation_id')) if context.get('latest_conversation_id') else None
+            )
+        else:
+            user_summary = UserSummary(
+                user_id=user_id,
+                latest_summary="New user - no conversation history yet.",
+                conversation_count=0,
+                has_history=False,
+                latest_conversation_id=None
+            )
+
+        return APIResponse(
+            success=True,
+            message="User summary retrieved successfully",
+            data=user_summary
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving user summary for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve user summary: {str(e)}")
 
 @router.get("/users/{user_id}/messages", response_model=APIResponse[List[DatabaseMessage]])
 async def get_user_messages(user_id: str, limit: int = Query(50, ge=1, le=200)):
@@ -330,20 +393,37 @@ async def get_user_memory_access_patterns(user_id: str):
 async def trigger_memory_consolidation(request: MemoryConsolidationRequest):
     """Trigger memory consolidation for a user"""
     try:
-        # This would integrate with the memory consolidation system
-        # For now, return a mock response
+        from agents.memory import memory_manager
+        from datetime import datetime
+        
+        # Ensure memory manager is initialized
+        await memory_manager._ensure_initialized()
+        
+        # Trigger actual consolidation
+        logger.info(f"Starting manual memory consolidation for user {request.user_id}")
+        
+        if request.force:
+            logger.info(f"Force flag enabled - bypassing all thresholds")
+        
+        # Call the actual consolidation method
+        consolidation_result = await memory_manager.consolidator.consolidate_user_summary_with_llm(
+            user_id=request.user_id
+        )
+        
         result = {
             "user_id": request.user_id,
             "consolidation_triggered": True,
-            "timestamp": "2024-01-01T00:00:00Z",
-            "force": request.force
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "force": request.force,
+            "consolidation_result": consolidation_result[:200] + "..." if consolidation_result and len(consolidation_result) > 200 else consolidation_result,
+            "success": bool(consolidation_result and not consolidation_result.startswith("Error"))
         }
         
-        logger.info(f"Memory consolidation triggered for user {request.user_id}")
+        logger.info(f"Memory consolidation completed for user {request.user_id}")
         
         return APIResponse(
             success=True,
-            message="Memory consolidation triggered successfully",
+            message="Memory consolidation triggered and executed successfully",
             data=result
         )
     except Exception as e:
@@ -373,12 +453,32 @@ async def search_memories(request: MemorySearchRequest):
         
         memories = []
         for memory in result.data or []:
+            # Parse JSON fields that might be stored as strings
+            try:
+                value = memory['value']
+                if isinstance(value, str):
+                    value = json.loads(value)
+                
+                embedding = memory.get('embedding')
+                if embedding and isinstance(embedding, str):
+                    embedding = json.loads(embedding)
+                
+                metadata = memory.get('metadata')
+                if metadata and isinstance(metadata, str):
+                    metadata = json.loads(metadata)
+                    
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse JSON fields for memory {memory['id']}: {e}")
+                value = memory['value'] if not isinstance(memory['value'], str) else {}
+                embedding = None
+                metadata = memory.get('metadata')
+            
             memories.append(LongTermMemoryItem(
                 id=memory['id'],
                 namespace=memory['namespace'],
                 key=memory['key'],
-                value=memory['value'],
-                embedding=memory.get('embedding'),
+                value=value,
+                embedding=embedding,
                 created_at=memory['created_at'],
                 updated_at=memory['updated_at'],
                 accessed_at=memory['accessed_at'],
@@ -386,7 +486,7 @@ async def search_memories(request: MemorySearchRequest):
                 memory_type=memory['memory_type'],
                 source_thread_id=memory.get('source_thread_id'),
                 expiry_at=memory.get('expiry_at'),
-                metadata=memory.get('metadata')
+                metadata=metadata
             ))
 
         return APIResponse(

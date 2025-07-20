@@ -28,6 +28,15 @@ interface ChatMessage {
   timestamp: Date;
 }
 
+// User Summary Interface (simplified from master summary)
+interface UserSummary {
+  user_id: string;
+  latest_summary: string;
+  conversation_count: number;
+  has_history: boolean;
+  latest_conversation_id?: string;
+}
+
 // Chat Component
 function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
   const [messages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -367,6 +376,7 @@ export default function MemoryCheckPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [userCrmData, setUserCrmData] = useState<CustomerData | null>(null);
   const [longTermMemories, setLongTermMemories] = useState<LongTermMemory[]>([]);
+  const [masterSummaries, setMasterSummaries] = useState<UserSummary[]>([]);
   const [conversationSummaries, setConversationSummaries] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<DatabaseMessage[]>([]);
   const [loading, setLoading] = useState(false);
@@ -377,6 +387,27 @@ export default function MemoryCheckPage() {
   const [searchResults, setSearchResults] = useState<LongTermMemory[]>([]);
   const [consolidationStatus, setConsolidationStatus] = useState<string | null>(null);
   const [debugMode, setDebugMode] = useState(false);
+  
+  // Summarization countdown state
+  const [summarizationThreshold] = useState(10); // Default threshold from backend config
+  
+  // Individual loading states for hot reloading
+  const [loadingStates, setLoadingStates] = useState({
+    userData: false,
+    memoryData: false,
+    masterSummaryData: false,
+    conversationData: false,
+    messages: false
+  });
+  
+  // Last update timestamps
+  const [lastUpdated, setLastUpdated] = useState({
+    userData: null as Date | null,
+    memoryData: null as Date | null,
+    masterSummaryData: null as Date | null,
+    conversationData: null as Date | null,
+    messages: null as Date | null
+  });
 
   // Load users on component mount
   useEffect(() => {
@@ -390,6 +421,7 @@ export default function MemoryCheckPage() {
     if (selectedUserId && supabase) {
       loadUserData(selectedUserId);
       loadMemoryData(selectedUserId);
+      loadUserSummaryData(selectedUserId);
       loadConversationData(selectedUserId);
       loadMessages(selectedUserId);
     }
@@ -430,72 +462,192 @@ export default function MemoryCheckPage() {
 
   const loadUserData = async (userId: string) => {
     try {
+      setLoadingStates(prev => ({ ...prev, userData: true }));
+      console.log(`🔍 Loading user CRM data for user: ${userId}`);
+      
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${apiUrl}/api/v1/memory-debug/users/${userId}/crm`);
       const result = await response.json();
       
+      console.log(`📊 User CRM API response:`, { 
+        status: response.status, 
+        success: result.success, 
+        dataExists: !!result.data,
+        userId: userId,
+        endpoint: `${apiUrl}/api/v1/memory-debug/users/${userId}/crm`
+      });
+      
       if (result.success && result.data) {
         setUserCrmData(result.data);
+        console.log(`✅ User CRM data loaded:`, result.data);
       } else {
         setUserCrmData(null);
+        console.log(`⚠️ No CRM data found for user: ${userId}`);
       }
+      
+      setLastUpdated(prev => ({ ...prev, userData: new Date() }));
     } catch (err) {
-      console.error('Error loading user CRM data:', err);
+      console.error('❌ Error loading user CRM data:', err);
       setUserCrmData(null);
+    } finally {
+      setLoadingStates(prev => ({ ...prev, userData: false }));
     }
   };
 
   const loadMemoryData = async (userId: string) => {
     try {
+      setLoadingStates(prev => ({ ...prev, memoryData: true }));
+      console.log(`🧠 Loading long-term memory data for user: ${userId}`);
+      
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${apiUrl}/api/v1/memory-debug/users/${userId}/memories`);
       const result = await response.json();
       
+      console.log(`📊 Memory API response:`, { 
+        status: response.status, 
+        success: result.success, 
+        memoryCount: result.data?.length || 0,
+        userId: userId,
+        endpoint: `${apiUrl}/api/v1/memory-debug/users/${userId}/memories`
+      });
+      
       if (result.success) {
         setLongTermMemories(result.data || []);
+        console.log(`✅ Long-term memories loaded: ${result.data?.length || 0} entries`);
+        
+        // Log memory types and namespaces for verification
+        if (result.data?.length > 0) {
+          const memoryTypes = Array.from(new Set(result.data.map((m: any) => m.memory_type)));
+          const namespaces = Array.from(new Set(result.data.map((m: any) => m.namespace?.[0])));
+          console.log(`📈 Memory breakdown:`, { memoryTypes, namespaces });
+        }
       } else {
-        console.error('Error loading memory data:', result.message);
+        console.error('❌ Error loading memory data:', result.message);
         setLongTermMemories([]);
       }
+      
+      setLastUpdated(prev => ({ ...prev, memoryData: new Date() }));
     } catch (err) {
-      console.error('Error loading memory data:', err);
+      console.error('❌ Error loading memory data:', err);
       setLongTermMemories([]);
+    } finally {
+      setLoadingStates(prev => ({ ...prev, memoryData: false }));
+    }
+  };
+
+  const loadUserSummaryData = async (userId: string) => {
+    try {
+      setLoadingStates(prev => ({ ...prev, masterSummaryData: true }));
+      console.log(`📋 Loading user summary for user: ${userId}`);
+      
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/v1/memory-debug/users/${userId}/summary`);
+      const result = await response.json();
+      
+      console.log(`📊 User summary API response:`, { 
+        status: response.status, 
+        success: result.success, 
+        hasData: !!result.data,
+        userId: userId,
+        endpoint: `${apiUrl}/api/v1/memory-debug/users/${userId}/summary`
+      });
+      
+      if (result.success && result.data) {
+        setMasterSummaries([result.data]); // Store as array for compatibility
+        console.log(`✅ User summary loaded`);
+      } else {
+        console.error('❌ Error loading user summary:', result.message);
+        setMasterSummaries([]);
+      }
+      
+      setLastUpdated(prev => ({ ...prev, masterSummaryData: new Date() }));
+    } catch (err) {
+      console.error('❌ Error loading master summaries:', err);
+      setMasterSummaries([]);
+    } finally {
+      setLoadingStates(prev => ({ ...prev, masterSummaryData: false }));
     }
   };
 
   const loadConversationData = async (userId: string) => {
     try {
+      setLoadingStates(prev => ({ ...prev, conversationData: true }));
+      console.log(`📝 Loading conversation summaries for user: ${userId}`);
+      
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiUrl}/api/v1/memory-debug/users/${userId}/summaries`);
+      const response = await fetch(`${apiUrl}/api/v1/memory-debug/users/${userId}/conversation-summaries`);
       const result = await response.json();
+      
+      console.log(`📊 Conversation summaries API response:`, { 
+        status: response.status, 
+        success: result.success, 
+        summaryCount: result.data?.length || 0,
+        userId: userId,
+        endpoint: `${apiUrl}/api/v1/memory-debug/users/${userId}/conversation-summaries`
+      });
       
       if (result.success) {
         setConversationSummaries(result.data || []);
+        console.log(`✅ Conversation summaries loaded: ${result.data?.length || 0} entries`);
+        
+        // Log summary types and message counts for verification
+        if (result.data?.length > 0) {
+          const summaryTypes = Array.from(new Set(result.data.map((s: any) => s.summary_type)));
+          const totalMessages = result.data.reduce((sum: number, s: any) => sum + (s.message_count || 0), 0);
+          console.log(`📈 Summary breakdown:`, { summaryTypes, totalMessages });
+        }
       } else {
-        console.error('Error loading conversation summaries:', result.message);
+        console.error('❌ Error loading conversation summaries:', result.message);
         setConversationSummaries([]);
       }
+      
+      setLastUpdated(prev => ({ ...prev, conversationData: new Date() }));
     } catch (err) {
-      console.error('Error loading conversation summaries:', err);
+      console.error('❌ Error loading conversation summaries:', err);
       setConversationSummaries([]);
+    } finally {
+      setLoadingStates(prev => ({ ...prev, conversationData: false }));
     }
   };
 
   const loadMessages = async (userId: string) => {
     try {
+      setLoadingStates(prev => ({ ...prev, messages: true }));
+      console.log(`💬 Loading messages for user: ${userId}`);
+      
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${apiUrl}/api/v1/memory-debug/users/${userId}/messages`);
       const result = await response.json();
       
+      console.log(`📊 Messages API response:`, { 
+        status: response.status, 
+        success: result.success, 
+        messageCount: result.data?.length || 0,
+        userId: userId,
+        endpoint: `${apiUrl}/api/v1/memory-debug/users/${userId}/messages`
+      });
+      
       if (result.success) {
         setMessages(result.data || []);
+        console.log(`✅ Messages loaded: ${result.data?.length || 0} entries`);
+        
+        // Log message roles and conversation breakdown for verification
+        if (result.data?.length > 0) {
+          const roles = Array.from(new Set(result.data.map((m: any) => m.role)));
+          const conversationIds = Array.from(new Set(result.data.map((m: any) => m.conversation_id))).length;
+          console.log(`📈 Message breakdown:`, { roles, conversationCount: conversationIds });
+        }
       } else {
-        console.error('Error loading messages:', result.message);
+        console.error('❌ Error loading messages:', result.message);
         setMessages([]);
       }
+      
+      setLastUpdated(prev => ({ ...prev, messages: new Date() }));
     } catch (err) {
-      console.error('Error loading messages:', err);
+      console.error('❌ Error loading messages:', err);
       setMessages([]);
+    } finally {
+      setLoadingStates(prev => ({ ...prev, messages: false }));
     }
   };
 
@@ -579,6 +731,7 @@ export default function MemoryCheckPage() {
     await Promise.all([
       loadUserData(selectedUserId),
       loadMemoryData(selectedUserId),
+      loadUserSummaryData(selectedUserId),
       loadConversationData(selectedUserId),
       loadMessages(selectedUserId)
     ]);
@@ -590,18 +743,41 @@ export default function MemoryCheckPage() {
     setSearchResults([]);
   };
 
-  // Set up real-time subscriptions
+  // Calculate countdown to next summarization
+  const getMessagesUntilSummarization = (): number => {
+    if (messages.length === 0) return summarizationThreshold;
+    
+    // Get the current conversation message count for the selected user
+    const currentConversationMessages = messages.length;
+    
+    // Calculate how many more messages needed until next summarization
+    const messagesInCurrentCycle = currentConversationMessages % summarizationThreshold;
+    const messagesUntilNext = messagesInCurrentCycle === 0 ? 0 : summarizationThreshold - messagesInCurrentCycle;
+    
+    return messagesUntilNext;
+  };
+
+  // Set up real-time subscriptions and periodic refresh
   useEffect(() => {
     if (!selectedUserId || !supabase) return;
 
+    console.log(`🔄 Setting up real-time subscriptions for user: ${selectedUserId}`);
+
+    // Real-time subscriptions for all relevant tables
     const memorySubscription = supabase
-      .channel('long-term-memories')
+      .channel('long-term-memories-realtime')
       .on('postgres_changes', 
         { event: '*', schema: 'public', table: 'long_term_memories' },
         (payload) => {
-          console.log('Memory change received:', payload);
+          console.log('🧠 Memory change received:', payload);
+          // Check if the change affects the selected user
           if (payload.new && (payload.new as any).namespace && 
               JSON.stringify((payload.new as any).namespace).includes(selectedUserId)) {
+            console.log('🔄 Reloading memory data...');
+            loadMemoryData(selectedUserId);
+          } else if (payload.old && (payload.old as any).namespace && 
+                     JSON.stringify((payload.old as any).namespace).includes(selectedUserId)) {
+            console.log('🔄 Reloading memory data (deletion)...');
             loadMemoryData(selectedUserId);
           }
         }
@@ -609,19 +785,107 @@ export default function MemoryCheckPage() {
       .subscribe();
 
     const messageSubscription = supabase
-      .channel('messages')
+      .channel('messages-realtime')
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'messages' },
         (payload) => {
-          console.log('Message change received:', payload);
-          loadMessages(selectedUserId);
+          console.log('💬 Message change received:', payload);
+          // Check if the change affects the selected user
+          if ((payload.new && (payload.new as any).user_id === selectedUserId) ||
+              (payload.old && (payload.old as any).user_id === selectedUserId)) {
+            console.log('🔄 Reloading messages...');
+            loadMessages(selectedUserId);
+          }
         }
       )
       .subscribe();
 
+    const conversationSummariesSubscription = supabase
+      .channel('conversation-summaries-realtime')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'conversation_summaries' },
+        (payload) => {
+          console.log('📝 Conversation summary change received:', payload);
+          // Check if the change affects the selected user
+          if ((payload.new && (payload.new as any).user_id === selectedUserId) ||
+              (payload.old && (payload.old as any).user_id === selectedUserId)) {
+            console.log('🔄 Reloading conversation summaries...');
+            loadConversationData(selectedUserId);
+          }
+        }
+      )
+      .subscribe();
+
+    const conversationsSubscription = supabase
+      .channel('conversations-realtime')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'conversations' },
+        (payload) => {
+          console.log('🗨️ Conversation change received:', payload);
+          // Check if the change affects the selected user
+          if ((payload.new && (payload.new as any).user_id === selectedUserId) ||
+              (payload.old && (payload.old as any).user_id === selectedUserId)) {
+            console.log('🔄 Reloading conversation data...');
+            loadConversationData(selectedUserId);
+            loadMessages(selectedUserId);
+          }
+        }
+      )
+      .subscribe();
+
+    const customersSubscription = supabase
+      .channel('customers-realtime')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'customers' },
+        (payload) => {
+          console.log('👤 Customer change received:', payload);
+          // Check if the change affects the selected user
+          if ((payload.new && (payload.new as any).user_id === selectedUserId) ||
+              (payload.old && (payload.old as any).user_id === selectedUserId)) {
+            console.log('🔄 Reloading user CRM data...');
+            loadUserData(selectedUserId);
+          }
+        }
+      )
+      .subscribe();
+
+    const masterSummariesSubscription = supabase
+      .channel('master-summaries-realtime')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'user_master_summaries' },
+        (payload) => {
+          console.log('📋 Master summary change received:', payload);
+          // Check if the change affects the selected user
+          if ((payload.new && (payload.new as any).user_id === selectedUserId) ||
+              (payload.old && (payload.old as any).user_id === selectedUserId)) {
+            console.log('🔄 Reloading user summary...');
+            loadUserSummaryData(selectedUserId);
+          }
+        }
+      )
+      .subscribe();
+
+    // Periodic refresh as backup (every 30 seconds)
+    const refreshInterval = setInterval(() => {
+      console.log('🔄 Periodic refresh triggered...');
+      refreshAllData();
+    }, 30000);
+
+    // Initial load with a small delay to ensure subscriptions are ready
+    setTimeout(() => {
+      console.log('🎯 Initial data load after subscriptions setup...');
+      refreshAllData();
+    }, 1000);
+
     return () => {
+      console.log('🛑 Cleaning up subscriptions...');
       memorySubscription.unsubscribe();
-      messageSubscription.unsubscribe();
+      messageSubscription.unsubscribe(); 
+      conversationSummariesSubscription.unsubscribe();
+      conversationsSubscription.unsubscribe();
+      customersSubscription.unsubscribe();
+      masterSummariesSubscription.unsubscribe();
+      clearInterval(refreshInterval);
     };
   }, [selectedUserId]);
 
@@ -657,9 +921,17 @@ export default function MemoryCheckPage() {
                   </span>
                 </div>
               </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-sm text-gray-600">Live</span>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-sm text-gray-600">Live</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span className="text-xs text-gray-500">Hot Reload Active</span>
+                </div>
               </div>
             </div>
         </div>
@@ -722,7 +994,22 @@ export default function MemoryCheckPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* User Data Display */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">👥 User Information</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-gray-900">👥 User Information</h2>
+                  <div className="flex items-center space-x-2">
+                    {loadingStates.userData && (
+                      <svg className="animate-spin h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    )}
+                    {lastUpdated.userData && (
+                      <span className="text-xs text-gray-500">
+                        {lastUpdated.userData.toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 {userCrmData ? (
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-4">
@@ -771,19 +1058,34 @@ export default function MemoryCheckPage() {
 
               {/* Memory Statistics */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">📊 Memory Statistics</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-gray-900">📊 Memory Statistics</h2>
+                  <div className="flex items-center space-x-2">
+                    {(loadingStates.memoryData || loadingStates.masterSummaryData || loadingStates.conversationData || loadingStates.messages) && (
+                      <svg className="animate-spin h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    )}
+                    {lastUpdated.memoryData && (
+                      <span className="text-xs text-gray-500">
+                        {lastUpdated.memoryData.toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="text-center">
                     <div className="text-2xl font-bold text-blue-600">{longTermMemories.length}</div>
                     <div className="text-xs text-gray-500">Long-term Memories</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600">{conversationSummaries.length}</div>
-                    <div className="text-xs text-gray-500">Conversation Summaries</div>
+                    <div className="text-2xl font-bold text-purple-600">{getMessagesUntilSummarization()}</div>
+                    <div className="text-xs text-gray-500">Messages Until Summary</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-purple-600">{messages.length}</div>
-                    <div className="text-xs text-gray-500">Recent Messages</div>
+                    <div className="text-2xl font-bold text-green-600">{conversationSummaries.length}</div>
+                    <div className="text-xs text-gray-500">Conversation Summaries</div>
                   </div>
                   <div className="text-center">
                     <div className="text-2xl font-bold text-orange-600">
@@ -796,7 +1098,25 @@ export default function MemoryCheckPage() {
 
               {/* Long-term Memory Visualization */}
               <div className="lg:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">🧠 Long-term Memory Entries</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-gray-900">🧠 Long-term Memory Entries</h2>
+                  <div className="flex items-center space-x-2">
+                    {loadingStates.memoryData && (
+                      <svg className="animate-spin h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    )}
+                    <span className="text-sm text-gray-600">
+                      {longTermMemories.length} entries
+                    </span>
+                    {lastUpdated.memoryData && (
+                      <span className="text-xs text-gray-500">
+                        Last updated: {lastUpdated.memoryData.toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 {longTermMemories.length > 0 ? (
                   <div className="overflow-hidden">
                     <div className="space-y-3 max-h-96 overflow-y-auto">
@@ -850,9 +1170,110 @@ export default function MemoryCheckPage() {
                 )}
               </div>
 
-                          {/* Conversation Summaries */}
+              {/* Latest Conversation Summary */}
+              <div className="lg:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-gray-900">📋 Latest Conversation Summary</h2>
+                  <div className="flex items-center space-x-2">
+                    {loadingStates.masterSummaryData && (
+                      <svg className="animate-spin h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    )}
+                    <span className="text-sm text-gray-600">
+                      {masterSummaries.length > 0 ? 'Available' : 'None available'}
+                    </span>
+                    {lastUpdated.masterSummaryData && (
+                      <span className="text-xs text-gray-500">
+                        Last updated: {lastUpdated.masterSummaryData.toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {masterSummaries.length > 0 ? (
+                  <div className="space-y-4">
+                    {masterSummaries.map((summary, index) => (
+                      <div key={`${summary.user_id}-${index}`} className="border border-gray-200 rounded-lg p-6 bg-gradient-to-br from-purple-50 to-blue-50">
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="flex items-center space-x-2">
+                            <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
+                            <h3 className="text-lg font-medium text-gray-900">Latest Conversation Summary</h3>
+                          </div>
+                          <div className="text-right">
+                            <div className="flex items-center space-x-2 text-sm text-gray-600 mb-1">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                              </svg>
+                              <span>{summary.conversation_count} conversations</span>
+                            </div>
+                            <div className="flex items-center space-x-2 text-sm text-gray-600">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <span>{summary.has_history ? 'Has History' : 'No History'}</span>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-white rounded-lg p-4 border border-gray-200 shadow-sm">
+                          <p className="text-gray-800 leading-relaxed whitespace-pre-wrap text-sm">
+                            {summary.latest_summary || 'No conversation history available yet. Start chatting to generate summaries.'}
+                          </p>
+                        </div>
+                        
+                        <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-200">
+                          <div className="flex items-center space-x-2 text-xs text-gray-500">
+                            {summary.latest_conversation_id && (
+                              <div className="flex items-center space-x-1">
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span>From conversation: {summary.latest_conversation_id.slice(0, 8)}...</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center space-x-1 text-xs">
+                            <div className="px-2 py-1 bg-purple-100 text-purple-800 rounded-full font-medium">
+                              Latest Conversation
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="mt-2 text-sm text-gray-600">No conversation summary available yet</p>
+                    <p className="text-xs text-gray-500 mt-1">Conversation summaries are generated automatically after every 10 messages in a conversation</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Conversation Summaries */}
             <div className="lg:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">📝 Conversation Summaries</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-gray-900">📝 Conversation Summaries</h2>
+                  <div className="flex items-center space-x-2">
+                    {loadingStates.conversationData && (
+                      <svg className="animate-spin h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    )}
+                    <span className="text-sm text-gray-600">
+                      {conversationSummaries.length} summaries
+                    </span>
+                    {lastUpdated.conversationData && (
+                      <span className="text-xs text-gray-500">
+                        Last generated: {lastUpdated.conversationData.toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 {conversationSummaries.length > 0 ? (
                   <div className="space-y-3 max-h-80 overflow-y-auto">
                     {conversationSummaries.map((summary) => (
@@ -1006,8 +1427,16 @@ export default function MemoryCheckPage() {
                         <div className="text-gray-500">Memories</div>
                       </div>
                       <div className="bg-gray-50 p-2 rounded text-center">
+                        <div className="font-bold text-purple-600">{getMessagesUntilSummarization()}</div>
+                        <div className="text-gray-500">Until Sum.</div>
+                      </div>
+                      <div className="bg-gray-50 p-2 rounded text-center">
                         <div className="font-bold text-green-600">{conversationSummaries.length}</div>
-                        <div className="text-gray-500">Summaries</div>
+                        <div className="text-gray-500">Conv. Sum.</div>
+                      </div>
+                      <div className="bg-gray-50 p-2 rounded text-center">
+                        <div className="font-bold text-orange-600">{messages.length}</div>
+                        <div className="text-gray-500">Messages</div>
                       </div>
                     </div>
                   </div>

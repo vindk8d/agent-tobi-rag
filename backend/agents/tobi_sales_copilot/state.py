@@ -27,7 +27,7 @@ class AgentState(TypedDict):
     messages: Annotated[List[AnyMessage], add_messages]
     
     # Persistent memory identifiers
-    conversation_id: Optional[UUID]
+    conversation_id: Optional[str]
     user_id: Optional[str]
     
     # RAG context and results (current session)
@@ -46,7 +46,7 @@ class ConversationMemory(TypedDict):
     Conversation memory structure for persistent storage.
     Maps to database tables: conversations and messages.
     """
-    conversation_id: UUID
+    conversation_id: str
     user_id: str
     messages: List[BaseMessage]
     conversation_summary: Optional[str]

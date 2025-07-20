@@ -206,6 +206,15 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", env="ENVIRONMENT")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
     
+    # Memory management configuration
+    memory_max_messages: int = Field(default=12, env="MEMORY_MAX_MESSAGES")
+    memory_summary_interval: int = Field(default=10, env="MEMORY_SUMMARY_INTERVAL")
+    memory_auto_summarize: bool = Field(default=True, env="MEMORY_AUTO_SUMMARIZE")
+    # Removed master_summary_conversation_limit - system simplified to use conversation summaries only
+
+    # Telegram Configuration
+    telegram_bot_token: Optional[str] = Field(default=None, env="TELEGRAM_BOT_TOKEN")
+    
     # Convenience properties to maintain compatibility
     @property
     def openai(self):

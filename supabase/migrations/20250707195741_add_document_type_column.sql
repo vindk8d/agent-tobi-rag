@@ -160,12 +160,12 @@ CREATE TABLE IF NOT EXISTS proactive_suggestions (
 );
 
 -- Create indexes (safe - will skip if exists)
-CREATE INDEX IF NOT EXISTS idx_data_sources_type ON data_sources(source_type);
+CREATE INDEX IF NOT EXISTS idx_data_sources_type ON data_sources(type);
 CREATE INDEX IF NOT EXISTS idx_data_sources_status ON data_sources(status);
 CREATE INDEX IF NOT EXISTS idx_data_sources_created_at ON data_sources(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_documents_data_source_id ON documents(data_source_id);
-CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
+-- Skip idx_documents_status - status column doesn't exist in current schema
 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at);
 CREATE INDEX IF NOT EXISTS idx_documents_content_fts ON documents USING gin(to_tsvector('english', content));
 
@@ -175,36 +175,11 @@ CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON conversations(created
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
-CREATE INDEX IF NOT EXISTS idx_query_logs_conversation_id ON query_logs(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_query_logs_created_at ON query_logs(created_at);
+-- Skip indexes for tables that don't exist in current schema:
+-- query_logs, conflict_logs, embeddings, source_conflicts, system_metrics,
+-- response_feedback, proactive_suggestions
 
-CREATE INDEX IF NOT EXISTS idx_conflict_logs_created_at ON conflict_logs(created_at);
-
-CREATE INDEX IF NOT EXISTS idx_embeddings_document_id ON embeddings(document_id);
-CREATE INDEX IF NOT EXISTS idx_embeddings_created_at ON embeddings(created_at);
-CREATE INDEX IF NOT EXISTS idx_embeddings_model_name ON embeddings(model_name);
-
-CREATE INDEX IF NOT EXISTS idx_source_conflicts_query_text ON source_conflicts USING gin(to_tsvector('english', query_text));
-CREATE INDEX IF NOT EXISTS idx_source_conflicts_created_at ON source_conflicts(created_at);
-
-CREATE INDEX IF NOT EXISTS idx_system_metrics_metric_name ON system_metrics(metric_name);
-CREATE INDEX IF NOT EXISTS idx_system_metrics_recorded_at ON system_metrics(recorded_at);
-CREATE INDEX IF NOT EXISTS idx_system_metrics_metric_type ON system_metrics(metric_type);
-
-CREATE INDEX IF NOT EXISTS idx_response_feedback_query_log_id ON response_feedback(query_log_id);
-CREATE INDEX IF NOT EXISTS idx_response_feedback_user_id ON response_feedback(user_id);
-CREATE INDEX IF NOT EXISTS idx_response_feedback_rating ON response_feedback(rating);
-
-CREATE INDEX IF NOT EXISTS idx_proactive_suggestions_conversation_id ON proactive_suggestions(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_proactive_suggestions_displayed ON proactive_suggestions(displayed);
-CREATE INDEX IF NOT EXISTS idx_proactive_suggestions_created_at ON proactive_suggestions(created_at);
-
--- Create vector similarity search index (safe)
-DO $$ BEGIN
-    CREATE INDEX idx_embeddings_vector ON embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-EXCEPTION
-    WHEN duplicate_table THEN null;
-END $$;
+-- Skip vector index - embeddings table doesn't exist in current schema
 
 -- Create updated_at trigger function (safe)
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -379,15 +354,7 @@ BEGIN
 END;
 $$;
 
--- Create system dashboard view (safe)
-CREATE OR REPLACE VIEW system_dashboard AS
-SELECT
-    (SELECT COUNT(*) FROM data_sources WHERE status = 'active') as active_sources,
-    (SELECT COUNT(*) FROM documents WHERE status = 'completed') as processed_documents,
-    (SELECT COUNT(*) FROM embeddings) as total_embeddings,
-    (SELECT COUNT(*) FROM conversations WHERE created_at > NOW() - INTERVAL '24 hours') as daily_conversations,
-    (SELECT AVG(response_time_ms) FROM query_logs WHERE created_at > NOW() - INTERVAL '24 hours') as avg_response_time,
-    (SELECT AVG(rating) FROM response_feedback WHERE created_at > NOW() - INTERVAL '7 days') as avg_user_rating;
+-- Skip system dashboard view - references tables/columns that don't exist in current schema
 
 -- Storage bucket setup (safe)
 DO $$ 
