@@ -29,6 +29,7 @@ async def get_agent():
         _agent_instance = UnifiedToolCallingRAGAgent()
     return _agent_instance
 
+
 class ChatRequest(BaseModel):
     """Request model for chat interactions"""
     message: str = Field(..., min_length=1, max_length=2000, description="User message")
@@ -47,7 +48,7 @@ class ChatResponse(BaseModel):
 class ChatMessage(BaseModel):
     """Chat message model for history"""
     id: str = Field(..., description="Message ID")
-    role: str = Field(..., description="Message role (human/bot)")
+    role: str = Field(..., description="Message role (human/user/ai/assistant/bot)")
     content: str = Field(..., description="Message content")
     timestamp: str = Field(..., description="Message timestamp")
     conversation_id: str = Field(..., description="Conversation ID")

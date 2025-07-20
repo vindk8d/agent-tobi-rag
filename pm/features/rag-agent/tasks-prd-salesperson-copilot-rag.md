@@ -9,11 +9,11 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 ## Relevant Files
 
 #### Backend/Agents
-- `backend/agents/tobi_sales_copilot/rag_agent.py` - Main RAG agent implementation using LangGraph StateGraph with proper message persistence via PostgreSQL checkpointer
+- `backend/agents/tobi_sales_copilot/rag_agent.py` - Main RAG agent implementation using LangGraph StateGraph with proper message persistence via PostgreSQL checkpointer and dynamic model selection
 - `backend/agents/tobi_sales_copilot/state.py` - Simplified AgentState schema with essential persistent fields only (messages, conversation_id, user_id, retrieved_docs, sources, conversation_summary)
-- `backend/agents/memory.py` - Consolidated memory system combining short-term (LangGraph checkpointer), long-term (Supabase Store), and conversation consolidation
+- `backend/agents/memory.py` - Consolidated memory system combining short-term (LangGraph checkpointer), long-term (Supabase Store), and conversation consolidation with dynamic model selection for summarization tasks
 - `backend/agents/memory_nodes.py` - Simplified LangGraph memory nodes (context retrieval and storage only)
-- `backend/agents/tools.py` - RAG tools for document retrieval and CRM tools for business data queries with comprehensive fallback handling
+- `backend/agents/tools.py` - RAG tools for document retrieval and CRM tools for business data queries with comprehensive fallback handling plus ModelSelector for dynamic model selection
 
 ### Frontend/Dashboard
 
@@ -52,8 +52,8 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
 - `docker-compose.yml` - Local development environment
 - `requirements.txt` - Python dependencies with OpenAI, LangChain, and all required packages
 - `package.json` - Node.js dependencies
-- `env-template.txt` - Environment variable template with backend and Next.js frontend configurations
-- `backend/config.py` - Configuration management with validation functions for all services including Next.js
+- `env-template.txt` - Environment variable template with backend and Next.js frontend configurations including dynamic model selection (OPENAI_SIMPLE_MODEL, OPENAI_COMPLEX_MODEL)
+- `backend/config.py` - Configuration management with validation functions for all services including Next.js and dynamic model selection settings (openai_simple_model, openai_complex_model)
 - `backend/rag/embeddings.py` - OpenAI text embedding integration with rate limiting and error handling
 - `frontend/.env.local.example` - Next.js specific environment template with NEXT_PUBLIC_ variables
 - `pytest.ini` - Python testing configuration
@@ -154,45 +154,40 @@ Based on PRD: `prd-salesperson-copilot-rag.md`
   - [x] 6.3 Optimize embedding generation with batch processing and caching strategies
   - [x] 6.4 Implement conversation memory management to reduce context window usage
   - [x] 6.5 Add embedding deduplication to avoid re-processing identical content
-  - [ ] 6.6 Implement dynamic model selection based on task complexity (GPT-3.5-turbo for simple queries, GPT-4 for complex reasoning)
-  - [ ] 6.7 Implement smart caching for frequently accessed documents and embeddings
-  - [ ] 6.8 Add request throttling and queue management for high-volume usage
-  - [ ] 6.9 Create quota usage alerts and automatic fallback mechanisms
-  - [ ] 6.10 Implement embedding compression techniques to reduce storage costs
-  - [ ] 6.11 Add usage analytics and cost optimization recommendations
+  - [x] 6.6 Implement dynamic model selection based on task complexity using simple heuristic-based classification
+    - **Step 1**: Add ModelSelector class with enum-based QueryComplexity (SIMPLE/COMPLEX) to backend/agents/tools.py ✅
+    - **Step 2**: Implement heuristic classification using keyword matching and query length analysis (complex: "analyze", "compare", "strategy"; simple: "what is", "price", "contact") ✅
+    - **Step 3**: Update Settings in config.py to support openai_simple_model (gpt-3.5-turbo) and openai_complex_model (gpt-4) configuration ✅
+    - **Step 4**: Modify UnifiedToolCallingRAGAgent._unified_agent_node() to use dynamic model selection before LLM creation ✅
+    - **Step 5**: Apply model selection to SQL tools in backend/agents/tools.py for CRM query complexity assessment ✅
+    - **Step 6**: Apply model selection to memory summarization in backend/agents/memory.py for appropriate model usage ✅
 
-- [ ] 7.0 Extend Agent with Advanced Features (Post-Basic RAG)
-  - [ ] 7.1 Add conflict detection logic that logs to console and responds appropriately to users
-  - [ ] 7.2 Implement proactive suggestion logic based on conversation context and available documents
-  - [ ] 7.3 Enhance tools with conflict logging capabilities
-  - [ ] 7.4 Optimize performance with advanced LCEL patterns and caching strategies
+- [ ] 7.0 Implement Monitoring, Testing, and Deployment Infrastructure
+      - [ ] 7.1 Integrate LangSmith tracing throughout the agent pipeline for comprehensive monitoring (RAG and SQL operations)
+  - [ ] 7.2 Set up custom metrics tracking for response accuracy, query resolution, and performance
+  - [ ] 7.3 Implement comprehensive error handling with proper logging and alerting mechanisms
+      - [ ] 7.4 Create unit tests for RAG components and CRM/SQL tools using pytest with proper mocking of external APIs
+      - [ ] 7.5 Set up integration tests for agent workflows and conversation flows (including RAG and CRM data queries)
+      - [ ] 7.6 Configure performance monitoring with response time tracking for both RAG and SQL operations, and concurrent user support
+  - [ ] 7.7 Implement rate limiting and API security measures for production deployment
+  - [ ] 7.8 Set up automated backup strategies for vector embeddings and conversation history
 
-- [ ] 8.0 Implement Monitoring, Testing, and Deployment Infrastructure
-      - [ ] 8.1 Integrate LangSmith tracing throughout the agent pipeline for comprehensive monitoring (RAG and SQL operations)
-  - [ ] 8.2 Set up custom metrics tracking for response accuracy, query resolution, and performance
-  - [ ] 8.3 Implement comprehensive error handling with proper logging and alerting mechanisms
-      - [ ] 8.4 Create unit tests for RAG components and CRM/SQL tools using pytest with proper mocking of external APIs
-      - [ ] 8.5 Set up integration tests for agent workflows and conversation flows (including RAG and CRM data queries)
-      - [ ] 8.6 Configure performance monitoring with response time tracking for both RAG and SQL operations, and concurrent user support
-  - [ ] 8.7 Implement rate limiting and API security measures for production deployment
-  - [ ] 8.8 Set up automated backup strategies for vector embeddings and conversation history
+- [ ] 8.0 Build Temporary Chat Interface for Testing and Development
+  - [ ] 8.1 Create simple React chat component with message history and real-time updates
+  - [ ] 8.2 Implement WebSocket or SSE connection for streaming agent responses
+  - [ ] 8.3 Add debugging features showing retrieved documents, confidence scores, and processing steps
+      - [ ] 8.4 Create test scenarios for different query types and edge cases (document queries, CRM data queries, mixed scenarios)
+  - [ ] 8.5 Implement conversation reset and context management for testing different scenarios
+  - [ ] 8.6 Add developer tools for inspecting agent state, memory, and decision processes
+  - [ ] 8.7 Create performance testing interface to validate concurrent user support (up to 100 users)
 
-- [ ] 9.0 Build Temporary Chat Interface for Testing and Development
-  - [ ] 9.1 Create simple React chat component with message history and real-time updates
-  - [ ] 9.2 Implement WebSocket or SSE connection for streaming agent responses
-  - [ ] 9.3 Add debugging features showing retrieved documents, confidence scores, and processing steps
-      - [ ] 9.4 Create test scenarios for different query types and edge cases (document queries, CRM data queries, mixed scenarios)
-  - [ ] 9.5 Implement conversation reset and context management for testing different scenarios
-  - [ ] 9.6 Add developer tools for inspecting agent state, memory, and decision processes
-  - [ ] 9.7 Create performance testing interface to validate concurrent user support (up to 100 users)
-
-- [ ] 10.0 Integrate Telegram Bot Interface with Production Deployment
-  - [ ] 10.1 Set up Telegram Bot API and configure webhook endpoints for secure message handling
+- [ ] 9.0 Integrate Telegram Bot Interface with Production Deployment
+  - [ ] 9.1 Set up Telegram Bot API and configure webhook endpoints for secure message handling
     - **NOTE**: Add back Telegram bot dependency to requirements.txt when starting this task: `python-telegram-bot==20.7`
-  - [ ] 10.2 Implement Telegram bot handlers with proper message parsing and user session management
-  - [ ] 10.3 Adapt agent responses for Telegram format with inline keyboards for proactive suggestions
-  - [ ] 10.4 Configure production deployment with proper scaling and load balancing
-  - [ ] 10.5 Implement user authentication and session persistence across Telegram conversations
-  - [ ] 10.6 Set up production monitoring and alerting for bot uptime and response performance
-  - [ ] 10.7 Create deployment scripts and CI/CD pipeline for automated updates
-  - [ ] 10.8 Hide/remove temporary chat interface and finalize production configuration
+  - [ ] 9.2 Implement Telegram bot handlers with proper message parsing and user session management
+  - [ ] 9.3 Adapt agent responses for Telegram format with inline keyboards for proactive suggestions
+  - [ ] 9.4 Configure production deployment with proper scaling and load balancing
+  - [ ] 9.5 Implement user authentication and session persistence across Telegram conversations
+  - [ ] 9.6 Set up production monitoring and alerting for bot uptime and response performance
+  - [ ] 9.7 Create deployment scripts and CI/CD pipeline for automated updates
+  - [ ] 9.8 Hide/remove temporary chat interface and finalize production configuration

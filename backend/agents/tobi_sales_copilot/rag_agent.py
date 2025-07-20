@@ -20,7 +20,7 @@ from langsmith import traceable
 # Handle both relative and absolute imports for LangGraph Studio compatibility
 try:
     from .state import AgentState
-    from ..tools import get_all_tools, get_tool_names
+    from ..tools import get_all_tools, get_tool_names, ModelSelector
     from ..memory import memory_manager, memory_scheduler
     from ...config import get_settings, setup_langsmith_tracing
 except ImportError:
@@ -47,7 +47,7 @@ except ImportError:
     
     # Now import with absolute paths
     from agents.tobi_sales_copilot.state import AgentState
-    from agents.tools import get_all_tools, get_tool_names
+    from agents.tools import get_all_tools, get_tool_names, ModelSelector
     from agents.memory import memory_manager, memory_scheduler
     from config import get_settings, setup_langsmith_tracing
 
@@ -100,13 +100,8 @@ class UnifiedToolCallingRAGAgent:
         self.tools = get_all_tools()
         self.tool_names = get_tool_names()
         
-        # Step 2: Tool binding - connect tools to model
-        self.llm = ChatOpenAI(
-            model=self.settings.openai_chat_model,
-            temperature=self.settings.openai_temperature,
-            max_tokens=self.settings.openai_max_tokens,
-            api_key=self.settings.openai_api_key
-        ).bind_tools(self.tools)
+        # Initialize ModelSelector for dynamic model selection
+        self.model_selector = ModelSelector(self.settings)
         
         # Create a tool lookup for execution
         self.tool_map = {tool.name: tool for tool in self.tools}
@@ -126,25 +121,30 @@ class UnifiedToolCallingRAGAgent:
     
     async def _build_graph(self) -> StateGraph:
         """Build a graph with automatic checkpointing and state persistence between agent steps."""
-        # Import memory manager using absolute import for LangGraph Studio compatibility
-        try:
-            from ..memory import memory_manager
-        except ImportError:
-            # Fallback to absolute import when loaded directly by LangGraph Studio
-            from agents.memory import memory_manager
-        
         # Get checkpointer for persistence
         checkpointer = await memory_manager.get_checkpointer()
         
         graph = StateGraph(AgentState)
         
         # Add nodes with automatic checkpointing between steps
+        graph.add_node("employee_verification", self._employee_verification_node)
         graph.add_node("memory_preparation", self._memory_preparation_node)
         graph.add_node("agent", self._unified_agent_node)
         graph.add_node("memory_update", self._memory_update_node)
         
-        # Graph flow with automatic checkpointing between each step
-        graph.add_edge(START, "memory_preparation")
+        # Graph flow with employee verification gate
+        graph.add_edge(START, "employee_verification")
+        
+        # Conditional edge: if employee verified, continue to memory_preparation, else go to END
+        graph.add_conditional_edges(
+            "employee_verification",
+            self._should_continue_after_verification,
+            {
+                "continue": "memory_preparation",
+                "end": END
+            }
+        )
+        
         graph.add_edge("memory_preparation", "agent")
         graph.add_edge("agent", "memory_update")
         graph.add_edge("memory_update", END)
@@ -159,6 +159,111 @@ class UnifiedToolCallingRAGAgent:
 
     
 
+
+    @traceable(name="employee_verification_node")
+    async def _employee_verification_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Verify if the user is an active employee in the CRM database.
+        If not, deny access and return to the START node.
+        """
+        try:
+            user_id = state.get("user_id")
+            
+            if not user_id:
+                logger.warning("Access denied: No user_id provided for employee verification.")
+                # Return state with access denied message
+                from langchain_core.messages import AIMessage
+                error_message = AIMessage(content="Authentication required. Please ensure you're properly logged in as a company employee.")
+                
+                return {
+                    "messages": state.get("messages", []) + [error_message],
+                    "conversation_id": state.get("conversation_id"),
+                    "user_id": user_id,
+                    "conversation_summary": state.get("conversation_summary"),
+                    "retrieved_docs": [],
+                    "sources": [],
+                    "long_term_context": [],
+                    "employee_verified": False
+                }
+            
+            # Extract thread_id from config if no conversation_id is provided
+            conversation_id = state.get("conversation_id")
+            if not conversation_id and config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+                if thread_id:
+                    conversation_id = str(thread_id)  # Keep as string, not UUID object
+                    logger.info(f"Using thread_id {thread_id} as conversation_id for persistence")
+            
+            logger.info(f"Verifying employee access for user: {user_id}")
+            
+            # Verify employee access
+            is_employee = await self._verify_employee_access(user_id)
+            
+            if not is_employee:
+                logger.warning(f"Access denied for non-employee user: {user_id}")
+                # Return state with access denied message
+                from langchain_core.messages import AIMessage
+                error_message = AIMessage(content="""I apologize, but I'm a sales support assistant designed exclusively for company employees. 
+
+If you're a customer looking for assistance, please:
+- Visit our website or contact our customer service
+- Speak with one of our sales representatives
+- Call our customer support hotline
+
+If you're an employee and believe this is an error, please contact your system administrator.""")
+                
+                return {
+                    "messages": state.get("messages", []) + [error_message],
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "conversation_summary": state.get("conversation_summary"),
+                    "retrieved_docs": [],
+                    "sources": [],
+                    "long_term_context": [],
+                    "employee_verified": False
+                }
+            
+            logger.info(f"Employee access verified for user: {user_id}")
+            
+            # Return full state with employee verification flag
+            return {
+                "messages": state.get("messages", []),
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "conversation_summary": state.get("conversation_summary"),
+                "retrieved_docs": state.get("retrieved_docs", []),
+                "sources": state.get("sources", []),
+                "long_term_context": state.get("long_term_context", []),
+                "employee_verified": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in employee verification node: {str(e)}")
+            # On error, deny access for security
+            from langchain_core.messages import AIMessage
+            error_message = AIMessage(content="I'm temporarily unable to verify your access. Please try again later or contact your system administrator.")
+            
+            return {
+                "messages": state.get("messages", []) + [error_message],
+                "conversation_id": state.get("conversation_id"),
+                "user_id": state.get("user_id"),
+                "conversation_summary": state.get("conversation_summary"),
+                "retrieved_docs": [],
+                "sources": [],
+                "long_term_context": [],
+                "employee_verified": False
+            }
+    
+    def _should_continue_after_verification(self, state: Dict[str, Any]) -> str:
+        """
+        Determine if the graph should continue to the next node (memory_preparation)
+        based on the result of the employee_verification_node.
+        """
+        if state.get("employee_verified", False):
+            return "continue"
+        else:
+            return "end"
+    
 
     @traceable(name="memory_preparation_node")
     async def _memory_preparation_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -246,7 +351,8 @@ Use this context to provide personalized, contextually aware responses that buil
                 "conversation_summary": state.get("conversation_summary"),
                 "retrieved_docs": state.get("retrieved_docs", []),
                 "sources": state.get("sources", []),
-                "long_term_context": long_term_context
+                "long_term_context": long_term_context,
+                "employee_verified": state.get("employee_verified", True)  # Preserve verification status
             }
             
         except Exception as e:
@@ -392,12 +498,25 @@ Use this context to provide personalized, contextually aware responses that buil
             max_tool_iterations = 3  # Allow more tool calls if needed
             iteration = 0
             
+            # Dynamic model selection based on current query
+            selected_model = self.model_selector.get_model_for_query(original_messages)
+            
+            # Create LLM with selected model and bind tools
+            llm = ChatOpenAI(
+                model=selected_model,
+                temperature=self.settings.openai_temperature,
+                max_tokens=self.settings.openai_max_tokens,
+                api_key=self.settings.openai_api_key
+            ).bind_tools(self.tools)
+            
+            logger.info(f"Using model: {selected_model} for query processing")
+            
             while iteration < max_tool_iterations:
                 iteration += 1
                 logger.info(f"Agent iteration {iteration}")
                 
-                # Call the model
-                response = await self.llm.ainvoke(processing_messages)
+                # Call the model with dynamically selected LLM
+                response = await llm.ainvoke(processing_messages)
                 processing_messages.append(response)
                 
                 # Check if model wants to use tools
@@ -466,7 +585,7 @@ Use this context to provide personalized, contextually aware responses that buil
             if iteration >= max_tool_iterations:
                 logger.info("Max tool iterations reached, getting final response")
                 # Make one final call to get a proper response
-                final_response = await self.llm.ainvoke(processing_messages)
+                final_response = await llm.ainvoke(processing_messages)
                 processing_messages.append(final_response)
                 logger.info("Generated final response after tool execution")
             
@@ -493,7 +612,8 @@ Use this context to provide personalized, contextually aware responses that buil
                 "retrieved_docs": state.get("retrieved_docs", []),
                 "conversation_id": conversation_id,
                 "user_id": state.get("user_id"),
-                "conversation_summary": state.get("conversation_summary")  # Preserve existing summary
+                "conversation_summary": state.get("conversation_summary"),  # Preserve existing summary
+                "employee_verified": state.get("employee_verified", True)  # Preserve verification status
             }
             
         except Exception as e:
@@ -517,7 +637,8 @@ Use this context to provide personalized, contextually aware responses that buil
                 "retrieved_docs": state.get("retrieved_docs", []),
                 "conversation_id": conversation_id,
                 "user_id": state.get("user_id"),
-                "conversation_summary": state.get("conversation_summary")  # Preserve existing summary
+                "conversation_summary": state.get("conversation_summary"),  # Preserve existing summary
+                "employee_verified": state.get("employee_verified", True)  # Preserve verification status
             }
     
     def _get_system_prompt(self) -> str:
@@ -721,6 +842,48 @@ Important: Use the tools to help you provide the best possible assistance to the
     
 
     
+    async def _verify_employee_access(self, user_id: str) -> bool:
+        """
+        Verify if the user_id corresponds to an active employee in the CRM database.
+        
+        Args:
+            user_id: The user ID to verify (should match employee email or ID)
+            
+        Returns:
+            bool: True if user is an active employee, False otherwise
+        """
+        try:
+            # Import database client
+            from database import db_client
+            
+            # Ensure database client is initialized
+            await db_client._async_initialize_client()
+            
+            # Check if user_id matches any active employee by email or ID
+            # First try by email (most common case)
+            result = await asyncio.to_thread(
+                lambda: db_client.client.table("employees")
+                .select("id, name, email, position, is_active")
+                .or_(f"email.eq.{user_id},id.eq.{user_id}")
+                .eq("is_active", True)
+                .execute()
+            )
+            
+            if result.data and len(result.data) > 0:
+                employee = result.data[0]
+                logger.info(f"Employee access verified for {employee['name']} ({employee['position']})")
+                return True
+            else:
+                logger.warning(f"No active employee found for user_id: {user_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error verifying employee access: {str(e)}")
+            # On database errors, deny access for security
+            return False
+    
+
+    
     @traceable(name="rag_agent_invoke")
     async def invoke(self, user_query: str, conversation_id: str = None, user_id: str = None, conversation_history: List = None) -> Dict[str, Any]:
         """
@@ -752,9 +915,10 @@ Important: Use the tools to help you provide the best possible assistance to the
                 if isinstance(msg, dict):
                     content = msg.get("content")
                     if content:  # Only add messages with actual content
-                        if msg.get("role") == "human":
+                        role = msg.get("role", "").lower()
+                        if role in ["human", "user"]:
                             messages.append(HumanMessage(content=content))
-                        elif msg.get("role") == "bot":
+                        elif role in ["bot", "ai", "assistant"]:
                             messages.append(AIMessage(content=content))
                 elif isinstance(msg, BaseMessage):
                     messages.append(msg)

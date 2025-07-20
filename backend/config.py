@@ -55,6 +55,11 @@ class OpenAIConfig(BaseSettings):
     max_tokens: int = Field(default=1500, env="OPENAI_MAX_TOKENS")
     temperature: float = Field(default=0.3, env="OPENAI_TEMPERATURE")
 
+    # Context Window Management
+    max_result_size_simple_model: int = Field(default=50000, description="Max result size for simple models (bytes)")
+    force_complex_model_size: int = Field(default=20000, description="Size threshold to force complex model (bytes)")
+    max_display_length: int = Field(default=10000, description="Max length for truncated display (bytes)")
+
 
 class LangSmithConfig(BaseSettings):
     """LangSmith tracing configuration"""
@@ -175,6 +180,8 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")
     openai_embedding_model: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     openai_chat_model: str = Field(default="gpt-4o-mini", env="OPENAI_CHAT_MODEL")
+    openai_simple_model: str = Field(default="gpt-3.5-turbo", env="OPENAI_SIMPLE_MODEL")
+    openai_complex_model: str = Field(default="gpt-4", env="OPENAI_COMPLEX_MODEL")
     openai_max_tokens: int = Field(default=1500, env="OPENAI_MAX_TOKENS")
     openai_temperature: float = Field(default=0.3, env="OPENAI_TEMPERATURE")
     
@@ -223,6 +230,8 @@ class Settings(BaseSettings):
             api_key=self.openai_api_key,
             embedding_model=self.openai_embedding_model,
             chat_model=self.openai_chat_model,
+            simple_model=self.openai_simple_model,
+            complex_model=self.openai_complex_model,
             max_tokens=self.openai_max_tokens,
             temperature=self.openai_temperature
         )

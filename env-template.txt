@@ -12,8 +12,13 @@
 OPENAI_API_KEY=sk-your_openai_api_key_here
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_CHAT_MODEL=gpt-4o-mini
+OPENAI_SIMPLE_MODEL=gpt-3.5-turbo
+OPENAI_COMPLEX_MODEL=gpt-4
 OPENAI_MAX_TOKENS=4000
 OPENAI_TEMPERATURE=0.3
+OPENAI_MAX_RESULT_SIZE_SIMPLE_MODEL=30000  # Stricter limit
+OPENAI_FORCE_COMPLEX_MODEL_SIZE=15000      # Earlier upgrade
+OPENAI_MAX_DISPLAY_LENGTH=5000             # Shorter displays
 
 # Supabase Configuration (Backend)
 SUPABASE_URL=https://your-project-id.supabase.co

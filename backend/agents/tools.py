@@ -18,9 +18,11 @@ import html
 import urllib.parse
 import functools
 import hashlib
+from enum import Enum
 from typing import List, Dict, Any, Optional, Set, Tuple
 
 from langchain_core.tools import tool
+from langchain_core.messages import BaseMessage
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_core.prompts import PromptTemplate
@@ -44,6 +46,135 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# DYNAMIC MODEL SELECTION INFRASTRUCTURE
+# =============================================================================
+
+class QueryComplexity(Enum):
+    """Enum for classifying query complexity levels"""
+    SIMPLE = "simple"      # GPT-3.5-turbo appropriate
+    COMPLEX = "complex"    # GPT-4 recommended
+
+class ModelSelector:
+    """
+    Handles dynamic model selection based on query complexity.
+    Uses simple heuristic-based classification for simplicity and portability.
+    """
+    
+    def __init__(self, settings):
+        """Initialize with settings containing model configurations"""
+        self.settings = settings
+        self.simple_model = getattr(settings, 'openai_simple_model', 'gpt-3.5-turbo')
+        self.complex_model = getattr(settings, 'openai_complex_model', 'gpt-4')
+        
+        # Complex query indicators
+        self.complex_keywords = [
+            "analyze", "compare", "explain why", "reasoning", 
+            "strategy", "recommendation", "pros and cons",
+            "multiple", "various", "different approaches",
+            "evaluate", "assessment", "implications",
+            "complex", "sophisticated", "comprehensive"
+        ]
+        
+        # Simple query indicators  
+        self.simple_keywords = [
+            "what is", "who is", "when", "where", "how much",
+            "price", "contact", "address", "status", "list",
+            "show me", "find", "get", "display"
+        ]
+        
+        logger.info(f"ModelSelector initialized: simple={self.simple_model}, complex={self.complex_model}")
+    
+    def classify_query_complexity(self, messages: List[BaseMessage]) -> QueryComplexity:
+        """
+        Classify query complexity using simple heuristics.
+        
+        Args:
+            messages: List of conversation messages
+            
+        Returns:
+            QueryComplexity enum value
+        """
+        if not messages:
+            return QueryComplexity.SIMPLE
+        
+        # Get the latest user message content
+        latest_message = ""
+        for msg in reversed(messages):
+            if hasattr(msg, 'type') and msg.type == 'human':
+                latest_message = msg.content.lower()
+                break
+        
+        if not latest_message:
+            return QueryComplexity.SIMPLE
+        
+        # Length heuristic - longer queries tend to be more complex
+        if len(latest_message) > 200:
+            logger.debug(f"Query classified as COMPLEX due to length: {len(latest_message)}")
+            return QueryComplexity.COMPLEX
+        
+        # Complex keyword matching
+        complex_matches = sum(1 for keyword in self.complex_keywords if keyword in latest_message)
+        simple_matches = sum(1 for keyword in self.simple_keywords if keyword in latest_message)
+        
+        if complex_matches > 0:
+            logger.debug(f"Query classified as COMPLEX due to keywords: {complex_matches} matches")
+            return QueryComplexity.COMPLEX
+        
+        if simple_matches > 0:
+            logger.debug(f"Query classified as SIMPLE due to keywords: {simple_matches} matches")
+            return QueryComplexity.SIMPLE
+        
+        # Default to simple for unclear cases
+        logger.debug("Query classified as SIMPLE (default)")
+        return QueryComplexity.SIMPLE
+    
+    def get_model_for_query(self, messages: List[BaseMessage]) -> str:
+        """
+        Get the appropriate model name for a query.
+        
+        Args:
+            messages: List of conversation messages
+            
+        Returns:
+            Model name string
+        """
+        complexity = self.classify_query_complexity(messages)
+        model = self.complex_model if complexity == QueryComplexity.COMPLEX else self.simple_model
+        
+        logger.info(f"Selected model: {model} for complexity: {complexity.value}")
+        return model
+    
+    def get_model_for_context(self, tool_calls: List, query_length: int, has_retrieved_docs: bool = False) -> str:
+        """
+        Get model based on context and tool usage for more granular control.
+        
+        Args:
+            tool_calls: List of tool calls in the query
+            query_length: Length of the query text
+            has_retrieved_docs: Whether documents were retrieved
+            
+        Returns:
+            Model name string
+        """
+        # Complex: Multiple tools or SQL queries
+        if len(tool_calls) > 1:
+            logger.debug("Selected COMPLEX model due to multiple tool calls")
+            return self.complex_model
+        
+        # Complex: CRM queries (business reasoning needed)
+        if any("query_crm_data" in str(tool) for tool in tool_calls):
+            logger.debug("Selected COMPLEX model due to CRM query")
+            return self.complex_model
+            
+        # Complex: Long queries with retrieved documents
+        if query_length > 150 and has_retrieved_docs:
+            logger.debug("Selected COMPLEX model due to long query with documents")
+            return self.complex_model
+            
+        logger.debug("Selected SIMPLE model (default context)")
+        return self.simple_model
+
+# =============================================================================
 # GENERIC TOOL INFRASTRUCTURE (Reusable across any agent)
 # =============================================================================
 
@@ -51,24 +182,46 @@ logger = logging.getLogger(__name__)
 _retriever = None
 _settings = None
 _embeddings = None
-_sql_llm = None
 _sql_db = None
 
 # =============================================================================
 # SQL AGENT INFRASTRUCTURE (LangChain SQL QA Approach)
 # =============================================================================
 
-async def _get_sql_llm():
-    """Get the LLM instance for SQL generation."""
-    global _sql_llm
-    if _sql_llm is None:
-        settings = await get_settings()
-        _sql_llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0,
-            openai_api_key=settings.openai_api_key
-        )
-    return _sql_llm
+async def _get_sql_llm(question: str = None):
+    """
+    Get the LLM instance for SQL generation with dynamic model selection.
+    
+    Args:
+        question: Natural language query to assess complexity
+        
+    Returns:
+        ChatOpenAI instance with appropriate model
+    """
+    settings = await get_settings()
+    
+    # Use dynamic model selection if question is provided
+    if question:
+        # Create a simple message-like structure for the ModelSelector
+        from langchain_core.messages import HumanMessage
+        messages = [HumanMessage(content=question)]
+        
+        # Initialize ModelSelector with current settings
+        model_selector = ModelSelector(settings)
+        selected_model = model_selector.get_model_for_query(messages)
+        
+        logger.info(f"SQL LLM using model: {selected_model} for query: {question[:50]}...")
+    else:
+        # Fallback to complex model for SQL operations without context
+        selected_model = getattr(settings, 'openai_complex_model', 'gpt-4')
+        logger.info(f"SQL LLM using default complex model: {selected_model}")
+    
+    # Create LLM instance with selected model
+    return ChatOpenAI(
+        model=selected_model,
+        temperature=0,
+        openai_api_key=settings.openai_api_key
+    )
 
 async def _get_sql_database():
     """Get the SQL database connection for LangChain SQL toolkit."""
@@ -105,15 +258,28 @@ Database Schema Information:
 
 Question: {question}
 
+CRITICAL SQL RULES:
+- NEVER use subqueries that return multiple rows in scalar contexts (WHERE x = (SELECT...))
+- Use proper JOINs instead of subqueries when possible
+- Always add LIMIT 100 unless user asks for "all" data
+- Use explicit column names, avoid SELECT *
+- For employee lookups, JOIN the employees table directly
+- Test your logic: if subquery could return multiple rows, use IN, EXISTS, or JOIN
+
 Additional Context:
 - The database contains CRM data for a car dealership
 - Key tables: employees, customers, vehicles, pricing, opportunities, branches
 - Use proper joins when needed
 - Return only the SQL query, no explanation
-- Use LIMIT when appropriate to avoid large result sets
-- For employee names, use: SELECT name, position FROM employees WHERE is_active = true
 - For pricing, join vehicles and pricing tables
 - For inventory, use vehicles table with stock_quantity and is_available fields
+
+EXAMPLES OF CORRECT PATTERNS:
+❌ BAD: WHERE e.name = (SELECT name FROM employees WHERE is_active = true)
+✅ GOOD: WHERE e.is_active = true
+
+❌ BAD: WHERE customer_id = (SELECT id FROM customers WHERE name LIKE '%Smith%')
+✅ GOOD: JOIN customers c ON o.customer_id = c.id WHERE c.name LIKE '%Smith%'
 
 SQL Query:
 """
@@ -147,7 +313,7 @@ SQL_RESULT_PROMPT = PromptTemplate(
 
 async def _generate_sql_query(question: str, db: SQLDatabase) -> str:
     """Generate SQL query from natural language question using LLM."""
-    llm = await _get_sql_llm()
+    llm = await _get_sql_llm(question)
     
     # Get database schema
     schema = db.get_table_info()
@@ -178,6 +344,12 @@ async def _execute_sql_query(query: str, db: SQLDatabase) -> str:
         # Basic SQL injection protection
         if not _is_safe_sql_query(query):
             raise ValueError("SQL_INJECTION_DETECTED")
+        
+        # SQL quality validation
+        validation_error = _validate_sql_query(query)
+        if validation_error:
+            logger.warning(f"SQL validation warning: {validation_error}")
+            # Log but continue - let DB handle the actual error
         
         # Execute query with timeout protection
         result = db.run(query)
@@ -219,6 +391,10 @@ async def _execute_sql_query(query: str, db: SQLDatabase) -> str:
             logger.error(f"Column reference error: {e}")
             return f"SQL_COLUMN_ERROR: {str(e)}"
             
+        elif "cardinality" in error_str and "more than one row" in error_str:
+            logger.error(f"Subquery cardinality error: {e}")
+            return f"SQL_SUBQUERY_ERROR: {str(e)}"
+            
         else:
             logger.error(f"General SQL execution error: {e}")
             return f"SQL_GENERAL_ERROR: {str(e)}"
@@ -234,9 +410,29 @@ async def _format_sql_result(question: str, query: str, result: str) -> str:
     if not result or result.strip() == "" or result == "[]" or result == "()":
         return await _handle_empty_result_fallback(question, query)
     
+    # CONTEXT WINDOW PROTECTION: Check result size before LLM processing
+    settings = await get_settings()
+    
+    # Configurable limits (fallback to defaults if not set)
+    MAX_RESULT_SIZE_FOR_SIMPLE_MODEL = getattr(settings, 'max_result_size_simple_model', 50000)
+    FORCE_COMPLEX_MODEL_SIZE = getattr(settings, 'force_complex_model_size', 20000)
+    MAX_DISPLAY_LENGTH = getattr(settings, 'max_display_length', 10000)
+    
+    result_size = len(str(result))
+    
+    if result_size > MAX_RESULT_SIZE_FOR_SIMPLE_MODEL:
+        logger.warning(f"Result size ({result_size} bytes) too large for simple model formatting. Using fallback.")
+        return await _handle_large_result_fallback(question, query, result, result_size)
+    
     # Format successful results using LLM
     try:
-        llm = await _get_sql_llm()
+        # For large results, force complex model to handle bigger context
+        if result_size > FORCE_COMPLEX_MODEL_SIZE:
+            llm = await _get_sql_llm()  # Use default complex model
+            logger.info(f"Using complex model for large result formatting ({result_size} bytes)")
+        else:
+            llm = await _get_sql_llm(question)  # Use dynamic selection
+            
         chain = SQL_RESULT_PROMPT | llm | StrOutputParser()
         
         formatted_result = await chain.ainvoke({
@@ -318,6 +514,18 @@ Try asking about one of these topics instead."""
 
 Rephrase your question using these terms for better results."""
 
+    elif error_code.startswith("SQL_SUBQUERY_ERROR"):
+        return f"""⚡ **Query Processing Error:** I generated a database query with a technical issue (subquery returned multiple values).
+
+🤔 **What you asked:** {question}
+
+💡 **Let me try a simpler approach:**
+• "Show me leads" → I'll look for new opportunities
+• "List employees" → I'll show active staff members  
+• "What vehicles are available" → I'll show current inventory
+
+Please ask your question again, and I'll use a better query structure."""
+
     # Use predefined fallback responses for other errors
     error_type = error_code.split(":")[0]  # Get the error type without details
     fallback = fallback_responses.get(error_type)
@@ -397,27 +605,111 @@ async def _handle_empty_result_fallback(question: str, query: str) -> str:
 
 Or let me know if you'd like to search our uploaded documents instead!"""
 
+async def _handle_large_result_fallback(question: str, query: str, result: str, result_size: int) -> str:
+    """Fallback for when the result is too large for LLM processing."""
+    logger.warning(f"Result size ({result_size} bytes) too large for LLM formatting. Using fallback.")
+    
+    # Get configurable display limit
+    settings = await get_settings()
+    MAX_DISPLAY_LENGTH = getattr(settings, 'max_display_length', 10000)
+    
+    # Truncate very large results for better display
+    if result_size > MAX_DISPLAY_LENGTH:
+        truncated_result = result[:MAX_DISPLAY_LENGTH]
+        rows_shown = truncated_result.count('\n') + 1
+        return f"""📊 **Query Results for:** {question}
+
+**Data Found (showing first {rows_shown} rows):**
+{truncated_result}
+
+... *[Result truncated - {result_size:,} bytes total. Result too large for full display.]*
+
+💡 **Tips to get smaller results:**
+• Add more specific filters to your question
+• Ask for specific columns instead of all data
+• Use time ranges or limit criteria"""
+    
+    return f"""📊 **Query Results for:** {question}
+
+**Data Found:**
+{result}
+
+*Note: The result was too large for advanced formatting. Please refer to the raw data.*"""
+
 def _is_safe_sql_query(query: str) -> bool:
-    """Basic SQL injection protection."""
+    """Basic SQL injection protection with word boundary checks."""
     query_lower = query.lower().strip()
-    
-    # Block dangerous operations
-    dangerous_keywords = [
-        'drop', 'delete', 'truncate', 'alter', 'create', 'insert', 'update',
-        'grant', 'revoke', 'exec', 'execute', 'sp_', 'xp_', '--', ';--',
-        'union', 'information_schema', 'sys.', 'pg_', 'mysql.',
-        'load_file', 'into outfile', 'into dumpfile'
-    ]
-    
-    for keyword in dangerous_keywords:
-        if keyword in query_lower:
-            return False
     
     # Allow only SELECT statements
     if not query_lower.startswith('select'):
+        logger.error(f"Only SELECT statements are allowed, got: {query_lower[:50]}")
         return False
     
+    import re
+    
+    # Block dangerous SQL operations using word boundaries to avoid false positives
+    dangerous_patterns = [
+        r'\bdrop\s+table\b',     # DROP TABLE
+        r'\bdelete\s+from\b',    # DELETE FROM
+        r'\btruncate\s+table\b', # TRUNCATE TABLE
+        r'\balter\s+table\b',    # ALTER TABLE
+        r'\bcreate\s+table\b',   # CREATE TABLE (not just 'create')
+        r'\binsert\s+into\b',    # INSERT INTO
+        r'\bupdate\s+\w+\s+set\b', # UPDATE table SET
+        r'\bgrant\b',            # GRANT permissions
+        r'\brevoke\b',           # REVOKE permissions
+        r'\bunion\s+select\b',   # UNION SELECT injection
+        r';--',                  # Comment injection
+        r'--\s*$',              # End line comments
+        r'/\*.*?\*/',           # Block comments
+        r'\bexec\s*\(',         # EXEC()
+        r'\bexecute\s*\(',      # EXECUTE()
+        r'\bsp_\w+',            # System stored procedures
+        r'\bxp_\w+',            # Extended stored procedures
+        r'\binformation_schema\b', # Schema inspection
+        r'\bsys\.',             # System tables
+        r'\bpg_\w+',            # PostgreSQL system functions
+        r'\bmysql\.',           # MySQL system references
+        r'\bload_file\s*\(',    # File operations
+        r'\binto\s+outfile\b',  # File writing
+        r'\binto\s+dumpfile\b', # File writing
+    ]
+    
+    for pattern in dangerous_patterns:
+        if re.search(pattern, query_lower):
+            logger.error(f"Potentially dangerous SQL pattern detected: {pattern} in query: {query_lower[:100]}")
+            return False
+    
     return True
+
+def _validate_sql_query(query: str) -> Optional[str]:
+    """
+    Validate SQL query for common errors that cause execution failures.
+    Returns warning message if issues found, None if okay.
+    """
+    query_lower = query.lower()
+    
+    # Check for scalar subquery issues
+    if 'where ' in query_lower and '= (' in query_lower and 'select ' in query_lower:
+        # Look for pattern: WHERE column = (SELECT ...)
+        import re
+        scalar_subquery_pattern = r'where\s+\w+\.\w+\s*=\s*\(\s*select\s+\w+'
+        if re.search(scalar_subquery_pattern, query_lower):
+            return "Potential scalar subquery issue - subquery might return multiple rows"
+    
+    # Check for missing LIMIT in potentially large queries
+    if 'limit ' not in query_lower:
+        # Tables that typically have large datasets
+        large_tables = ['customers', 'opportunities', 'vehicles', 'messages', 'activities']
+        for table in large_tables:
+            if table in query_lower and 'count(' not in query_lower:
+                return f"Query on {table} table without LIMIT might return large dataset"
+    
+    # Check for SELECT * usage
+    if 'select *' in query_lower:
+        return "SELECT * might return more data than needed - consider specifying columns"
+    
+    return None
 
 # =============================================================================
 # RAG LCEL CHAINS (Modern LangChain approach)
