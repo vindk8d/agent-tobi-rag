@@ -18,8 +18,8 @@ class BaseModel(PydanticBaseModel):
         validate_assignment = True
         # Use enum values in JSON serialization
         use_enum_values = True
-        # Allow population by field name
-        allow_population_by_field_name = True
+        # Allow population by field name (Pydantic v2 syntax)
+        validate_by_name = True
         # JSON encoders for custom types
         json_encoders = {
             datetime: lambda v: v.isoformat(),

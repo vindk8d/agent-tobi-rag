@@ -278,6 +278,15 @@ class Settings(BaseSettings):
         )
     
     @property
+    def memory(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            max_messages=self.memory_max_messages,
+            summary_interval=self.memory_summary_interval,
+            auto_summarize=self.memory_auto_summarize
+        )
+    
+    @property
     def langsmith(self):
         from types import SimpleNamespace
         return SimpleNamespace(

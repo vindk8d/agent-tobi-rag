@@ -20,8 +20,9 @@ from langsmith import traceable
 # Handle both relative and absolute imports for LangGraph Studio compatibility
 try:
     from .state import AgentState
-    from ..tools import get_all_tools, get_tool_names, ModelSelector
-    from ..memory import memory_manager, memory_scheduler
+    from ..tools import get_all_tools, get_tool_names
+    from ..memory import memory_manager, memory_scheduler, context_manager
+    from ..tools import UserContext
     from ...config import get_settings, setup_langsmith_tracing
 except ImportError:
     # Fallback to absolute imports when loaded directly by LangGraph Studio
@@ -47,8 +48,9 @@ except ImportError:
     
     # Now import with absolute paths
     from agents.tobi_sales_copilot.state import AgentState
-    from agents.tools import get_all_tools, get_tool_names, ModelSelector
-    from agents.memory import memory_manager, memory_scheduler
+    from agents.tools import get_all_tools, get_tool_names
+    from agents.memory import memory_manager, memory_scheduler, context_manager
+    from agents.tools import UserContext
     from config import get_settings, setup_langsmith_tracing
 
 logger = logging.getLogger(__name__)
@@ -100,8 +102,8 @@ class UnifiedToolCallingRAGAgent:
         self.tools = get_all_tools()
         self.tool_names = get_tool_names()
         
-        # Initialize ModelSelector for dynamic model selection
-        self.model_selector = ModelSelector(self.settings)
+        # Use simple model selection - tools handle their own model selection dynamically
+        # Default to chat model for agent coordination
         
         # Create a tool lookup for execution
         self.tool_map = {tool.name: tool for tool in self.tools}
@@ -485,21 +487,32 @@ Use this context to provide personalized, contextually aware responses that buil
             logger.info(f"Agent processing query: {current_query}")
             logger.info(f"Thread ID: {thread_id}, Conversation ID: {conversation_id}")
             
-            # Preserve original messages and add system prompt
-            # Instead of creating a new messages list, work with the original state
-            processing_messages = [
-                SystemMessage(content=self._get_system_prompt())
-            ]
+            # Simple model selection - use default chat model
+            # Tools handle their own dynamic model selection internally
+            selected_model = self.settings.openai_chat_model
             
-            # Add original messages to preserve the conversation context
-            processing_messages.extend(original_messages)
+            # Get system prompt
+            system_prompt = self._get_system_prompt()
+            
+            # Apply context window management to prevent overflow
+            trimmed_messages, trim_stats = await context_manager.trim_messages_for_context(
+                messages=original_messages,
+                model=selected_model,
+                system_prompt=system_prompt,
+                max_messages=self.settings.memory.max_messages
+            )
+            
+            # Log context management information
+            if trim_stats["trimmed_message_count"] > 0:
+                logger.info(f"Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
+                           f"final token count: {trim_stats['final_token_count']}")
+            
+            # Build processing messages with system prompt and trimmed conversation
+            processing_messages = [SystemMessage(content=system_prompt)] + trimmed_messages
             
             # Step 3: Tool calling - let model decide when to use tools
             max_tool_iterations = 3  # Allow more tool calls if needed
             iteration = 0
-            
-            # Dynamic model selection based on current query
-            selected_model = self.model_selector.get_model_for_query(original_messages)
             
             # Create LLM with selected model and bind tools
             llm = ChatOpenAI(
@@ -535,13 +548,18 @@ Use this context to provide personalized, contextually aware responses that buil
                             # Get the tool and execute it
                             tool = self.tool_map.get(tool_name)
                             if tool:
-                                # Check if tool is async by examining the underlying function
-                                if tool_name in ["lcel_rag", "lcel_retrieval", "lcel_generation", "query_crm_data"]:
-                                    # Handle async tools
-                                    tool_result = await tool.ainvoke(tool_args)
-                                else:
-                                    # Handle sync tools
-                                    tool_result = tool.invoke(tool_args)
+                                # Set user context for tools that need access to user information
+                                user_id = state.get("user_id")
+                                conversation_id = state.get("conversation_id")
+                                
+                                with UserContext(user_id=user_id, conversation_id=conversation_id):
+                                    # Check if tool is async by examining the underlying function
+                                    if tool_name in ["simple_rag", "simple_query_crm_data"]:
+                                        # Handle async tools
+                                        tool_result = await tool.ainvoke(tool_args)
+                                    else:
+                                        # Handle sync tools
+                                        tool_result = tool.invoke(tool_args)
                                 
                                 # Add tool result to messages
                                 tool_message = ToolMessage(
@@ -651,7 +669,7 @@ Available tools:
 Your workflow options:
 
 **Option 1 - Complete RAG Pipeline (RECOMMENDED):**
-1. Use lcel_rag for complete RAG pipeline (retrieval + generation in one step)
+1. Use simple_rag for complete RAG pipeline (retrieval + generation in one step)
 2. This automatically optimizes search queries, retrieves documents, and generates comprehensive responses with source citations
 
 **Option 2 - Step-by-step RAG approach:**
@@ -662,10 +680,9 @@ Your workflow options:
 1. Use query_crm_data for specific business questions about sales, customers, vehicles, pricing, and performance metrics
 
 Tool Usage Examples:
-- lcel_rag: {{"question": "user's complete question", "top_k": 5, "similarity_threshold": 0.7}}
-- lcel_retrieval: {{"question": "user's question for document search", "top_k": 5, "similarity_threshold": 0.7}}
-- lcel_generation: {{"question": "user's question", "documents": [retrieved_documents]}}
-- query_crm_data: {{"question": "specific business question about sales, customers, vehicles, pricing"}}
+- simple_rag: {{"question": "user's complete question", "top_k": 5}}
+
+- simple_query_crm_data: {{"question": "specific business question about sales, customers, vehicles, pricing"}}
 
 **CRM Database Schema Context:**
 Your CRM database contains the following information that you can query using query_crm_data:
@@ -712,9 +729,8 @@ Use query_crm_data for questions about:
 - "Which branches do we have?"
 
 Guidelines:
-- Use lcel_rag for comprehensive document-based answers (recommended approach)
-- For step-by-step control, use lcel_retrieval then lcel_generation
-- Use query_crm_data for specific business data questions
+- Use simple_rag for comprehensive document-based answers (recommended approach)
+- Use simple_query_crm_data for specific business data questions
 - Be concise but thorough in your responses
 - LCEL tools automatically provide source attribution when documents are found
 - If no relevant documents are found, clearly indicate this
@@ -740,7 +756,7 @@ Important: Use the tools to help you provide the best possible assistance to the
         
         for message in messages:
             # Extract sources from LCEL-based RAG tools
-            if isinstance(message, ToolMessage) and message.name in ["lcel_rag", "lcel_retrieval"]:
+            if isinstance(message, ToolMessage) and message.name in ["simple_rag"]:
                 try:
                     # LCEL tools return formatted text with source information
                     # Extract sources from the formatted response
@@ -847,7 +863,7 @@ Important: Use the tools to help you provide the best possible assistance to the
         Verify if the user_id corresponds to an active employee in the CRM database.
         
         Args:
-            user_id: The user ID to verify (should match employee email or ID)
+            user_id: The users.id (UUID)
             
         Returns:
             bool: True if user is an active employee, False otherwise
@@ -859,26 +875,47 @@ Important: Use the tools to help you provide the best possible assistance to the
             # Ensure database client is initialized
             await db_client._async_initialize_client()
             
-            # Check if user_id matches any active employee by email or ID
-            # First try by email (most common case)
-            result = await asyncio.to_thread(
+            # Look up the user in the users table to get the employee_id
+            logger.info(f"Looking up user by ID: {user_id}")
+            user_result = await asyncio.to_thread(
+                lambda: db_client.client.table("users")
+                .select("employee_id, user_type")
+                .eq("id", user_id)
+                .execute()
+            )
+            
+            if not user_result.data or len(user_result.data) == 0:
+                logger.warning(f"No user found for user_id: {user_id}")
+                return False
+            
+            user_record = user_result.data[0]
+            employee_id = user_record.get("employee_id")
+            user_type = user_record.get("user_type")
+            
+            if not employee_id:
+                logger.warning(f"User {user_id} has no linked employee_id (user_type: {user_type})")
+                return False
+            
+            # Step 2: Check if the employee_id exists in employees table and is active
+            logger.info(f"Checking employee record for employee_id: {employee_id}")
+            employee_result = await asyncio.to_thread(
                 lambda: db_client.client.table("employees")
                 .select("id, name, email, position, is_active")
-                .or_(f"email.eq.{user_id},id.eq.{user_id}")
+                .eq("id", employee_id)
                 .eq("is_active", True)
                 .execute()
             )
             
-            if result.data and len(result.data) > 0:
-                employee = result.data[0]
-                logger.info(f"Employee access verified for {employee['name']} ({employee['position']})")
+            if employee_result.data and len(employee_result.data) > 0:
+                employee = employee_result.data[0]
+                logger.info(f"Employee access verified for {employee['name']} ({employee['position']}) - employee_id: {employee_id}")
                 return True
             else:
-                logger.warning(f"No active employee found for user_id: {user_id}")
+                logger.warning(f"No active employee found for employee_id: {employee_id} (user_id: {user_id})")
                 return False
                 
         except Exception as e:
-            logger.error(f"Error verifying employee access: {str(e)}")
+            logger.error(f"Error verifying employee access for user_id {user_id}: {str(e)}")
             # On database errors, deny access for security
             return False
     
@@ -906,8 +943,21 @@ Important: Use the tools to help you provide the best possible assistance to the
         messages = []
         
         if existing_state and existing_state.get('messages'):
-            # Use existing messages from our conversation state
-            messages = existing_state.get('messages', [])
+            # Convert database messages to LangChain message objects
+            # Database now uses LangChain-compatible role names directly
+            for msg in existing_state.get('messages', []):
+                if isinstance(msg, dict):
+                    content = msg.get("content")
+                    if content:  # Only add messages with actual content
+                        role = msg.get("role", "").lower()
+                        if role in ["human", "user"]:
+                            messages.append(HumanMessage(content=content))
+                        elif role in ["ai", "assistant"]:  # Removed 'bot' since DB now uses 'ai'
+                            messages.append(AIMessage(content=content))
+                        elif role == "system":
+                            messages.append(SystemMessage(content=content))
+                elif isinstance(msg, BaseMessage):
+                    messages.append(msg)
             logger.info(f"Continuing conversation with {len(messages)} existing messages")
         elif conversation_history:
             # Only add conversation_history if this is a new conversation
@@ -918,7 +968,7 @@ Important: Use the tools to help you provide the best possible assistance to the
                         role = msg.get("role", "").lower()
                         if role in ["human", "user"]:
                             messages.append(HumanMessage(content=content))
-                        elif role in ["bot", "ai", "assistant"]:
+                        elif role in ["ai", "assistant"]:  # Removed 'bot' since DB now uses 'ai'
                             messages.append(AIMessage(content=content))
                 elif isinstance(msg, BaseMessage):
                     messages.append(msg)

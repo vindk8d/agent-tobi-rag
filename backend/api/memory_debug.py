@@ -160,7 +160,20 @@ async def get_users():
 async def get_user_crm_data(user_id: str):
     """Get CRM data for a specific user"""
     try:
-        result = db_client.client.table('customers').select('*').eq('id', user_id).execute()
+        # First, get the user's customer_id from the users table
+        user_result = db_client.client.table('users').select('customer_id').eq('id', user_id).execute()
+        
+        if not user_result.data or not user_result.data[0].get('customer_id'):
+            return APIResponse(
+                success=True,
+                message="User is not a customer or no CRM data found",
+                data=None
+            )
+        
+        customer_id = user_result.data[0]['customer_id']
+        
+        # Now get the customer data using the correct customer_id
+        result = db_client.client.table('customers').select('*').eq('id', customer_id).execute()
         
         if not result.data:
             return APIResponse(

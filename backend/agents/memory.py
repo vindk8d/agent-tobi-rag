@@ -5,6 +5,7 @@ This module provides comprehensive memory management combining:
 - Short-term memory (LangGraph PostgreSQL checkpointer)
 - Long-term memory (Supabase with semantic search)
 - Conversation consolidation (background processing)
+- Context window management (token counting and trimming)
 
 Simplified architecture following the principle of "simple yet effective".
 """
@@ -12,13 +13,14 @@ Simplified architecture following the principle of "simple yet effective".
 import asyncio
 import json
 import logging
+import tiktoken
 from typing import Dict, List, Optional, Any, Tuple, Union, Callable
 from uuid import UUID, uuid4
 from datetime import datetime, timedelta
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.base import BaseStore, Item
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.embeddings import Embeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -28,6 +30,186 @@ from database import db_client
 
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# CONTEXT WINDOW MANAGER (Token Management)
+# =============================================================================
+
+class ContextWindowManager:
+    """
+    Manages context windows for LLM interactions by:
+    1. Counting tokens in message history
+    2. Trimming old messages when approaching limits
+    3. Preserving system messages and recent context
+    4. Maintaining conversation continuity
+    """
+    
+    def __init__(self):
+        self.settings = None
+        self.tokenizer = None
+        # Model-specific context limits (leaving buffer for response)
+        self.model_limits = {
+            "gpt-3.5-turbo": 14000,  # 16K total - 2K buffer
+            "gpt-4": 6000,           # 8K total - 2K buffer  
+            "gpt-4o": 126000,        # 128K total - 2K buffer
+            "gpt-4o-mini": 126000,   # 128K total - 2K buffer
+        }
+        
+    async def _ensure_initialized(self):
+        """Initialize tokenizer and settings asynchronously"""
+        if self.tokenizer is None:
+            self.settings = await get_settings()
+            try:
+                # Use tiktoken for accurate token counting
+                self.tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
+            except KeyError:
+                # Fallback encoding
+                self.tokenizer = tiktoken.get_encoding("cl100k_base")
+    
+    def count_tokens(self, text: str) -> int:
+        """Count tokens in text using tiktoken"""
+        if self.tokenizer is None:
+            # Fallback estimation if tokenizer not initialized
+            return int(len(text.split()) * 1.3)
+        return len(self.tokenizer.encode(text))
+    
+    def count_message_tokens(self, message: BaseMessage) -> int:
+        """Count tokens in a single message including metadata"""
+        content = getattr(message, 'content', str(message))
+        base_tokens = self.count_tokens(content)
+        
+        # Add tokens for message formatting overhead
+        if hasattr(message, 'type'):
+            if message.type == 'system':
+                base_tokens += 4  # System message overhead
+            elif message.type == 'human':
+                base_tokens += 4  # Human message overhead
+            elif message.type == 'ai':
+                base_tokens += 4  # AI message overhead
+                # Add tokens for tool calls if present
+                if hasattr(message, 'tool_calls') and message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        base_tokens += self.count_tokens(str(tool_call))
+            elif message.type == 'tool':
+                base_tokens += 6  # Tool message overhead
+        
+        return base_tokens
+    
+    def count_messages_tokens(self, messages: List[BaseMessage]) -> int:
+        """Count total tokens in a list of messages"""
+        total_tokens = 0
+        for message in messages:
+            total_tokens += self.count_message_tokens(message)
+        
+        # Add conversation-level overhead
+        total_tokens += 6  # Conversation formatting overhead
+        return total_tokens
+    
+    async def trim_messages_for_context(
+        self, 
+        messages: List[BaseMessage], 
+        model: str, 
+        system_prompt: Optional[str] = None,
+        max_messages: Optional[int] = None
+    ) -> Tuple[List[BaseMessage], Dict[str, Any]]:
+        """
+        Trim messages to fit within context window while preserving conversation flow.
+        
+        Returns:
+            Tuple of (trimmed_messages, metadata_about_trimming)
+        """
+        await self._ensure_initialized()
+        
+        # Get context limit for the model
+        context_limit = self.model_limits.get(model, 6000)  # Conservative default
+        
+        # Apply max_messages limit from settings if provided
+        if max_messages is None:
+            max_messages = self.settings.memory.max_messages
+        
+        # Start with a copy of messages
+        working_messages = list(messages)
+        
+        # Count tokens in system prompt if provided
+        system_tokens = self.count_tokens(system_prompt) if system_prompt else 0
+        
+        # Separate system messages from conversation messages
+        system_messages = [msg for msg in working_messages if hasattr(msg, 'type') and msg.type == 'system']
+        conversation_messages = [msg for msg in working_messages if not (hasattr(msg, 'type') and msg.type == 'system')]
+        
+        # Apply message count limit first
+        if len(conversation_messages) > max_messages:
+            logger.info(f"Trimming conversation from {len(conversation_messages)} to {max_messages} messages")
+            # Keep the most recent messages
+            conversation_messages = conversation_messages[-max_messages:]
+        
+        # Calculate current token usage
+        current_tokens = system_tokens + sum(self.count_message_tokens(msg) for msg in system_messages + conversation_messages)
+        
+        trim_stats = {
+            "original_message_count": len(messages),
+            "original_token_count": current_tokens,
+            "context_limit": context_limit,
+            "trimmed_message_count": 0,
+            "trimmed_token_count": 0,
+            "final_message_count": len(conversation_messages) + len(system_messages),
+            "final_token_count": current_tokens
+        }
+        
+        # If still over limit, trim more aggressively by tokens
+        if current_tokens > context_limit:
+            logger.warning(f"Messages exceed context limit: {current_tokens} > {context_limit} tokens")
+            
+            # Keep system messages and trim conversation messages from the beginning
+            trimmed_conversation = []
+            running_tokens = system_tokens + sum(self.count_message_tokens(msg) for msg in system_messages)
+            
+            # Add conversation messages from the end (most recent first)
+            for message in reversed(conversation_messages):
+                message_tokens = self.count_message_tokens(message)
+                if running_tokens + message_tokens <= context_limit:
+                    trimmed_conversation.insert(0, message)  # Insert at beginning to maintain order
+                    running_tokens += message_tokens
+                else:
+                    trim_stats["trimmed_message_count"] += 1
+                    trim_stats["trimmed_token_count"] += message_tokens
+            
+            conversation_messages = trimmed_conversation
+            current_tokens = running_tokens
+            
+            logger.info(f"Token-based trimming: kept {len(conversation_messages)} messages, {current_tokens} tokens")
+        
+        # Update final statistics
+        trim_stats["final_message_count"] = len(conversation_messages) + len(system_messages)
+        trim_stats["final_token_count"] = current_tokens
+        
+        # Log trimming information
+        if trim_stats["trimmed_message_count"] > 0:
+            logger.info(
+                f"Context trimming applied: "
+                f"{trim_stats['trimmed_message_count']} messages removed, "
+                f"{trim_stats['trimmed_token_count']} tokens saved, "
+                f"final: {trim_stats['final_message_count']} messages, "
+                f"{trim_stats['final_token_count']} tokens"
+            )
+        
+        # Combine system and conversation messages
+        final_messages = system_messages + conversation_messages
+        
+        return final_messages, trim_stats
+    
+    def get_model_context_info(self, model: str) -> Dict[str, int]:
+        """Get context information for a specific model"""
+        return {
+            "context_limit": self.model_limits.get(model, 6000),
+            "estimated_response_tokens": 2000,  # Buffer for response
+            "available_for_input": self.model_limits.get(model, 6000)
+        }
+
+
+# =============================================================================
+# DATABASE MANAGEMENT (Simplified Supabase Integration)
+# =============================================================================
 
 class SimpleDBManager:
     """Simple database manager for memory operations."""
@@ -987,9 +1169,13 @@ class ConversationConsolidator:
     def _format_role_for_summary(self, role: str) -> str:
         """Format role for summary display."""
         role_mapping = {
-            'bot': 'ASSISTANT',
+            'ai': 'ASSISTANT',
+            'assistant': 'ASSISTANT',  # Direct LangChain compatibility
             'human': 'USER', 
-            'HITL': 'HUMAN_SUPPORT'
+            'user': 'USER',  # Alternative human role
+            'system': 'SYSTEM',
+            'tool': 'TOOL',
+            'function': 'FUNCTION'
         }
         return role_mapping.get(role, role.upper())
     
@@ -1402,21 +1588,29 @@ class MemoryManager:
     
     async def _ensure_initialized(self):
         """Ensure all components are initialized."""
-        if self.checkpointer is not None:
+        # Check if all critical components are initialized
+        if (self.checkpointer is not None and 
+            self.consolidator is not None and 
+            self.db_manager is not None and 
+            self.long_term_store is not None):
             return
         
         try:
             settings = await get_settings()
             connection_string = settings.supabase.postgresql_connection_string
             
-            # Initialize connection pool using psycopg2 (more compatible)
+            # Initialize connection pool using psycopg3 (more compatible)
             try:
                 from psycopg_pool import AsyncConnectionPool
+                # Create pool with open=False to avoid deprecation warning
                 self.connection_pool = AsyncConnectionPool(
                     conninfo=connection_string,
                     max_size=20,
-                    kwargs={"autocommit": True, "prepare_threshold": 0}
+                    kwargs={"autocommit": True, "prepare_threshold": 0},
+                    open=False  # Don't auto-open in constructor
                 )
+                # Explicitly open the pool as recommended by psycopg documentation
+                await self.connection_pool.open()
             except ImportError:
                 # Fallback to simpler approach with psycopg2 that we know works
                 logger.info("psycopg_pool not available, using fallback connection management")
@@ -1424,7 +1618,6 @@ class MemoryManager:
                 self.connection_pool = None  # Use direct connections instead
             
             if self.connection_pool:
-                await self.connection_pool.open()
                 # Initialize checkpointer
                 self.checkpointer = AsyncPostgresSaver(self.connection_pool)
                 await self.checkpointer.setup()
@@ -1469,6 +1662,12 @@ class MemoryManager:
             
         except Exception as e:
             logger.error(f"Failed to initialize MemoryManager: {e}")
+            # Reset all components to None to ensure clean state for retry
+            self.checkpointer = None
+            self.consolidator = None
+            self.db_manager = None
+            self.long_term_store = None
+            self.connection_pool = None
             raise
     
     def _create_memory_llm(self, complexity: str = "simple") -> ChatOpenAI:
@@ -1548,6 +1747,11 @@ class MemoryManager:
         try:
             await self._ensure_initialized()
             
+            # Additional check to ensure consolidator was properly initialized
+            if self.consolidator is None:
+                logger.error("Consolidator is None after initialization - returning None for conversation state")
+                return None
+            
             conversation_id_str = str(conversation_id)
             
             # Get conversation details using consolidator
@@ -1579,6 +1783,11 @@ class MemoryManager:
         await self._ensure_initialized()
         
         try:
+            # Additional check to ensure consolidator was properly initialized
+            if self.consolidator is None:
+                logger.error("Consolidator is None after initialization - returning empty context")
+                return {}
+            
             # Get comprehensive user context (this is automatically up-to-date)
             user_context = await self.consolidator.get_user_context_for_new_conversation(user_id)
             return user_context
@@ -1658,6 +1867,12 @@ class MemoryManager:
         """Consolidate old conversations (background task)."""
         try:
             await self._ensure_initialized()
+            
+            # Additional check to ensure consolidator was properly initialized
+            if self.consolidator is None:
+                logger.error("Consolidator is None after initialization - initialization may have failed")
+                return {"consolidated_count": 0, "error": "Consolidator initialization failed"}
+            
             return await self.consolidator.consolidate_conversations(user_id)
             
         except Exception as e:
@@ -1735,7 +1950,7 @@ class MemoryManager:
         print(f"               - user_id: '{user_id}' (type: {type(user_id)})")
         try:
             try:
-                from backend.database import db_client
+                from database import db_client
             except ImportError:
                 # Handle Docker environment
                 try:
@@ -1831,15 +2046,23 @@ class MemoryManager:
                 metadata = getattr(message, 'metadata', {}) or {}
                 
                 # Map LangChain message types to our role system
+                # Note: Database constraint now allows LangChain-compatible types: 'ai', 'human', 'assistant', 'system', etc.
                 if hasattr(message, 'type'):
                     role_mapping = {
                         'human': 'human',
-                        'ai': 'bot',
-                        'system': 'system'
+                        'ai': 'ai',         # Direct mapping - now compatible with DB
+                        'system': 'system', # Direct mapping - now supported in DB
+                        'assistant': 'assistant'  # Direct mapping - now supported in DB
                     }
-                    role = role_mapping.get(message.type, 'unknown')
+                    role = role_mapping.get(message.type, 'ai')  # Default to 'ai' for unknown types
                 elif hasattr(message, 'role'):
-                    role = message.role
+                    # Handle direct role assignments and normalize them
+                    role = message.role.lower() if isinstance(message.role, str) else str(message.role)
+                    # All roles now pass through directly since they're LangChain-compatible
+                    # Convert legacy 'user' to 'human' for consistency
+                    if role == 'user':
+                        role = 'human'
+                    # 'ai', 'human', 'assistant', 'system' pass through as-is
             
             # Skip empty messages
             if not content.strip():
@@ -2054,5 +2277,6 @@ class MemoryScheduler:
 
 
 # Global instances
+context_manager = ContextWindowManager()
 memory_manager = MemoryManager()
 memory_scheduler = MemoryScheduler() 

@@ -48,7 +48,7 @@ class ChatResponse(BaseModel):
 class ChatMessage(BaseModel):
     """Chat message model for history"""
     id: str = Field(..., description="Message ID")
-    role: str = Field(..., description="Message role (human/user/ai/assistant/bot)")
+    role: str = Field(..., description="Message role (human/user/ai/assistant)")
     content: str = Field(..., description="Message content")
     timestamp: str = Field(..., description="Message timestamp")
     conversation_id: str = Field(..., description="Conversation ID")
