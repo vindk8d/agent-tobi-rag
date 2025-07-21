@@ -1,0 +1,15 @@
+[flake8]
+max-line-length = 100
+ignore = E501,W503,F541
+exclude = 
+    .git,
+    __pycache__,
+    venv,
+    .venv,
+    backend/migrations,
+    frontend/node_modules
+per-file-ignores = 
+    # Allow unused imports in __init__.py files
+    __init__.py:F401
+    # Allow longer lines in agent system prompts
+    agents/tobi_sales_copilot/rag_agent.py:E501 

@@ -71,7 +71,7 @@ class WebScraper:
 #             if text:
 #                 return {"text": text, "method": "dynamic", "success": True}
 #         return {"text": None, "method": None, "success": False}
-    
+
 #     async def scrape_url(self, url: str, timeout: int = 10, dynamic_fallback: bool = True) -> Dict[str, Any]:
 #         """
 #         Async wrapper for scraping a URL with enhanced response details.
@@ -79,18 +79,18 @@ class WebScraper:
 #         """
 #         import time
 #         start_time = time.time()
-        
+
 #         try:
 #             # Get basic scraping result
 #             result = self.scrape(url, timeout=timeout, dynamic_fallback=dynamic_fallback)
-            
+
 #             # Calculate response time
 #             response_time = time.time() - start_time
-            
+
 #             # Extract additional metadata
 #             title = ""
 #             content = result.get("text", "")
-            
+
 #             if result.get("success"):
 #                 try:
 #                     # Get title from the page
@@ -102,7 +102,7 @@ class WebScraper:
 #                             title = title_tag.get_text(strip=True)
 #                 except Exception as e:
 #                     logger.warning(f"Failed to extract title from {url}: {e}")
-                
+
 #                 return {
 #                     "success": True,
 #                     "content": content,
@@ -122,7 +122,7 @@ class WebScraper:
 #                     "error": "Failed to scrape content",
 #                     "url": url
 #                 }
-        
+
 #         except Exception as e:
 #             logger.error(f"Error scraping {url}: {e}")
 #             return {
@@ -133,4 +133,4 @@ class WebScraper:
 #                 "response_time": time.time() - start_time,
 #                 "error": str(e),
 #                 "url": url
-#             } 
+#             }

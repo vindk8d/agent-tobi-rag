@@ -1,26 +1,19 @@
 """
-Agent components for the RAG system.
-Includes agent graph, state management, and tools.
+Agents package for RAG-Tobi system.
+
+This package contains the various AI agents and their supporting infrastructure.
+
+Key components:
+- UnifiedToolCallingRAGAgent: Main agent for RAG-based conversations
+- ConversationMemory: Handles conversation persistence and summarization
+- Tools: Collection of tools agents can use (SQL, RAG, etc.)
 """
 
-from .tobi_sales_copilot.state import AgentState, ConversationMemory, RetrievalContext
-from .tobi_sales_copilot.rag_agent import SimpleRAGAgent, ToolCallingRAGAgent, UnifiedToolCallingRAGAgent
-from .tools import (
-    simple_rag,
-    simple_query_crm_data,
-    get_all_tools,
-    get_tool_names
-)
+from .tobi_sales_copilot.state import ConversationMemory
+from .tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
 
+# Export the key classes for easy importing
 __all__ = [
-    "AgentState",
-    "ConversationMemory", 
-    "RetrievalContext",
-    "SimpleRAGAgent",
-    "ToolCallingRAGAgent", 
+    "ConversationMemory",
     "UnifiedToolCallingRAGAgent",
-    "simple_rag",
-    "simple_query_crm_data",
-    "get_all_tools",
-    "get_tool_names"
-] 
+]

@@ -19,4 +19,4 @@ api_router.include_router(data_sources_router, prefix="/data-sources", tags=["da
 api_router.include_router(datasources_router, prefix="/datasources", tags=["datasources"])
 api_router.include_router(memory_debug_router, prefix="/memory-debug", tags=["memory-debug"])
 
-__version__ = "1.0.0" 
+__version__ = "1.0.0"

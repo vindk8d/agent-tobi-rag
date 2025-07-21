@@ -43,18 +43,18 @@ class ContextWindowManager:
     3. Preserving system messages and recent context
     4. Maintaining conversation continuity
     """
-    
+
     def __init__(self):
         self.settings = None
         self.tokenizer = None
         # Model-specific context limits (leaving buffer for response)
         self.model_limits = {
             "gpt-3.5-turbo": 14000,  # 16K total - 2K buffer
-            "gpt-4": 6000,           # 8K total - 2K buffer  
+            "gpt-4": 6000,           # 8K total - 2K buffer
             "gpt-4o": 126000,        # 128K total - 2K buffer
             "gpt-4o-mini": 126000,   # 128K total - 2K buffer
         }
-        
+
     async def _ensure_initialized(self):
         """Initialize tokenizer and settings asynchronously"""
         if self.tokenizer is None:
@@ -65,19 +65,19 @@ class ContextWindowManager:
             except KeyError:
                 # Fallback encoding
                 self.tokenizer = tiktoken.get_encoding("cl100k_base")
-    
+
     def count_tokens(self, text: str) -> int:
         """Count tokens in text using tiktoken"""
         if self.tokenizer is None:
             # Fallback estimation if tokenizer not initialized
             return int(len(text.split()) * 1.3)
         return len(self.tokenizer.encode(text))
-    
+
     def count_message_tokens(self, message: BaseMessage) -> int:
         """Count tokens in a single message including metadata"""
         content = getattr(message, 'content', str(message))
         base_tokens = self.count_tokens(content)
-        
+
         # Add tokens for message formatting overhead
         if hasattr(message, 'type'):
             if message.type == 'system':
@@ -92,60 +92,60 @@ class ContextWindowManager:
                         base_tokens += self.count_tokens(str(tool_call))
             elif message.type == 'tool':
                 base_tokens += 6  # Tool message overhead
-        
+
         return base_tokens
-    
+
     def count_messages_tokens(self, messages: List[BaseMessage]) -> int:
         """Count total tokens in a list of messages"""
         total_tokens = 0
         for message in messages:
             total_tokens += self.count_message_tokens(message)
-        
+
         # Add conversation-level overhead
         total_tokens += 6  # Conversation formatting overhead
         return total_tokens
-    
+
     async def trim_messages_for_context(
-        self, 
-        messages: List[BaseMessage], 
-        model: str, 
+        self,
+        messages: List[BaseMessage],
+        model: str,
         system_prompt: Optional[str] = None,
         max_messages: Optional[int] = None
     ) -> Tuple[List[BaseMessage], Dict[str, Any]]:
         """
         Trim messages to fit within context window while preserving conversation flow.
-        
+
         Returns:
             Tuple of (trimmed_messages, metadata_about_trimming)
         """
         await self._ensure_initialized()
-        
+
         # Get context limit for the model
         context_limit = self.model_limits.get(model, 6000)  # Conservative default
-        
+
         # Apply max_messages limit from settings if provided
         if max_messages is None:
             max_messages = self.settings.memory.max_messages
-        
+
         # Start with a copy of messages
         working_messages = list(messages)
-        
+
         # Count tokens in system prompt if provided
         system_tokens = self.count_tokens(system_prompt) if system_prompt else 0
-        
+
         # Separate system messages from conversation messages
         system_messages = [msg for msg in working_messages if hasattr(msg, 'type') and msg.type == 'system']
         conversation_messages = [msg for msg in working_messages if not (hasattr(msg, 'type') and msg.type == 'system')]
-        
+
         # Apply message count limit first
         if len(conversation_messages) > max_messages:
             logger.info(f"Trimming conversation from {len(conversation_messages)} to {max_messages} messages")
             # Keep the most recent messages
             conversation_messages = conversation_messages[-max_messages:]
-        
+
         # Calculate current token usage
         current_tokens = system_tokens + sum(self.count_message_tokens(msg) for msg in system_messages + conversation_messages)
-        
+
         trim_stats = {
             "original_message_count": len(messages),
             "original_token_count": current_tokens,
@@ -155,15 +155,15 @@ class ContextWindowManager:
             "final_message_count": len(conversation_messages) + len(system_messages),
             "final_token_count": current_tokens
         }
-        
+
         # If still over limit, trim more aggressively by tokens
         if current_tokens > context_limit:
             logger.warning(f"Messages exceed context limit: {current_tokens} > {context_limit} tokens")
-            
+
             # Keep system messages and trim conversation messages from the beginning
             trimmed_conversation = []
             running_tokens = system_tokens + sum(self.count_message_tokens(msg) for msg in system_messages)
-            
+
             # Add conversation messages from the end (most recent first)
             for message in reversed(conversation_messages):
                 message_tokens = self.count_message_tokens(message)
@@ -173,16 +173,16 @@ class ContextWindowManager:
                 else:
                     trim_stats["trimmed_message_count"] += 1
                     trim_stats["trimmed_token_count"] += message_tokens
-            
+
             conversation_messages = trimmed_conversation
             current_tokens = running_tokens
-            
+
             logger.info(f"Token-based trimming: kept {len(conversation_messages)} messages, {current_tokens} tokens")
-        
+
         # Update final statistics
         trim_stats["final_message_count"] = len(conversation_messages) + len(system_messages)
         trim_stats["final_token_count"] = current_tokens
-        
+
         # Log trimming information
         if trim_stats["trimmed_message_count"] > 0:
             logger.info(
@@ -192,12 +192,12 @@ class ContextWindowManager:
                 f"final: {trim_stats['final_message_count']} messages, "
                 f"{trim_stats['final_token_count']} tokens"
             )
-        
+
         # Combine system and conversation messages
         final_messages = system_messages + conversation_messages
-        
+
         return final_messages, trim_stats
-    
+
     def get_model_context_info(self, model: str) -> Dict[str, int]:
         """Get context information for a specific model"""
         return {
@@ -213,10 +213,10 @@ class ContextWindowManager:
 
 class SimpleDBManager:
     """Simple database manager for memory operations."""
-    
+
     def __init__(self):
         self.client = db_client
-    
+
     async def get_connection(self):
         """Get database connection - simplified to use Supabase client directly."""
         # For now, return a simple context manager that works with Supabase
@@ -225,20 +225,20 @@ class SimpleDBManager:
 
 class SimpleDBConnection:
     """Simple database connection wrapper."""
-    
+
     def __init__(self, client):
         self.client = client
-    
+
     async def __aenter__(self):
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         pass
-    
+
     async def cursor(self):
         """Get a cursor for database operations."""
         return SimpleDBCursor(self.client)
-    
+
     async def commit(self):
         """Commit transaction (no-op for Supabase)."""
         pass
@@ -246,31 +246,31 @@ class SimpleDBConnection:
 
 class SimpleDBCursor:
     """Simple database cursor wrapper."""
-    
+
     def __init__(self, client):
         self.client = client
         self.rowcount = 0
         self.description = []  # For SQL cursor compatibility
         self.result = None  # Store query results
-    
+
     async def __aenter__(self):
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         pass
-    
+
     async def fetchall(self):
         """Fetch all results from the last query."""
         if self.result and hasattr(self.result, 'data'):
             return self.result.data
         return []
-    
+
     async def fetchone(self):
         """Fetch one result from the last query."""
         if self.result and hasattr(self.result, 'data') and self.result.data:
             return self.result.data[0]
         return None
-    
+
     async def execute(self, query, params=None):
         """Execute a query using Supabase client."""
         try:
@@ -361,11 +361,11 @@ class SimpleDBCursor:
             else:
                 logger.warning(f"Unsupported query type: {query}")
                 self.result = None
-                
+
         except Exception as e:
             logger.error(f"Error executing query: {e}")
             self.result = None
-        
+
     async def fetchone(self):
         """Fetch one row."""
         if hasattr(self, 'result') and self.result:
@@ -392,7 +392,7 @@ class SimpleDBCursor:
                     return self.result.data if self.result.data else None
             return None
         return None
-    
+
     async def fetchall(self):
         """Fetch all rows."""
         if hasattr(self, 'result') and self.result:
@@ -422,7 +422,7 @@ class SimpleDBCursor:
                     return [self.result.data]
             return []
         return []
-    
+
     async def commit(self):
         """Commit transaction (no-op for Supabase)."""
         pass
@@ -435,17 +435,17 @@ class SimpleDBCursor:
 class SupabaseLongTermMemoryStore(BaseStore):
     """
     LangGraph Store implementation for long-term memory using Supabase.
-    
+
     Provides cross-thread memory access with semantic search capabilities.
     Implements the complete BaseStore interface with proper async context management.
     """
-    
+
     def __init__(self, embeddings: Optional[Embeddings] = None):
         """Initialize the Supabase long-term memory store."""
         self.embeddings = embeddings
         self.db_manager = None
         self._initialized = False
-        
+
     async def _ensure_initialized(self):
         """Ensure the store is initialized."""
         if not self._initialized:
@@ -453,12 +453,12 @@ class SupabaseLongTermMemoryStore(BaseStore):
             if self.embeddings is None:
                 self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
             self._initialized = True
-    
+
     # Required BaseStore interface methods
     async def aget(self, namespace: Tuple[str, ...], key: str) -> Optional[Item]:
         """Get a value from the store."""
         await self._ensure_initialized()
-        
+
         try:
             conn = await self.db_manager.get_connection()
             async with conn as connection:
@@ -469,7 +469,7 @@ class SupabaseLongTermMemoryStore(BaseStore):
                         (list(namespace), key)
                     )
                     row = await cur.fetchone()
-                    
+
                     if row:
                         # Update access count - fix parameter order for update_memory_access_pattern
                         # Function expects: (user_id, namespace, key, access_context, retrieval_method)
@@ -479,7 +479,7 @@ class SupabaseLongTermMemoryStore(BaseStore):
                             (user_id, list(namespace), key, 'read', 'direct')
                         )
                         await connection.commit()
-                        
+
                         # get_long_term_memory returns: namespace, key, value, created_at, updated_at
                         # Parse the value if it's a JSON string
                         value = row[2]  # value column
@@ -489,31 +489,31 @@ class SupabaseLongTermMemoryStore(BaseStore):
                             except json.JSONDecodeError:
                                 # If it's not valid JSON, keep it as a string
                                 pass
-                        
+
                         return Item(
                             value=value,           # value column (index 2)
-                            key=row[1],           # key column (index 1)  
+                            key=row[1],           # key column (index 1)
                             namespace=tuple(row[0]),  # namespace column (index 0)
                             created_at=row[3],    # created_at column (index 3)
                             updated_at=row[4]     # updated_at column (index 4)
                         )
                     return None
-                    
+
         except Exception as e:
             logger.error(f"Error getting value from store: {e}")
             return None
-    
-    async def aput(self, namespace: Tuple[str, ...], key: str, value: Any, 
+
+    async def aput(self, namespace: Tuple[str, ...], key: str, value: Any,
                    ttl_hours: Optional[int] = None) -> None:
         """Put a value into the store."""
         await self._ensure_initialized()
-        
+
         try:
             # Calculate expiry time if TTL is provided
             expiry_at = None
             if ttl_hours:
                 expiry_at = datetime.utcnow() + timedelta(hours=ttl_hours)
-            
+
             # Generate embedding for semantic search
             embedding = None
             if self.embeddings and isinstance(value, (str, dict)):
@@ -536,7 +536,7 @@ class SupabaseLongTermMemoryStore(BaseStore):
                 except Exception as e:
                     logger.warning(f"Failed to generate embedding: {e}")
                     embedding = None
-            
+
             # Fix the async context manager issue by properly awaiting the connection
             conn = await self.db_manager.get_connection()
             async with conn as connection:
@@ -549,11 +549,11 @@ class SupabaseLongTermMemoryStore(BaseStore):
                         (list(namespace), key, value_json, embedding, 'semantic', expiry_at)
                     )
                     await connection.commit()
-        
+
         except Exception as e:
             logger.error(f"Error putting value into store: {e}")
             raise
-    
+
     def put(self, namespace: Tuple[str, ...], key: str, value: Any) -> None:
         """Synchronous put method (BaseStore interface compatibility)."""
         import asyncio
@@ -569,11 +569,11 @@ class SupabaseLongTermMemoryStore(BaseStore):
         except Exception as e:
             logger.error(f"Error in synchronous put: {e}")
             raise
-    
+
     async def adelete(self, namespace: Tuple[str, ...], key: str) -> None:
         """Delete a value from the store."""
         await self._ensure_initialized()
-        
+
         try:
             conn = await self.db_manager.get_connection()
             async with conn as connection:
@@ -584,15 +584,15 @@ class SupabaseLongTermMemoryStore(BaseStore):
                         (list(namespace), key)
                     )
                     await connection.commit()
-        
+
         except Exception as e:
             logger.error(f"Error deleting value from store: {e}")
             raise
-    
+
     async def asearch(self, namespace_prefix: Tuple[str, ...]) -> List[Tuple[Tuple[str, ...], str, Any]]:
         """Search for values by namespace prefix."""
         await self._ensure_initialized()
-        
+
         try:
             conn = await self.db_manager.get_connection()
             async with conn as connection:
@@ -603,7 +603,7 @@ class SupabaseLongTermMemoryStore(BaseStore):
                         (list(namespace_prefix),)
                     )
                     rows = await cur.fetchall()
-                    
+
                     # Convert to expected format
                     results = []
                     for row in rows:
@@ -611,18 +611,18 @@ class SupabaseLongTermMemoryStore(BaseStore):
                         key = row[1]  # key column
                         value = row[2]  # value column
                         results.append((namespace_tuple, key, value))
-                    
+
                     return results
-                    
+
         except Exception as e:
             logger.error(f"Error searching store: {e}")
             return []
-    
-    async def semantic_search(self, query: str, namespace_prefix: Tuple[str, ...] = (), 
+
+    async def semantic_search(self, query: str, namespace_prefix: Tuple[str, ...] = (),
                               limit: int = 10, similarity_threshold: float = 0.7) -> List[Tuple[Tuple[str, ...], str, Any]]:
         """Semantic search using embeddings."""
         await self._ensure_initialized()
-        
+
         try:
             # Generate embedding for the query
             # Handle both sync and async embeddings
@@ -637,7 +637,7 @@ class SupabaseLongTermMemoryStore(BaseStore):
                     query_embedding = await asyncio.to_thread(
                         lambda: result
                     )
-            
+
             conn = await self.db_manager.get_connection()
             async with conn:
                 cur = await conn.cursor()
@@ -647,7 +647,7 @@ class SupabaseLongTermMemoryStore(BaseStore):
                         (query_embedding, list(namespace_prefix), similarity_threshold, limit)
                     )
                     rows = await cur.fetchall()
-                    
+
                     # Convert to expected format
                     results = []
                     for row in rows:
@@ -655,13 +655,13 @@ class SupabaseLongTermMemoryStore(BaseStore):
                         key = row[1]  # key column
                         value = row[2]  # value column
                         results.append((namespace_tuple, key, value))
-                    
+
                     return results
-                    
+
         except Exception as e:
             logger.error(f"Error in semantic search: {e}")
             return []
-    
+
     def _extract_content_for_embedding(self, value: Any) -> str:
         """Extract text content from a value for embedding generation."""
         if isinstance(value, str):
@@ -677,25 +677,25 @@ class SupabaseLongTermMemoryStore(BaseStore):
             return " ".join(text_parts)
         else:
             return str(value)
-    
+
     # Context manager support
     async def __aenter__(self):
         """Async context manager entry."""
         await self._ensure_initialized()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         # Cleanup if needed
         if self.db_manager:
             await self.db_manager.close()
         return False
-    
+
     # Batch operations (required by BaseStore)
     async def abatch(self, requests):
         """Async batch method - not implemented for this store."""
         raise NotImplementedError("Batch operations not supported for SupabaseLongTermMemoryStore")
-    
+
     def batch(self, requests):
         """Batch method - not implemented for this store."""
         raise NotImplementedError("Batch operations not supported for SupabaseLongTermMemoryStore")
@@ -709,7 +709,7 @@ class ConversationConsolidator:
     """
     Handles the transition from short-term to long-term memory.
     """
-    
+
     def __init__(self, db_manager: SimpleDBManager, memory_store: SupabaseLongTermMemoryStore,
                  llm: BaseLanguageModel, embeddings: Embeddings, memory_manager=None):
         """Initialize the conversation consolidator."""
@@ -719,42 +719,42 @@ class ConversationConsolidator:
         self.embeddings = embeddings
         self.memory_manager = memory_manager  # Reference to MemoryManager for dynamic model selection
         self.settings = None  # Will be loaded asynchronously
-    
+
     async def _ensure_settings_loaded(self):
         """Load settings if not already loaded."""
         if self.settings is None:
             from config import get_settings
             self.settings = await get_settings()
-    
+
     async def check_and_trigger_summarization(self, conversation_id: str, user_id: str) -> Optional[str]:
         """
         Check if a conversation needs summarization and trigger it automatically.
         Returns the summary if one was generated, None otherwise.
         """
         await self._ensure_settings_loaded()
-        
+
         print(f"\n         🔍 SUMMARIZATION FUNCTION DEBUG:")
         print(f"            📊 Settings:")
         print(f"               - Auto-summarize enabled: {self.settings.memory_auto_summarize}")
         print(f"               - Summary interval: {self.settings.memory_summary_interval}")
         print(f"               - Max messages: {self.settings.memory_max_messages}")
-        
+
         if not self.settings.memory_auto_summarize:
             print(f"            ❌ Auto-summarization is DISABLED in settings")
             return None
-            
+
         try:
             # Count messages in the conversation
             print(f"            🔢 Counting messages for conversation {conversation_id[:8]}...")
             message_count = await self._count_conversation_messages(conversation_id)
             print(f"            📊 Message count: {message_count}")
             print(f"            🎯 Threshold: {self.settings.memory_summary_interval}")
-            
+
             # Check if we need to summarize
             if message_count >= self.settings.memory_summary_interval:
                 print(f"            ✅ THRESHOLD MET! ({message_count} >= {self.settings.memory_summary_interval})")
                 logger.info(f"Auto-triggering summarization for conversation {conversation_id} ({message_count} messages)")
-                
+
                 # Get conversation details
                 print(f"            📋 Getting conversation details...")
                 conversation = await self._get_conversation_details(conversation_id)
@@ -763,11 +763,11 @@ class ConversationConsolidator:
                     logger.warning(f"Conversation {conversation_id} not found for summarization")
                     return None
                 print(f"            ✅ Conversation details retrieved")
-                
+
                 # Get the most recent summary (if any) to build upon
                 print(f"            📚 Getting previous summary for incremental updates...")
                 previous_summary = await self._get_latest_conversation_summary(conversation_id)
-                
+
                 # Get only recent messages since last summary (or last 10 if no previous summary)
                 print(f"            📝 Getting recent conversation messages...")
                 messages = await self._get_recent_conversation_messages(conversation_id, previous_summary)
@@ -776,16 +776,16 @@ class ConversationConsolidator:
                     logger.warning(f"No new messages found for conversation {conversation_id}")
                     return None
                 print(f"            ✅ Retrieved {len(messages)} new messages for incremental summary")
-                
+
                 # Generate and store summary
                 print(f"            🧠 Generating incremental summary with LLM...")
                 summary = await self._generate_incremental_conversation_summary(conversation, messages, previous_summary)
                 print(f"            ✅ Summary generated ({len(summary['content'])} chars)")
-                
+
                 print(f"            💾 Storing summary in long-term memory...")
                 await self._store_conversation_summary(user_id, conversation, summary)
                 print(f"            ✅ Summary stored successfully")
-                
+
                 # ALWAYS update master user summary with this new conversation
                 print(f"            🔄 Updating master user summary with new conversation...")
                 try:
@@ -801,168 +801,171 @@ class ConversationConsolidator:
                 except Exception as consolidation_error:
                     print(f"            ❌ ERROR in master summary consolidation: {consolidation_error}")
                     logger.error(f"Master summary consolidation failed for user {user_id}: {consolidation_error}")
-                
+
                 # Reset message count (optional - could be used for periodic summarization)
                 await self._reset_conversation_message_count(conversation_id)
-                
+
                 logger.info(f"Successfully auto-summarized conversation {conversation_id} and updated master summary")
                 return summary['content']
             else:
                 print(f"            ❌ Threshold not met ({message_count} < {self.settings.memory_summary_interval})")
                 return None
-                
+
         except Exception as e:
             print(f"            ❌ ERROR in summarization: {e}")
             logger.error(f"Error in automatic summarization for conversation {conversation_id}: {e}")
-        
+
         return None
-    
+
     async def _count_conversation_messages(self, conversation_id: str) -> int:
         """Count the number of messages in a conversation since last summarization."""
         try:
             from database import db_client
-            
+
             # First, get the last_summarized_at timestamp for this conversation
             conv_result = (db_client.client.table("conversations")
-                          .select("last_summarized_at")
-                          .eq("id", conversation_id)
-                          .execute())
-            
+
+                .select("last_summarized_at")
+
+                .eq("id", conversation_id)
+
+                .execute())
+
             last_summarized_at = None
             if conv_result.data and len(conv_result.data) > 0:
                 last_summarized_at = conv_result.data[0].get('last_summarized_at')
-            
+
             # Count messages since last summarization (or all messages if never summarized)
             query = db_client.client.table("messages").select("id", count="exact").eq("conversation_id", conversation_id)
-            
+
             if last_summarized_at:
                 # Only count messages created after last summarization
                 query = query.gt("created_at", last_summarized_at)
-            
+
             result = query.execute()
             return result.count if result.count is not None else 0
         except Exception as e:
             logger.error(f"Error counting messages for conversation {conversation_id}: {e}")
             return 0
-    
+
     async def _get_conversation_details(self, conversation_id: str) -> Optional[Dict[str, Any]]:
         """Get conversation details by ID."""
         try:
             from database import db_client
-            
+
             result = (db_client.client.table("conversations")
-                     .select("id,user_id,title,created_at,updated_at,metadata")
-                     .eq("id", conversation_id)
-                     .execute())
-            
+                .select("id,user_id,title,created_at,updated_at,metadata")
+                .eq("id", conversation_id)
+                .execute())
+
             if result.data and len(result.data) > 0:
                 return result.data[0]
             return None
-            
+
         except Exception as e:
             logger.error(f"Error getting conversation details for {conversation_id}: {e}")
             return None
-    
+
 
     async def consolidate_conversations(self, user_id: str, max_conversations: int = 50) -> Dict[str, Any]:
         """Consolidate old conversations for a user."""
         try:
             # Get conversations to consolidate
             conversations = await self._get_consolidation_candidates(user_id, max_conversations)
-            
+
             if not conversations:
                 return {"consolidated_count": 0, "error": None}
-            
+
             logger.info(f"Consolidating {len(conversations)} conversations for user {user_id}")
-            
+
             consolidated_count = 0
             errors = []
-            
+
             for conversation in conversations:
                 try:
                     # Get previous summary (if any) for incremental approach
                     previous_summary = await self._get_latest_conversation_summary(conversation['id'])
-                    
+
                     # Get messages (either recent ones or all if no previous summary)
                     messages = await self._get_recent_conversation_messages(conversation['id'], previous_summary)
-                    
+
                     if not messages:
                         continue
-                    
+
                     # Generate incremental summary
                     summary = await self._generate_incremental_conversation_summary(conversation, messages, previous_summary)
-                    
+
                     # Store in long-term memory
                     await self._store_conversation_summary(user_id, conversation, summary)
-                    
+
                     # Archive conversation
                     await self._archive_conversation(conversation['id'])
-                    
+
                     consolidated_count += 1
-                    
+
                 except Exception as e:
                     error_msg = f"Error consolidating conversation {conversation['id']}: {str(e)}"
                     logger.error(error_msg)
                     errors.append(error_msg)
-            
+
             return {
                 "consolidated_count": consolidated_count,
                 "total_candidates": len(conversations),
                 "errors": errors if errors else None
             }
-            
+
         except Exception as e:
             logger.error(f"Error in consolidate_conversations: {e}")
             return {"consolidated_count": 0, "error": str(e)}
-    
+
     async def _get_consolidation_candidates(self, user_id: str, limit: int) -> List[Dict[str, Any]]:
         """Get conversations that should be consolidated."""
         try:
             cutoff_date = (datetime.utcnow() - timedelta(days=7)).isoformat()  # 7 days old
-            
+
             from database import db_client
-            
+
             # Get conversations for user older than 7 days using Supabase client
             result = await asyncio.to_thread(
                 lambda: db_client.client.table("conversations")
-                .select("id, user_id, title, created_at, updated_at, metadata")
-                .eq("user_id", user_id)
-                .lt("updated_at", cutoff_date)
-                .order("updated_at", desc=False)
-                .limit(limit)
-                .execute()
+                    .select("id, user_id, title, created_at, updated_at, metadata")
+                    .eq("user_id", user_id)
+                    .lt("updated_at", cutoff_date)
+                    .order("updated_at", desc=False)
+                    .limit(limit)
+                    .execute()
             )
-            
+
             if result.data:
                 # Filter out conversations that already have summaries
                 # For simplicity, assume conversations without explicit summary status need consolidation
                 return result.data[:limit]
-            
+
             return []
-            
+
         except Exception as e:
             logger.warning(f"Unsupported query type: \n            SELECT c.id, c.user_id, c.title, c.created_at, c.updated_at, c.metadata\n            FROM conversations c\n            LEFT JOIN conversation_summaries cs ON c.id = cs.conversation_id\n            WHERE c.user_id = %s\n                AND c.updated_at < %s\n                AND c.archival_status = 'active'\n                AND cs.conversation_id IS NULL\n            ORDER BY c.updated_at ASC\n            LIMIT %s\n        ")
             logger.error(f"Error in _get_consolidation_candidates: {e}")
             return []
-    
+
     async def _get_conversation_messages(self, conversation_id: str) -> List[Dict[str, Any]]:
         """Get all messages for a conversation."""
         try:
             print(f"            📝 Getting messages for conversation {conversation_id[:8]}...")
-            
+
             # Use Supabase client for message retrieval
             from database import db_client
-            
+
             result = (db_client.client.table("messages")
-                     .select("role,content,created_at,user_id")
-                     .eq("conversation_id", conversation_id)
-                     .order("created_at")
-                     .execute())
-            
+                .select("role,content,created_at,user_id")
+                .eq("conversation_id", conversation_id)
+                .order("created_at")
+                .execute())
+
             messages = result.data if result.data else []
             print(f"            ✅ Retrieved {len(messages)} messages for summarization")
             return messages
-            
+
         except Exception as e:
             print(f"            ❌ ERROR fetching messages: {e}")
             logger.error(f"Error fetching messages for conversation {conversation_id}: {e}")
@@ -972,14 +975,14 @@ class ConversationConsolidator:
         """Get the most recent summary for a conversation to build incremental summaries."""
         try:
             from database import db_client
-            
+
             result = (db_client.client.table("conversation_summaries")
-                     .select("summary_text,created_at,message_count")
-                     .eq("conversation_id", conversation_id)
-                     .order("created_at", desc=True)
-                     .limit(1)
-                     .execute())
-            
+                .select("summary_text,created_at,message_count")
+                .eq("conversation_id", conversation_id)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute())
+
             if result.data and len(result.data) > 0:
                 summary_data = result.data[0]
                 print(f"            ✅ Found previous summary from {summary_data['created_at']}")
@@ -991,7 +994,7 @@ class ConversationConsolidator:
             else:
                 print(f"            📝 No previous summary found - this will be the first summary")
                 return None
-                
+
         except Exception as e:
             print(f"            ❌ ERROR fetching previous summary: {e}")
             logger.error(f"Error fetching latest summary for conversation {conversation_id}: {e}")
@@ -1001,12 +1004,12 @@ class ConversationConsolidator:
         """Get only recent messages since the last summary, or last 10 messages if no previous summary."""
         try:
             from database import db_client
-            
+
             query = (db_client.client.table("messages")
-                    .select("role,content,created_at,user_id")
-                    .eq("conversation_id", conversation_id)
-                    .order("created_at"))
-            
+                .select("role,content,created_at,user_id")
+                .eq("conversation_id", conversation_id)
+                .order("created_at"))
+
             if previous_summary:
                 # Get messages since the last summary
                 last_summary_time = previous_summary['created_at']
@@ -1016,94 +1019,97 @@ class ConversationConsolidator:
                 # No previous summary - get the last 10 messages for first summarization
                 # First count total messages
                 count_result = (db_client.client.table("messages")
-                               .select("id", count="exact")
-                               .eq("conversation_id", conversation_id)
-                               .execute())
+
+                    .select("id", count="exact")
+
+                    .eq("conversation_id", conversation_id)
+
+                    .execute())
                 total_messages = count_result.count
-                
+
                 if total_messages > 10:
                     # Skip earlier messages, get only the latest 10
                     offset = total_messages - 10
                     query = query.range(offset, offset + 9)  # range is inclusive
-                
+
                 print(f"            🆕 No previous summary - getting last 10 of {total_messages} total messages")
-            
+
             result = query.execute()
             messages = result.data if result.data else []
             print(f"            ✅ Retrieved {len(messages)} recent messages")
             return messages
-            
+
         except Exception as e:
             print(f"            ❌ ERROR fetching recent messages: {e}")
             logger.error(f"Error fetching recent messages for conversation {conversation_id}: {e}")
             return []
 
-    async def _generate_incremental_conversation_summary(self, conversation: Dict[str, Any], 
-                                                        new_messages: List[Dict[str, Any]], 
+    async def _generate_incremental_conversation_summary(self, conversation: Dict[str, Any],
+                                                        new_messages: List[Dict[str, Any]],
                                                         previous_summary: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Generate an incremental summary that builds on the previous summary with new messages."""
         # Format new messages for LLM
         new_messages_text = "\n".join([
             f"{self._format_role_for_summary(msg['role'])}: {msg['content']}" for msg in new_messages
         ])
-        
+
         # Create the prompt based on whether we have a previous summary
         if previous_summary:
             summary_prompt = f"""
             Update and enhance this conversation summary with new messages:
-            
+
             **Previous Summary:**
             {previous_summary['summary_text']}
-            
+
             **New Messages to Incorporate:**
             {new_messages_text}
-            
+
             Create an updated summary that:
             1. Preserves important information from the previous summary
-            2. Integrates the new messages seamlessly 
+            2. Integrates the new messages seamlessly
             3. Identifies any new topics, decisions, or preferences
             4. Updates outcomes based on the latest information
             5. Maintains the same structure (Main Topics, Key Decisions, Important Context, User Preferences)
-            
+
             The updated summary should feel cohesive and comprehensive, not just concatenated.
             """
         else:
             # First summary - use the original approach
             summary_prompt = f"""
             Create a concise summary of this conversation:
-            
+
             Title: {conversation.get('title', 'Untitled')}
             Date: {conversation['created_at']}
             Messages: {len(new_messages)}
-            
+
             Conversation:
             {new_messages_text}
-            
+
             Include:
             1. Main topics discussed
             2. Key decisions or outcomes
             3. Important context
             4. User preferences mentioned
             """
-        
+
         # Use dynamic model selection for summarization
         if self.memory_manager:
             llm = self.memory_manager._get_llm_for_memory_task("summary", new_messages)
         else:
             llm = self.llm  # Fallback to default LLM
-        
+
         response = await llm.ainvoke([HumanMessage(content=summary_prompt)])
-        
+
         # Handle datetime strings
         start_date = new_messages[0]['created_at'] if new_messages else conversation['created_at']
         end_date = new_messages[-1]['created_at'] if new_messages else conversation['created_at']
-        
+
         # Convert to ISO format if needed
         if hasattr(start_date, 'isoformat'):
             start_date = start_date.isoformat()
         if hasattr(end_date, 'isoformat'):
             end_date = end_date.isoformat()
-            
+
         return {
             "content": response.content,
             "message_count": len(new_messages),
@@ -1112,51 +1118,51 @@ class ConversationConsolidator:
                 "end": end_date
             }
         }
-    
-    async def _generate_conversation_summary(self, conversation: Dict[str, Any], 
+
+    async def _generate_conversation_summary(self, conversation: Dict[str, Any],
                                            messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generate a summary of the conversation using LLM."""
         # Format messages for LLM - handle new role values
         conversation_text = "\n".join([
             f"{self._format_role_for_summary(msg['role'])}: {msg['content']}" for msg in messages
         ])
-        
+
         # Generate summary
         summary_prompt = f"""
         Create a concise summary of this conversation:
-        
+
         Title: {conversation.get('title', 'Untitled')}
         Date: {conversation['created_at']}
         Messages: {len(messages)}
-        
+
         Conversation:
         {conversation_text}
-        
+
         Include:
         1. Main topics discussed
         2. Key decisions or outcomes
         3. Important context
         4. User preferences mentioned
         """
-        
+
         # Use dynamic model selection for summarization
         if self.memory_manager:
             llm = self.memory_manager._get_llm_for_memory_task("summary", messages)
         else:
             llm = self.llm  # Fallback to default LLM
-        
+
         response = await llm.ainvoke([HumanMessage(content=summary_prompt)])
-        
+
         # Handle datetime strings from Supabase (already in ISO format)
         start_date = messages[0]['created_at']
-        end_date = messages[-1]['created_at'] 
-        
+        end_date = messages[-1]['created_at']
+
         # If they're datetime objects, convert to ISO format, otherwise use as-is
         if hasattr(start_date, 'isoformat'):
             start_date = start_date.isoformat()
         if hasattr(end_date, 'isoformat'):
             end_date = end_date.isoformat()
-            
+
         return {
             "content": response.content,
             "message_count": len(messages),
@@ -1165,20 +1171,20 @@ class ConversationConsolidator:
                 "end": end_date
             }
         }
-    
+
     def _format_role_for_summary(self, role: str) -> str:
         """Format role for summary display."""
         role_mapping = {
             'ai': 'ASSISTANT',
             'assistant': 'ASSISTANT',  # Direct LangChain compatibility
-            'human': 'USER', 
+            'human': 'USER',
             'user': 'USER',  # Alternative human role
             'system': 'SYSTEM',
             'tool': 'TOOL',
             'function': 'FUNCTION'
         }
         return role_mapping.get(role, role.upper())
-    
+
     def _extract_user_id_from_message(self, message: Any) -> Optional[str]:
         """Extract user_id from message in various formats."""
         if isinstance(message, dict):
@@ -1188,13 +1194,13 @@ class ConversationConsolidator:
         elif hasattr(message, 'metadata') and isinstance(message.metadata, dict):
             return message.metadata.get('user_id')
         return None
-    
-    async def _store_conversation_summary(self, user_id: str, conversation: Dict[str, Any], 
+
+    async def _store_conversation_summary(self, user_id: str, conversation: Dict[str, Any],
                                         summary: Dict[str, Any]) -> None:
         """Store conversation summary in long-term memory."""
         # Store in conversation_summaries table
         summary_id = str(uuid4())
-        
+
         # Handle both sync and async embeddings
         if hasattr(self.embeddings, 'aembed_query'):
             embedding = await self.embeddings.aembed_query(summary['content'])
@@ -1207,7 +1213,7 @@ class ConversationConsolidator:
                 embedding = await asyncio.to_thread(
                     lambda: result
                 )
-        
+
         # Store summary in conversation_summaries table using Supabase client
         print(f"            💾 Storing summary in conversation_summaries table...")
         try:
@@ -1223,17 +1229,17 @@ class ConversationConsolidator:
                 },
                 "summary_embedding": embedding
             }
-            
+
             from database import db_client
-            
+
             db_client.client.table("conversation_summaries").insert(summary_data).execute()
             print(f"            ✅ Summary stored in database (id: {summary_id[:8]}...)")
-            
+
         except Exception as e:
             print(f"            ❌ Error storing summary: {e}")
             logger.error(f"Error storing summary in database: {e}")
             raise
-        
+
         # Also store in LangGraph memory store
         try:
             await self.memory_store.aput(
@@ -1253,15 +1259,15 @@ class ConversationConsolidator:
         except Exception as e:
             print(f"            ⚠️ Warning: Could not store in LangGraph memory store: {e}")
             logger.warning(f"Could not store summary in LangGraph memory store: {e}")
-    
+
     async def _archive_conversation(self, conversation_id: str) -> None:
         """Mark conversation as archived."""
         query = """
-            UPDATE conversations 
+            UPDATE conversations
             SET archival_status = 'archived', archived_at = %s
             WHERE id = %s
         """
-        
+
         conn = await self.db_manager.get_connection()
         async with conn as connection:
             cur = await connection.cursor()
@@ -1275,7 +1281,7 @@ class ConversationConsolidator:
             # Update last_summarized_at to current timestamp using Supabase client
             from database import db_client
             from datetime import datetime
-            
+
             db_client.client.table("conversations").update({
                 "last_summarized_at": datetime.utcnow().isoformat()
             }).eq("id", conversation_id).execute()
@@ -1283,7 +1289,7 @@ class ConversationConsolidator:
         except Exception as e:
             print(f"            ❌ Error resetting summarization counter: {e}")
             logger.error(f"Error resetting conversation counter for {conversation_id}: {e}")
-    
+
     async def get_user_context_for_new_conversation(self, user_id: str) -> Dict[str, Any]:
         """
         Get user context based on latest conversation summary for a new conversation.
@@ -1292,7 +1298,7 @@ class ConversationConsolidator:
         try:
             print(f"\n         🔍 RETRIEVING CROSS-CONVERSATION CONTEXT:")
             print(f"            👤 User: {user_id}")
-            
+
             # Get user context using the simplified database function
             query = "SELECT * FROM get_user_context_from_conversations(%s)"
             conn = await self.db_manager.get_connection()
@@ -1301,7 +1307,7 @@ class ConversationConsolidator:
                 async with cur:
                     await cur.execute(query, (user_id,))
                     result = await cur.fetchone()
-                    
+
                     if result:
                         print(f"            ✅ Found user context")
                         latest_summary, conversation_count, latest_conversation_id, has_history = result
@@ -1319,7 +1325,7 @@ class ConversationConsolidator:
                             "latest_conversation_id": None,
                             "has_history": False
                         }
-                        
+
         except Exception as e:
             print(f"            ❌ Error retrieving user context: {e}")
             logger.error(f"Error retrieving user context for {user_id}: {e}")
@@ -1329,9 +1335,9 @@ class ConversationConsolidator:
                 "latest_conversation_id": None,
                 "has_history": False
             }
-    
+
 # Master summary functions removed - system now uses conversation summaries directly
-    
+
     async def consolidate_user_summary_with_llm(self, user_id: str, new_conversation_id: str = None) -> str:
         """
         Simplified user summary function that works with conversation summaries only.
@@ -1340,10 +1346,10 @@ class ConversationConsolidator:
         try:
             print(f"\n         📚 GETTING LATEST USER CONVERSATION SUMMARY:")
             print(f"            👤 User: {user_id}")
-            
+
             # Get the latest conversation summary
             recent_summaries = await self._get_user_conversation_summaries(user_id, limit=1)
-            
+
             if recent_summaries:
                 latest_summary = recent_summaries[0].get('summary_text', '')
                 print(f"            ✅ Found latest conversation summary ({len(latest_summary)} chars)")
@@ -1351,24 +1357,24 @@ class ConversationConsolidator:
             else:
                 print(f"            📝 No conversation summaries found")
                 return "No conversation history available yet."
-            
+
         except Exception as e:
             print(f"            ❌ Error getting latest conversation summary: {e}")
             logger.error(f"Error getting latest conversation summary for {user_id}: {e}")
             return "Error retrieving conversation summary."
-    
+
     async def _get_user_conversation_summaries(self, user_id: str, limit: int = 5) -> List[Dict]:
         """Get recent conversation summaries for a user (limited by count, not time)."""
         try:
             from database import db_client
             # Get recent conversation summaries directly from the table
             result = (db_client.client.table('conversation_summaries')
-                     .select('conversation_id, summary_text, message_count, created_at, summary_type')
-                     .eq('user_id', user_id)
-                     .order('created_at', desc=True)
-                     .limit(limit)
-                     .execute())
-                
+                .select('conversation_id, summary_text, message_count, created_at, summary_type')
+                .eq('user_id', user_id)
+                .order('created_at', desc=True)
+                .limit(limit)
+                .execute())
+
             summaries = []
             for row in result.data:
                 summaries.append({
@@ -1378,16 +1384,16 @@ class ConversationConsolidator:
                     'created_at': row['created_at'],
                     'summary_type': row['summary_type']
                 })
-            
+
             return summaries
         except Exception as e:
             logger.error(f"Error getting conversation summaries for {user_id}: {e}")
             return []
-    
+
 # Removed _get_existing_master_summary function - no longer needed with simplified conversation summary approach
-    
+
 # Removed _update_user_master_summary function - no longer needed with simplified conversation summary approach
-    
+
     async def _extract_key_insights(self, comprehensive_summary: str) -> List[str]:
         """Extract key insights from comprehensive summary using LLM."""
         try:
@@ -1398,46 +1404,46 @@ From this comprehensive user summary, extract 3-5 key insights as bullet points:
 
 Extract the most important insights about:
 - User's role/business context
-- Key goals or challenges  
+- Key goals or challenges
 - Important preferences or requirements
 - Critical decisions or topics
 
 Format as simple bullet points (one per line, no bullets symbols):
 """
-            
+
             # Use dynamic model selection for insights extraction (complex task)
             if self.memory_manager:
                 llm = self.memory_manager._get_llm_for_memory_task("insights")
             else:
                 llm = self.llm  # Fallback to default LLM
-            
+
             response = await llm.ainvoke(extract_prompt)
             insights_text = response.content.strip()
-            
+
             # Split into individual insights
             insights = [
-                insight.strip() 
-                for insight in insights_text.split('\n') 
+                insight.strip()
+                for insight in insights_text.split('\n')
                 if insight.strip() and not insight.strip().startswith('-')
             ]
-            
+
             return insights[:5]  # Limit to 5 insights
-            
+
         except Exception as e:
             logger.error(f"Error extracting key insights: {e}")
             return ["Error extracting insights"]
-    
+
     async def _get_user_conversations(self, user_id: str, limit: int = 5) -> List[Dict]:
         """Get user conversations even if they don't have summaries yet."""
         try:
             from database import db_client
             result = (db_client.client.table('conversations')
-                     .select('id, title, created_at, message_count')
-                     .eq('user_id', user_id)
-                     .order('created_at', desc=True)
-                     .limit(limit)
-                     .execute())
-            
+                .select('id, title, created_at, message_count')
+                .eq('user_id', user_id)
+                .order('created_at', desc=True)
+                .limit(limit)
+                .execute())
+
             return [
                 {
                     'id': row['id'],
@@ -1450,28 +1456,28 @@ Format as simple bullet points (one per line, no bullets symbols):
         except Exception as e:
             print(f"            ❌ Error getting user conversations: {e}")
             return []
-    
+
     async def _generate_initial_master_summary(self, user_id: str, conversations: List[Dict]) -> str:
         """Generate an initial master summary from conversation data."""
         try:
             print(f"            🤖 Generating initial master summary using LLM...")
-            
+
             # Get recent messages from conversations
             recent_messages = []
             for conv in conversations[:3]:  # Latest 3 conversations
                 conv_messages = await self._get_conversation_messages(conv['id'])
                 if conv_messages:
                     recent_messages.extend(conv_messages[-10:])  # Last 10 messages per conv
-            
+
             if not recent_messages:
                 return "New user with conversations but no accessible messages yet."
-            
+
             # Generate summary from messages directly
             context = "\n".join([
                 f"{msg.get('role', 'user')}: {msg.get('content', '')[:200]}..."
                 for msg in recent_messages[-20:]  # Last 20 messages total
             ])
-            
+
             prompt = f"""
 Generate a comprehensive user summary based on the following conversation messages:
 
@@ -1485,19 +1491,19 @@ Create a summary that includes:
 
 Keep it concise but comprehensive (2-3 paragraphs).
 """
-            
+
             # Use dynamic model selection for master summary generation (analysis task)
             if self.memory_manager:
                 llm = self.memory_manager._get_llm_for_memory_task("analysis")
             else:
                 llm = self.llm  # Fallback to default LLM
-            
+
             response = await llm.ainvoke(prompt)
             initial_summary = response.content.strip()
-            
+
             print(f"            ✅ Initial master summary generated ({len(initial_summary)} chars)")
             return initial_summary
-            
+
         except Exception as e:
             print(f"            ❌ Error generating initial master summary: {e}")
             return f"Initial summary generation error: {str(e)}"
@@ -1512,8 +1518,8 @@ class MemoryManager:
     Main memory manager that orchestrates short-term and long-term memory.
     Enhanced with cross-conversation summarization capabilities.
     """
-    
-    def __init__(self, llm: Optional[BaseLanguageModel] = None, 
+
+    def __init__(self, llm: Optional[BaseLanguageModel] = None,
                  embeddings: Optional[Embeddings] = None):
         """Initialize the memory manager."""
         self.checkpointer = None
@@ -1521,27 +1527,27 @@ class MemoryManager:
         self.long_term_store = None
         self.consolidator = None
         self.db_manager = None
-        
+
         # Initialize components
         self.llm = llm
         self.embeddings = embeddings
-        
+
         # Plugin system for agent-specific memory logic
         self.insight_extractors = {}
         self.memory_filters = {}
-        
+
         logger.info("MemoryManager initialized with cross-conversation support")
-    
+
     def register_memory_filter(self, agent_type: str, filter_func: Callable):
         """Register a memory filter function for a specific agent type."""
         self.memory_filters[agent_type] = filter_func
         logger.info(f"Registered memory filter for agent type: {agent_type}")
-    
+
     def register_insight_extractor(self, agent_type: str, extractor_func: Callable):
         """Register an insight extractor function for a specific agent type."""
         self.insight_extractors[agent_type] = extractor_func
         logger.info(f"Registered insight extractor for agent type: {agent_type}")
-    
+
     async def should_store_memory(self, agent_type: str, messages: List[Any]) -> bool:
         """Check if the conversation contains information worth storing in long-term memory."""
         try:
@@ -1549,56 +1555,56 @@ class MemoryManager:
             if agent_type in self.memory_filters:
                 filter_func = self.memory_filters[agent_type]
                 return await filter_func(messages)
-            
+
             # Default behavior: store if conversation has enough content
             return len(messages) >= 2 and any(
                 len(str(msg).strip()) > 20 for msg in messages
             )
-            
+
         except Exception as e:
             logger.error(f"Error checking should_store_memory for {agent_type}: {e}")
             return False
-    
-    async def store_conversation_insights(self, agent_type: str, user_id: str, 
+
+    async def store_conversation_insights(self, agent_type: str, user_id: str,
                                         messages: List[Any], conversation_id: str) -> None:
         """Extract and store insights using agent-specific plugins."""
         try:
             if agent_type in self.insight_extractors:
                 extractor_func = self.insight_extractors[agent_type]
                 insights = await extractor_func(user_id, messages, conversation_id)
-                
+
                 # Store insights in long-term memory
                 if insights:
                     await self._ensure_initialized()
                     store = self.long_term_store
-                    
+
                     for insight in insights:
                         if isinstance(insight, dict):
                             namespace = tuple(insight.get('namespace', [user_id]))
                             key = insight.get('key', f"insight_{conversation_id}")
                             value = insight.get('value', insight)
-                            
+
                             await store.aput(namespace, key, value)
                             logger.info(f"Stored insight for {agent_type}: {key}")
             else:
                 logger.info(f"No insight extractor registered for agent type: {agent_type}")
-                
+
         except Exception as e:
             logger.error(f"Error storing conversation insights for {agent_type}: {e}")
-    
+
     async def _ensure_initialized(self):
         """Ensure all components are initialized."""
         # Check if all critical components are initialized
-        if (self.checkpointer is not None and 
-            self.consolidator is not None and 
-            self.db_manager is not None and 
-            self.long_term_store is not None):
+        if (self.checkpointer is not None
+            and self.consolidator is not None
+            and self.db_manager is not None
+            and self.long_term_store is not None):
             return
-        
+
         try:
             settings = await get_settings()
             connection_string = settings.supabase.postgresql_connection_string
-            
+
             # Initialize connection pool using psycopg3 (more compatible)
             try:
                 from psycopg_pool import AsyncConnectionPool
@@ -1612,11 +1618,10 @@ class MemoryManager:
                 # Explicitly open the pool as recommended by psycopg documentation
                 await self.connection_pool.open()
             except ImportError:
-                # Fallback to simpler approach with psycopg2 that we know works
+                # Fallback to simpler approach that we know works
                 logger.info("psycopg_pool not available, using fallback connection management")
-                import psycopg2
                 self.connection_pool = None  # Use direct connections instead
-            
+
             if self.connection_pool:
                 # Initialize checkpointer
                 self.checkpointer = AsyncPostgresSaver(self.connection_pool)
@@ -1625,30 +1630,30 @@ class MemoryManager:
                 # Fallback: disable checkpointer if pool unavailable
                 logger.warning("Connection pool unavailable, checkpointer disabled")
                 self.checkpointer = None
-            
+
             # Initialize database manager
             self.db_manager = SimpleDBManager()
-            
+
             # Store settings for dynamic model selection
             self.settings = settings
-            
+
             # Initialize ModelSelector for dynamic model selection
             from .tools import ModelSelector
             self.model_selector = ModelSelector(settings)
-            
+
             # Initialize default LLM with dynamic model selection capability
             if self.llm is None:
                 # Use simple model as default for basic memory operations
                 self.llm = self._create_memory_llm()
-            
+
             if self.embeddings is None:
                 self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-            
+
             # Initialize long-term memory store
             self.long_term_store = SupabaseLongTermMemoryStore(
                 embeddings=self.embeddings
             )
-            
+
             # Initialize consolidator with cross-conversation capabilities
             self.consolidator = ConversationConsolidator(
                 db_manager=self.db_manager,
@@ -1657,9 +1662,9 @@ class MemoryManager:
                 embeddings=self.embeddings,
                 memory_manager=self
             )
-            
+
             logger.info("MemoryManager components initialized successfully")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize MemoryManager: {e}")
             # Reset all components to None to ensure clean state for retry
@@ -1669,14 +1674,14 @@ class MemoryManager:
             self.long_term_store = None
             self.connection_pool = None
             raise
-    
+
     def _create_memory_llm(self, complexity: str = "simple") -> ChatOpenAI:
         """
         Create LLM instance for memory operations with dynamic model selection.
-        
+
         Args:
             complexity: "simple" or "complex" to determine model choice
-            
+
         Returns:
             ChatOpenAI instance with appropriate model
         """
@@ -1685,9 +1690,9 @@ class MemoryManager:
                 model = getattr(self.settings, 'openai_complex_model', 'gpt-4')
             else:
                 model = getattr(self.settings, 'openai_simple_model', 'gpt-3.5-turbo')
-                
+
             logger.debug(f"Creating memory LLM with model: {model} (complexity: {complexity})")
-            
+
             return ChatOpenAI(
                 model=model,
                 temperature=0.1,
@@ -1703,21 +1708,21 @@ class MemoryManager:
                 max_tokens=1000,
                 api_key=self.settings.openai_api_key
             )
-    
+
     def _get_llm_for_memory_task(self, task_type: str, messages: List[Dict] = None) -> ChatOpenAI:
         """
         Get appropriate LLM for different memory tasks based on complexity.
-        
+
         Args:
             task_type: Type of memory task ("summary", "insights", "analysis", "simple")
             messages: Optional message history to assess complexity
-            
+
         Returns:
             ChatOpenAI instance with appropriate model
         """
         # Determine complexity based on task type
         complex_tasks = ["insights", "analysis"]
-        
+
         if task_type in complex_tasks:
             complexity = "complex"
         elif task_type == "summary" and messages:
@@ -1728,52 +1733,52 @@ class MemoryManager:
                 complexity = "simple"
         else:
             complexity = "simple"
-        
+
         logger.info(f"Using {complexity} model for memory task: {task_type}")
         return self._create_memory_llm(complexity)
-    
+
     # Short-term memory methods
     async def get_checkpointer(self) -> AsyncPostgresSaver:
         """Get the LangGraph checkpointer."""
         await self._ensure_initialized()
         return self.checkpointer
-    
+
     async def get_conversation_config(self, conversation_id: UUID) -> Dict[str, Any]:
         """Get configuration for LangGraph thread management."""
         return {"configurable": {"thread_id": str(conversation_id)}}
-    
+
     async def load_conversation_state(self, conversation_id: UUID) -> Optional[Dict[str, Any]]:
         """Load conversation state including details and messages."""
         try:
             await self._ensure_initialized()
-            
+
             # Additional check to ensure consolidator was properly initialized
             if self.consolidator is None:
                 logger.error("Consolidator is None after initialization - returning None for conversation state")
                 return None
-            
+
             conversation_id_str = str(conversation_id)
-            
+
             # Get conversation details using consolidator
             conversation = await self.consolidator._get_conversation_details(conversation_id_str)
             if not conversation:
                 logger.info(f"No conversation found for ID: {conversation_id_str}")
                 return None
-            
+
             # Get conversation messages using consolidator
             messages = await self.consolidator._get_conversation_messages(conversation_id_str)
-            
+
             # Return state with messages and metadata
             return {
                 "conversation": conversation,
                 "messages": messages,
                 "message_count": len(messages)
             }
-            
+
         except Exception as e:
             logger.error(f"Error loading conversation state for {conversation_id}: {e}")
             return None
-    
+
     # Simplified cross-conversation method (master summary updates happen automatically now)
     async def get_user_context_for_new_conversation(self, user_id: str) -> Dict[str, Any]:
         """
@@ -1781,17 +1786,17 @@ class MemoryManager:
         Master summaries are automatically updated whenever conversation summaries are generated.
         """
         await self._ensure_initialized()
-        
+
         try:
             # Additional check to ensure consolidator was properly initialized
             if self.consolidator is None:
                 logger.error("Consolidator is None after initialization - returning empty context")
                 return {}
-            
+
             # Get comprehensive user context (this is automatically up-to-date)
             user_context = await self.consolidator.get_user_context_for_new_conversation(user_id)
             return user_context
-            
+
         except Exception as e:
             logger.error(f"Error getting user context for {user_id}: {e}")
             return {
@@ -1799,44 +1804,44 @@ class MemoryManager:
                 "has_history": False,
                 "error": str(e)
             }
-    
+
     # Long-term memory methods (existing)
-    async def store_long_term_memory(self, user_id: str, namespace: List[str], 
+    async def store_long_term_memory(self, user_id: str, namespace: List[str],
                                    key: str, value: Any, ttl_hours: Optional[int] = None) -> bool:
         """Store information in long-term memory."""
         try:
             await self._ensure_initialized()
-            
+
             # Ensure user_id is in namespace
             if not namespace or namespace[0] != user_id:
                 namespace = [user_id] + namespace
-            
+
             await self.long_term_store.aput(
                 namespace=tuple(namespace),
                 key=key,
                 value=value,
                 ttl_hours=ttl_hours
             )
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to store long-term memory: {e}")
             return False
-    
-    async def get_relevant_context(self, user_id: str, current_query: str, 
+
+    async def get_relevant_context(self, user_id: str, current_query: str,
                                  max_contexts: int = 5) -> List[Dict[str, Any]]:
         """Get relevant context from long-term memory."""
         try:
             await self._ensure_initialized()
-            
+
             # Search for relevant memories
             results = await self.long_term_store.semantic_search(
                 query=current_query,
                 namespace_prefix=(user_id,),
                 limit=max_contexts
             )
-            
+
             # Format results - results are now tuples: (namespace, key, value)
             contexts = []
             for namespace_tuple, key, value in results:
@@ -1846,7 +1851,7 @@ class MemoryManager:
                         value = json.loads(value)
                     except json.JSONDecodeError:
                         value = {"content": value}
-                
+
                 contexts.append({
                     "type": value.get('type', 'memory') if isinstance(value, dict) else 'memory',
                     "content": value.get('summary', str(value)) if isinstance(value, dict) else str(value),
@@ -1855,48 +1860,48 @@ class MemoryManager:
                     "key": key,
                     "created_at": None  # We don't have this in the tuple format
                 })
-            
+
             return contexts
-            
+
         except Exception as e:
             logger.error(f"Failed to get relevant context: {e}")
             return []
-    
+
     # Background tasks
     async def consolidate_old_conversations(self, user_id: str) -> Dict[str, Any]:
         """Consolidate old conversations (background task)."""
         try:
             await self._ensure_initialized()
-            
+
             # Additional check to ensure consolidator was properly initialized
             if self.consolidator is None:
                 logger.error("Consolidator is None after initialization - initialization may have failed")
                 return {"consolidated_count": 0, "error": "Consolidator initialization failed"}
-            
+
             return await self.consolidator.consolidate_conversations(user_id)
-            
+
         except Exception as e:
             logger.error(f"Failed to consolidate conversations: {e}")
             return {"consolidated_count": 0, "error": str(e)}
-    
+
     async def cleanup_old_archived_conversations(self, days_threshold: int = 30) -> int:
         """Clean up very old archived conversations."""
         try:
             await self._ensure_initialized()
-            
+
             # For now, skip complex cleanup operations since we don't have archived status in conversations table
             # This prevents the SQL error while maintaining functionality
             logger.info("Cleanup complete: 0 old conversations deleted")
             return 0
-            
+
         except Exception as e:
             logger.warning(f"Unsupported query type: \n                DELETE FROM conversations \n                WHERE archival_status = 'archived' \n                    AND archived_at < %s\n                    AND id IN (\n                        SELECT conversation_id \n                        FROM conversation_summaries \n                        WHERE conversation_id = conversations.id\n                    )\n            ")
             logger.error(f"Failed to cleanup archived conversations: {e}")
             return 0
-    
+
     # Message storage methods (existing, simplified for brevity)
-    async def save_message_to_database(self, conversation_id: str, user_id: str, 
-                                     role: str, content: str, 
+    async def save_message_to_database(self, conversation_id: str, user_id: str,
+                                     role: str, content: str,
                                      metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """Save individual message to the messages table."""
         print(f"            💬 save_message_to_database called:")
@@ -1906,10 +1911,10 @@ class MemoryManager:
         print(f"               - content length: {len(content)} chars")
         try:
             await self._ensure_initialized()
-            
+
             # Ensure conversation exists
             await self._ensure_conversation_exists(conversation_id, user_id)
-            
+
             # Use Supabase client directly for message storage
             try:
                 from database import db_client
@@ -1918,19 +1923,19 @@ class MemoryManager:
                 import sys
                 sys.path.append('/app')
                 from database import db_client
-            
+
             message_data = {
                 'conversation_id': conversation_id,
                 'role': role,
                 'content': content,
                 'metadata': metadata or {}
             }
-            
+
             # Wrap synchronous database call in asyncio.to_thread
             result = await asyncio.to_thread(
                 lambda: db_client.client.table('messages').insert(message_data).execute()
             )
-            
+
             if result.data:
                 message_id = result.data[0]['id']
                 logger.debug(f"Message saved to database: {message_id} (role: {role})")
@@ -1938,11 +1943,11 @@ class MemoryManager:
             else:
                 logger.error("Failed to save message to database - no data returned")
                 return None
-                     
+
         except Exception as e:
             logger.error(f"Error saving message to database: {e}")
             return None
-    
+
     async def _ensure_conversation_exists(self, conversation_id: str, user_id: str) -> None:
         """Ensure conversation record exists in the conversations table."""
         print(f"            🔍 _ensure_conversation_exists called:")
@@ -1959,12 +1964,12 @@ class MemoryManager:
                     import sys
                     sys.path.append('/app')
                     from database import db_client
-            
+
             # Check if conversation exists
             result = await asyncio.to_thread(
                 lambda: db_client.client.table('conversations').select('id').eq('id', conversation_id).execute()
             )
-            
+
             if not result.data:
                 # Create conversation record
                 conversation_data = {
@@ -1973,25 +1978,25 @@ class MemoryManager:
                     'title': 'New Conversation',
                     'metadata': {'created_by': 'memory_manager'}
                 }
-                
+
                 print(f"               🔄 Creating conversation with data:")
                 print(f"                  - id: '{conversation_data['id']}'")
                 print(f"                  - user_id: '{conversation_data['user_id']}'")
                 print(f"                  - title: '{conversation_data['title']}'")
-                
+
                 # Wrap synchronous database call in asyncio.to_thread
                 result = await asyncio.to_thread(
                     lambda: db_client.client.table('conversations').insert(conversation_data).execute()
                 )
-                
+
                 if result.data:
                     logger.debug(f"Created conversation record: {conversation_id}")
                 else:
                     logger.error(f"Failed to create conversation record: {conversation_id}")
-                    
+
         except Exception as e:
             logger.error(f"Error ensuring conversation exists: {e}")
-    
+
     def _extract_conversation_id_from_config(self, config: Dict[str, Any]) -> Optional[str]:
         """Extract conversation ID from LangGraph config."""
         try:
@@ -2001,8 +2006,8 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"Error extracting conversation ID from config: {e}")
             return None
-    
-    async def store_message_from_agent(self, message: Union[BaseMessage, Dict[str, Any]], 
+
+    async def store_message_from_agent(self, message: Union[BaseMessage, Dict[str, Any]],
                                      config: Dict[str, Any],
                                      agent_type: str = "unknown",
                                      user_id: Optional[str] = None) -> Optional[str]:
@@ -2013,30 +2018,27 @@ class MemoryManager:
             if not conversation_id:
                 logger.warning(f"No conversation ID found in config for {agent_type} agent")
                 return None
-            
+
             # Use provided user_id or try to extract from message
             if not user_id:
                 user_id = self._extract_user_id_from_message(message)
-            
-            anonymous_user_created = False
+
             if not user_id:
                 # Generate a UUID for anonymous users to comply with database schema
                 user_id = str(uuid4())
                 logger.warning(f"No user_id provided or found in message, generated UUID: {user_id}")
-                anonymous_user_created = True
             elif user_id == "anonymous":
                 # Replace "anonymous" with a proper UUID
                 user_id = str(uuid4())
                 logger.warning(f"Replaced 'anonymous' with UUID: {user_id}")
-                anonymous_user_created = True
             else:
                 logger.info(f"Using provided user_id: {user_id}")
-            
+
             # Extract message content and role
             content = ""
             role = "unknown"
             metadata = {}
-            
+
             if isinstance(message, dict):
                 content = str(message.get('content', ''))
                 role = message.get('role', 'unknown')
@@ -2044,7 +2046,7 @@ class MemoryManager:
             elif hasattr(message, 'content'):
                 content = str(message.content)
                 metadata = getattr(message, 'metadata', {}) or {}
-                
+
                 # Map LangChain message types to our role system
                 # Note: Database constraint now allows LangChain-compatible types: 'ai', 'human', 'assistant', 'system', etc.
                 if hasattr(message, 'type'):
@@ -2054,7 +2056,7 @@ class MemoryManager:
                         'system': 'system', # Direct mapping - now supported in DB
                         'assistant': 'assistant'  # Direct mapping - now supported in DB
                     }
-                    role = role_mapping.get(message.type, 'ai')  # Default to 'ai' for unknown types
+                    role = role_mapping.get(message.type, 'ai')    # Default to 'ai' for unknown types
                 elif hasattr(message, 'role'):
                     # Handle direct role assignments and normalize them
                     role = message.role.lower() if isinstance(message.role, str) else str(message.role)
@@ -2063,16 +2065,16 @@ class MemoryManager:
                     if role == 'user':
                         role = 'human'
                     # 'ai', 'human', 'assistant', 'system' pass through as-is
-            
+
             # Skip empty messages
             if not content.strip():
                 logger.debug(f"Skipping empty message from {agent_type} agent")
                 return None
-            
+
             # Add agent type to metadata
             metadata['agent_type'] = agent_type
             metadata['stored_at'] = datetime.utcnow().isoformat()
-            
+
             # Save to database
             message_id = await self.save_message_to_database(
                 conversation_id=conversation_id,
@@ -2081,16 +2083,16 @@ class MemoryManager:
                 content=content,
                 metadata=metadata
             )
-            
+
             if message_id:
                 logger.info(f"Stored message from {agent_type} agent: {message_id}")
-            
+
             return message_id
-            
+
         except Exception as e:
             logger.error(f"Error storing message from {agent_type} agent: {e}")
             return None
-    
+
     def _extract_user_id_from_message(self, message: Any) -> Optional[str]:
         """Extract user_id from message in various formats."""
         if isinstance(message, dict):
@@ -2100,7 +2102,7 @@ class MemoryManager:
         elif hasattr(message, 'metadata') and isinstance(message.metadata, dict):
             return message.metadata.get('user_id')
         return None
-    
+
     async def cleanup(self):
         """Clean up resources."""
         if self.connection_pool:
@@ -2109,7 +2111,7 @@ class MemoryManager:
                 logger.info("Connection pool closed")
             except Exception as e:
                 logger.error(f"Error closing connection pool: {e}")
-        
+
         self.checkpointer = None
         self.connection_pool = None
         self.long_term_store = None
@@ -2126,59 +2128,59 @@ class MemoryScheduler:
     Background task scheduler for memory management operations.
     Enhanced with cross-conversation summary consolidation.
     """
-    
+
     def __init__(self):
         self.consolidation_interval = 3600  # 1 hour
         self.cleanup_interval = 86400  # 24 hours
         # Removed user_summary_interval - we now update master summaries immediately
         self.running = False
         self.tasks = []
-        
+
     async def start(self):
         """Start the background scheduler."""
         if self.running:
             return
-        
+
         self.running = True
         logger.info("Starting enhanced memory scheduler with cross-conversation support")
-        
+
         # Start background tasks (simplified - no user summary scheduler needed)
         self.tasks = [
             asyncio.create_task(self._consolidation_scheduler()),
             asyncio.create_task(self._cleanup_scheduler())
         ]
-        
+
         logger.info("Simplified memory scheduler started successfully")
-    
+
     async def stop(self):
         """Stop the background scheduler."""
         if not self.running:
             return
-        
+
         self.running = False
         logger.info("Stopping memory scheduler")
-        
+
         # Cancel all tasks
         for task in self.tasks:
             task.cancel()
-        
+
         # Wait for tasks to complete
         await asyncio.gather(*self.tasks, return_exceptions=True)
         self.tasks = []
-        
+
         logger.info("Memory scheduler stopped")
-    
+
     # Removed _user_summary_scheduler - master summaries now update immediately when conversation summaries are generated
-    
+
     async def _consolidation_scheduler(self):
         """Background task for periodic conversation consolidation."""
         while self.running:
             try:
                 logger.info("Starting periodic memory consolidation")
-                
+
                 # Get active users
                 active_users = await self._get_active_users()
-                
+
                 consolidation_results = []
                 for user_id in active_users:
                     try:
@@ -2187,90 +2189,90 @@ class MemoryScheduler:
                             "user_id": user_id,
                             "result": result
                         })
-                        
+
                         # Small delay between users
                         await asyncio.sleep(1)
-                        
+
                     except Exception as e:
                         logger.error(f"Error consolidating conversations for user {user_id}: {e}")
-                
+
                 # Log consolidation summary
                 total_consolidated = sum(r["result"].get("consolidated_count", 0) for r in consolidation_results)
                 logger.info(f"Consolidation complete: {total_consolidated} conversations consolidated across {len(active_users)} users")
-                
+
                 # Wait for next consolidation cycle
                 await asyncio.sleep(self.consolidation_interval)
-                
+
             except asyncio.CancelledError:
                 logger.info("Consolidation scheduler cancelled")
                 break
             except Exception as e:
                 logger.error(f"Error in consolidation scheduler: {e}")
                 await asyncio.sleep(60)
-    
+
     async def _cleanup_scheduler(self):
         """Background task for periodic memory cleanup."""
         while self.running:
             try:
                 logger.info("Starting periodic memory cleanup")
-                
+
                 # Clean up old archived conversations
                 deleted_count = await memory_manager.cleanup_old_archived_conversations(90)
                 logger.info(f"Cleanup complete: {deleted_count} old conversations deleted")
-                
+
                 # Clean up expired long-term memories
                 await self._cleanup_expired_long_term_memories()
-                
+
                 # Wait for next cleanup cycle
                 await asyncio.sleep(self.cleanup_interval)
-                
+
             except asyncio.CancelledError:
                 logger.info("Cleanup scheduler cancelled")
                 break
             except Exception as e:
                 logger.error(f"Error in cleanup scheduler: {e}")
                 await asyncio.sleep(300)
-    
+
     # Removed _get_users_with_recent_conversations - no longer needed with immediate updates
-    
+
     async def _get_active_users(self) -> List[str]:
         """Get list of active users for consolidation."""
         try:
             await memory_manager._ensure_initialized()
-            
+
             # Get users with conversations in the last 7 days using Supabase client
             cutoff_date = (datetime.utcnow() - timedelta(days=7)).isoformat()
-            
+
             from database import db_client
-            
+
             result = await asyncio.to_thread(
                 lambda: db_client.client.table("conversations")
-                .select("user_id")
-                .gt("updated_at", cutoff_date)
-                .execute()
+                    .select("user_id")
+                    .gt("updated_at", cutoff_date)
+                    .execute()
             )
-            
+
             if result.data:
                 # Get distinct user_ids
                 user_ids = list(set(row['user_id'] for row in result.data if row.get('user_id')))
                 return sorted(user_ids)
-            
+
             return []
-            
+
         except Exception as e:
             logger.warning(f"Unsupported query type: \n                SELECT DISTINCT user_id \n                FROM conversations \n                WHERE updated_at > %s \n                    AND archival_status = 'active'\n                ORDER BY user_id\n            ")
             logger.error(f"Error getting active users: {e}")
             return []
-    
+
     async def _cleanup_expired_long_term_memories(self):
         """Clean up expired long-term memories."""
         try:
             await memory_manager._ensure_initialized()
-            
+
             # For now, skip expired memory cleanup since it requires complex SQL
             # This prevents the SQL error while maintaining core functionality
             logger.info("Cleaned up 0 expired long-term memories")
-            
+
         except Exception as e:
             logger.warning(f"Unsupported query type: \n                DELETE FROM long_term_memories \n                WHERE expires_at IS NOT NULL \n                    AND expires_at < NOW()\n            ")
             logger.error(f"Error cleaning up expired long-term memories: {e}")
@@ -2279,4 +2281,4 @@ class MemoryScheduler:
 # Global instances
 context_manager = ContextWindowManager()
 memory_manager = MemoryManager()
-memory_scheduler = MemoryScheduler() 
+memory_scheduler = MemoryScheduler()

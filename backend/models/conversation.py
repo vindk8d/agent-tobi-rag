@@ -22,7 +22,7 @@ class MessageRole(str, Enum):
     HUMAN = "human"
     AI = "ai"
     HITL = "HITL"
-    
+
     # Keep deprecated aliases for backward compatibility
     USER = "human"  # Deprecated: use HUMAN
     BOT = "ai"      # Deprecated: use AI
@@ -32,7 +32,7 @@ class MessageRole(str, Enum):
 
 class Message(BaseModel):
     """Individual message in a conversation"""
-    
+
     role: MessageRole
     content: str
     timestamp: Optional[str] = None
@@ -41,31 +41,31 @@ class Message(BaseModel):
 
 class ConversationRequest(BaseModel):
     """Request model for conversation endpoints"""
-    
+
     message: str = Field(..., min_length=1, max_length=2000)
     conversation_id: Optional[UUID] = None
     conversation_type: ConversationType = ConversationType.CHAT
     context: Optional[Dict[str, Any]] = None
     user_id: Optional[str] = None
-    
-    
+
+
 class ConversationResponse(BaseModel):
     """Response model for conversation endpoints"""
-    
+
     message: str
     conversation_id: UUID
     response_metadata: Optional[Dict[str, Any]] = None
     sources: Optional[List[Dict[str, Any]]] = None
     suggestions: Optional[List[str]] = None
     confidence_score: Optional[float] = None
-    
+
 
 class ConversationHistory(IdentifiedModel):
     """Complete conversation history model"""
-    
+
     conversation_id: UUID
     user_id: Optional[str] = None
     messages: List[Message] = []
     conversation_type: ConversationType = ConversationType.CHAT
     metadata: Optional[Dict[str, Any]] = None
-    is_active: bool = True 
+    is_active: bool = True

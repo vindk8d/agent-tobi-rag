@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-Audit and inspect text content stored in the embeddings table.
-This script helps you see what was scraped and documented in your RAG system.
+Audit and fix embeddings in the database.
+This script helps diagnose and repair issues with document embeddings.
 """
 
 import os
 import sys
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
 import json
-# Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv()
+import asyncio
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional, Tuple
 
 # Add the backend directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
+# Backend imports (after path setup)
 from database import db_client
 from supabase import Client
+
 
 class EmbeddingsAuditor:
     def __init__(self):
@@ -29,25 +29,25 @@ class EmbeddingsAuditor:
             # Get document counts
             documents_result = self.client.table("documents").select("id", count="exact").execute()
             total_documents = documents_result.count or 0
-            
+
             # Get embeddings count
             embeddings_result = self.client.table("embeddings").select("id", count="exact").execute()
             total_embeddings = embeddings_result.count or 0
-            
-            # Get sources count  
+
+            # Get sources count
             sources_result = self.client.table("data_sources").select("id", count="exact").execute()
             total_sources = sources_result.count or 0
-            
+
             # Get basic document stats
             docs_with_stats = self.client.table("documents").select("word_count,character_count,created_at").execute()
-            
+
             total_words = sum(doc.get('word_count', 0) or 0 for doc in docs_with_stats.data)
             total_characters = sum(doc.get('character_count', 0) or 0 for doc in docs_with_stats.data)
-            
+
             dates = [doc['created_at'] for doc in docs_with_stats.data if doc.get('created_at')]
             oldest_document = min(dates) if dates else None
             newest_document = max(dates) if dates else None
-            
+
             return {
                 'total_documents': total_documents,
                 'total_embeddings': total_embeddings,
@@ -67,23 +67,23 @@ class EmbeddingsAuditor:
             # Get all data sources
             sources_result = self.client.table("data_sources").select("*").execute()
             sources = sources_result.data or []
-            
+
             source_stats = []
             for source in sources:
                 # Get documents for this source
                 docs_result = self.client.table("documents").select("id,word_count,created_at").eq("data_source_id", source['id']).execute()
                 documents = docs_result.data or []
-                
+
                 # Get embeddings for documents from this source
                 doc_ids = [doc['id'] for doc in documents]
                 embeddings_count = 0
                 if doc_ids:
                     embeddings_result = self.client.table("embeddings").select("id", count="exact").in_("document_id", doc_ids).execute()
                     embeddings_count = embeddings_result.count or 0
-                
+
                 total_words = sum(doc.get('word_count', 0) or 0 for doc in documents)
                 latest_document = max([doc['created_at'] for doc in documents], default=None)
-                
+
                 source_stats.append({
                     'source_name': source.get('name', 'Unknown'),
                     'source_type': source.get('source_type', 'Unknown'),
@@ -94,7 +94,7 @@ class EmbeddingsAuditor:
                     'total_words': total_words,
                     'latest_document': latest_document
                 })
-            
+
             # Sort by document count descending
             source_stats.sort(key=lambda x: x['document_count'], reverse=True)
             return source_stats[:limit]
@@ -106,15 +106,15 @@ class EmbeddingsAuditor:
         """Get recently scraped documents."""
         try:
             from datetime import datetime, timedelta
-            
+
             # Calculate the date threshold
             date_threshold = datetime.now() - timedelta(days=days)
             date_threshold_str = date_threshold.isoformat()
-            
+
             # Get recent documents
             docs_result = self.client.table("documents").select("*").gte("created_at", date_threshold_str).order("created_at", desc=True).limit(limit).execute()
             documents = docs_result.data or []
-            
+
             # Enhance with source and embedding info
             enhanced_docs = []
             for doc in documents:
@@ -124,15 +124,15 @@ class EmbeddingsAuditor:
                     source_result = self.client.table("data_sources").select("name,url").eq("id", doc['data_source_id']).execute()
                     if source_result.data:
                         source_info = source_result.data[0]
-                
+
                 # Check if has embedding
                 embedding_result = self.client.table("embeddings").select("id").eq("document_id", doc['id']).execute()
                 has_embedding = "Yes" if embedding_result.data else "No"
-                
+
                 # Create content preview
                 content = doc.get('content', '')
                 content_preview = content[:200] + '...' if len(content) > 200 else content
-                
+
                 enhanced_docs.append({
                     'id': doc['id'],
                     'title': doc.get('title', 'Untitled'),
@@ -145,7 +145,7 @@ class EmbeddingsAuditor:
                     'source_url': source_info.get('url', ''),
                     'has_embedding': has_embedding
                 })
-            
+
             return enhanced_docs
         except Exception as e:
             print(f"Error getting recent documents: {e}")
@@ -157,7 +157,7 @@ class EmbeddingsAuditor:
             # Simple text search using ilike (case-insensitive)
             docs_result = self.client.table("documents").select("*").ilike("content", f"%{search_term}%").limit(limit).execute()
             documents = docs_result.data or []
-            
+
             # Enhance with source info and relevance
             enhanced_docs = []
             for doc in documents:
@@ -167,14 +167,14 @@ class EmbeddingsAuditor:
                     source_result = self.client.table("data_sources").select("name,url").eq("id", doc['data_source_id']).execute()
                     if source_result.data:
                         source_info = source_result.data[0]
-                
+
                 # Create content preview
                 content = doc.get('content', '')
                 content_preview = content[:300] + '...' if len(content) > 300 else content
-                
+
                 # Simple relevance calculation (number of occurrences)
                 relevance = content.lower().count(search_term.lower()) / len(content.split()) if content else 0
-                
+
                 enhanced_docs.append({
                     'id': doc['id'],
                     'title': doc.get('title', 'Untitled'),
@@ -185,7 +185,7 @@ class EmbeddingsAuditor:
                     'source_url': source_info.get('url', ''),
                     'relevance': relevance
                 })
-            
+
             # Sort by relevance
             enhanced_docs.sort(key=lambda x: x['relevance'], reverse=True)
             return enhanced_docs
@@ -200,22 +200,22 @@ class EmbeddingsAuditor:
             doc_result = self.client.table("documents").select("*").eq("id", document_id).execute()
             if not doc_result.data:
                 return None
-            
+
             doc = doc_result.data[0]
-            
+
             # Get source info
             source_info = {}
             if doc.get('data_source_id'):
                 source_result = self.client.table("data_sources").select("*").eq("id", doc['data_source_id']).execute()
                 if source_result.data:
                     source_info = source_result.data[0]
-            
+
             # Get embedding info
             embedding_info = {}
             embedding_result = self.client.table("embeddings").select("*").eq("document_id", document_id).execute()
             if embedding_result.data:
                 embedding_info = embedding_result.data[0]
-            
+
             return {
                 'id': doc['id'],
                 'title': doc.get('title', 'Untitled'),
@@ -243,11 +243,11 @@ class EmbeddingsAuditor:
             # Get all documents
             docs_result = self.client.table("documents").select("*").execute()
             documents = docs_result.data or []
-            
+
             # Get all document IDs that have embeddings
             embeddings_result = self.client.table("embeddings").select("document_id").execute()
             embedded_doc_ids = {e['document_id'] for e in embeddings_result.data or []}
-            
+
             # Find orphaned documents
             orphaned_docs = []
             for doc in documents:
@@ -258,11 +258,11 @@ class EmbeddingsAuditor:
                         source_result = self.client.table("data_sources").select("name").eq("id", doc['data_source_id']).execute()
                         if source_result.data:
                             source_info = source_result.data[0]
-                    
+
                     # Create content preview
                     content = doc.get('content', '')
                     content_preview = content[:150] + '...' if len(content) > 150 else content
-                    
+
                     orphaned_docs.append({
                         'id': doc['id'],
                         'title': doc.get('title', 'Untitled'),
@@ -272,7 +272,7 @@ class EmbeddingsAuditor:
                         'created_at': doc.get('created_at'),
                         'source_name': source_info.get('name', 'Unknown')
                     })
-            
+
             # Sort by creation date
             orphaned_docs.sort(key=lambda x: x['created_at'] or '', reverse=True)
             return orphaned_docs
@@ -284,7 +284,7 @@ class EmbeddingsAuditor:
         """Print a summary of the document/embedding store."""
         print("📊 RAG System Content Audit")
         print("=" * 50)
-        
+
         # Get overall summary
         summary = self.get_document_summary()
         print(f"Total Documents: {summary.get('total_documents', 0)}")
@@ -322,7 +322,7 @@ class EmbeddingsAuditor:
             # Get all documents
             docs_result = self.client.table("documents").select("*").order("created_at", desc=True).execute()
             documents = docs_result.data or []
-            
+
             # Enhance with source info
             enhanced_docs = []
             for doc in documents:
@@ -332,7 +332,7 @@ class EmbeddingsAuditor:
                     source_result = self.client.table("data_sources").select("name,url,source_type").eq("id", doc['data_source_id']).execute()
                     if source_result.data:
                         source_info = source_result.data[0]
-                
+
                 enhanced_docs.append({
                     'id': doc['id'],
                     'title': doc.get('title', 'Untitled'),
@@ -344,7 +344,7 @@ class EmbeddingsAuditor:
                     'source_url': source_info.get('url', ''),
                     'source_type': source_info.get('source_type', 'Unknown')
                 })
-            
+
             if enhanced_docs:
                 with open(filename, 'w', encoding='utf-8') as f:
                     json.dump(enhanced_docs, f, indent=2, ensure_ascii=False, default=str)
@@ -354,10 +354,11 @@ class EmbeddingsAuditor:
         except Exception as e:
             print(f"Error exporting content: {e}")
 
+
 def main():
     """Main function to run the auditor."""
     auditor = EmbeddingsAuditor()
-    
+
     import argparse
     parser = argparse.ArgumentParser(description="Audit RAG embeddings and content")
     parser.add_argument("--summary", action="store_true", help="Show system summary")
@@ -365,12 +366,12 @@ def main():
     parser.add_argument("--search", type=str, help="Search for documents containing text")
     parser.add_argument("--document", type=str, help="Show full content of specific document ID")
     parser.add_argument("--export", type=str, help="Export all content to JSON file")
-    
+
     args = parser.parse_args()
-    
+
     if args.summary:
         auditor.print_summary()
-    
+
     if args.recent:
         print(f"📅 Recent Documents (last {args.recent} days):")
         print("-" * 40)
@@ -381,7 +382,7 @@ def main():
             print(f"  Words: {doc['word_count']}, Created: {doc['created_at']}")
             print(f"  Preview: {doc['content_preview']}...")
             print()
-    
+
     if args.search:
         print(f"🔍 Search Results for '{args.search}':")
         print("-" * 40)
@@ -391,7 +392,7 @@ def main():
             print(f"  Source: {doc['source_name']}")
             print(f"  Preview: {doc['content_preview']}...")
             print()
-    
+
     if args.document:
         doc = auditor.get_document_content(args.document)
         if doc:
@@ -409,13 +410,13 @@ def main():
             print(doc['content'])
         else:
             print(f"❌ Document {args.document} not found")
-    
+
     if args.export:
         auditor.export_content_to_file(args.export)
-    
+
     # If no arguments, show summary
     if not any(vars(args).values()):
         auditor.print_summary()
 
 if __name__ == "__main__":
-    main() 
+    main()

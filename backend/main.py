@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
     logger.info("Starting RAG-Tobi API...")
-    
+
     # Test database connection
     try:
         if db_client.health_check():
@@ -37,9 +37,9 @@ async def lifespan(app: FastAPI):
             logger.warning("Database connection failed")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down RAG-Tobi API...")
 
@@ -106,6 +106,7 @@ async def root():
 # Initialize the agent (will be lazily loaded)
 _agent_instance = None
 
+
 async def get_agent():
     """Get or create the agent instance"""
     global _agent_instance
@@ -120,33 +121,33 @@ async def chat(request: ConversationRequest):
     try:
         # Get the agent instance
         agent = await get_agent()
-        
+
         # Use the provided conversation_id or generate a new one
         conversation_id = request.conversation_id
         if not conversation_id:
             from uuid import uuid4
             conversation_id = str(uuid4())
-        
+
         logger.info(f"Processing chat message for conversation {conversation_id}")
-        
+
         # Invoke the agent with memory system
         result = await agent.invoke(
             user_query=request.message,
             conversation_id=conversation_id,
             user_id=request.user_id
         )
-        
+
         # Extract the final AI message from the result
         final_message = ""
         sources = []
-        
+
         if result and 'messages' in result:
             # Get the last AI message
             for msg in reversed(result['messages']):
                 if hasattr(msg, 'content') and msg.content and not msg.content.startswith('['):
                     final_message = msg.content
                     break
-        
+
         # Extract sources if available
         if result and 'retrieved_docs' in result:
             retrieved_docs = result.get('retrieved_docs', [])
@@ -156,7 +157,7 @@ async def chat(request: ConversationRequest):
                         'content': doc.get('content', '')[:200] + '...' if len(doc.get('content', '')) > 200 else doc.get('content', ''),
                         'metadata': doc.get('metadata', {})
                     })
-        
+
         return ConversationResponse(
             message=final_message or "I apologize, but I couldn't generate a proper response. Please try again.",
             conversation_id=conversation_id,
@@ -165,7 +166,7 @@ async def chat(request: ConversationRequest):
             suggestions=["Ask me about your documents", "Upload some files to get started"],
             confidence_score=0.9
         )
-        
+
     except Exception as e:
         logger.error(f"Error in chat endpoint: {e}")
         # Return error response but don't crash
@@ -186,4 +187,4 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
         log_level="info"
-    ) 
+    )

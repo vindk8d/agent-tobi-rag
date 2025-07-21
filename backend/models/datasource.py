@@ -37,7 +37,7 @@ class ScrapingFrequency(str, Enum):
 
 class DataSourceModel(IdentifiedModel):
     """Data source model for database storage"""
-    
+
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     source_type: DataSourceType
@@ -51,38 +51,38 @@ class DataSourceModel(IdentifiedModel):
     last_error: Optional[str] = None
     configuration: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
-    
+
 
 class DataSourceRequest(BaseModel):
     """Request model for creating/updating data sources"""
-    
+
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     source_type: DataSourceType
     url: Optional[HttpUrl] = None
     scraping_frequency: ScrapingFrequency = ScrapingFrequency.DAILY
     configuration: Optional[Dict[str, Any]] = None
-    
+
 
 class DataSourceResponse(BaseModel):
     """Response model for data source operations"""
-    
+
     data_source: DataSourceModel
     message: str = "Data source operation completed successfully"
-    
+
 
 class DataSourceListResponse(BaseModel):
     """Response model for data source listing"""
-    
+
     data_sources: List[DataSourceModel]
     total_count: int
     page: int = 1
     page_size: int = 10
-    
+
 
 class ScrapingResult(BaseModel):
     """Result of a scraping operation"""
-    
+
     data_source_id: UUID
     success: bool
     documents_found: int = 0
@@ -90,4 +90,4 @@ class ScrapingResult(BaseModel):
     documents_failed: int = 0
     error_message: Optional[str] = None
     scraped_at: datetime = Field(default_factory=datetime.utcnow)
-    processing_time: Optional[float] = None  # seconds 
+    processing_time: Optional[float] = None  # seconds

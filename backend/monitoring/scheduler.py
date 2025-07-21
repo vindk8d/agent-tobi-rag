@@ -11,6 +11,7 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+
 class DataSourceScheduler:
     """
     Scheduler for daily refresh of data sources with error handling.
@@ -48,4 +49,4 @@ class DataSourceScheduler:
                 except Exception as e:
                     logger.error(f"Error refreshing data source {data_source_id}: {e}")
         except Exception as e:
-            logger.error(f"Scheduler failed: {e}") 
+            logger.error(f"Scheduler failed: {e}")

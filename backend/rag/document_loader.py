@@ -11,6 +11,7 @@ import os
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from config import get_settings_sync
 
+
 class DocumentLoader:
     """
     Unified document loader for PDFs, Word docs, and web content.
@@ -71,6 +72,7 @@ class DocumentLoader:
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
 
+
 async def split_documents(
     documents: List[Document],
     chunk_size: Optional[int] = None,
@@ -84,16 +86,17 @@ async def split_documents(
     settings = await get_settings()
     chunk_size = chunk_size or settings.rag.chunk_size
     chunk_overlap = chunk_overlap or settings.rag.chunk_overlap
-    
+
     # Move the actual splitting to a thread to avoid blocking
     import asyncio
+
     def _split():
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap
         )
         return splitter.split_documents(documents)
-    
+
     return await asyncio.to_thread(_split)
 
 # ============================================================================
@@ -108,4 +111,4 @@ async def split_documents(
 #     """Load web content from a URL and return a list of Document objects (single chunk)."""
 #     # Use LangChain's WebBaseLoader for robust web page loading
 #     loader = WebBaseLoader(url)
-#     return loader.load() 
+#     return loader.load()

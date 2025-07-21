@@ -2,13 +2,18 @@
 Tobi Sales Copilot Agent Package
 """
 
-from .rag_agent import UnifiedToolCallingRAGAgent, ToolCallingRAGAgent, SimpleRAGAgent, LinearToolCallingRAGAgent
+from .rag_agent import (
+    UnifiedToolCallingRAGAgent,
+    ToolCallingRAGAgent,
+    SimpleRAGAgent,
+    LinearToolCallingRAGAgent,
+)
 from .state import AgentState
 
 __all__ = [
     "UnifiedToolCallingRAGAgent",
-    "ToolCallingRAGAgent", 
+    "ToolCallingRAGAgent",
     "SimpleRAGAgent",
     "LinearToolCallingRAGAgent",
-    "AgentState"
-] 
+    "AgentState",
+]

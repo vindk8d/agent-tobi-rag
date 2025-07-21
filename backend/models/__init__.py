@@ -10,9 +10,9 @@ from .datasource import DataSourceModel, DataSourceType
 __all__ = [
     "BaseModel",
     "ConversationRequest",
-    "ConversationResponse", 
+    "ConversationResponse",
     "DocumentModel",
     "DocumentStatus",
     "DataSourceModel",
     "DataSourceType",
-] 
+]

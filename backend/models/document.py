@@ -31,7 +31,7 @@ class DocumentStatus(str, Enum):
 
 class DocumentModel(IdentifiedModel):
     """Document model for database storage"""
-    
+
     title: str = Field(..., min_length=1, max_length=500)
     content: Optional[str] = None
     document_type: DocumentType
@@ -43,40 +43,40 @@ class DocumentModel(IdentifiedModel):
     embedding_count: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     data_source_id: Optional[UUID] = None
-    
-    
+
+
 class DocumentChunk(IdentifiedModel):
     """Document chunk model for vector storage"""
-    
+
     document_id: UUID
     chunk_index: int
     content: str = Field(..., min_length=1)
     embedding: Optional[List[float]] = None
     metadata: Optional[Dict[str, Any]] = None
     page_number: Optional[int] = None
-    
+
 
 class DocumentUploadRequest(BaseModel):
     """Request model for document upload"""
-    
+
     title: str = Field(..., min_length=1, max_length=500)
     document_type: DocumentType
     metadata: Optional[Dict[str, Any]] = None
-    
+
 
 class DocumentUploadResponse(BaseModel):
     """Response model for document upload"""
-    
+
     document_id: UUID
     upload_url: Optional[str] = None
     status: DocumentStatus
     message: str = "Document uploaded successfully"
-    
+
 
 class DocumentListResponse(BaseModel):
     """Response model for document listing"""
-    
+
     documents: List[DocumentModel]
     total_count: int
     page: int = 1
-    page_size: int = 10 
+    page_size: int = 10

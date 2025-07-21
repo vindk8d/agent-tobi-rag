@@ -25,6 +25,7 @@ class UserInfo(BaseModel):
     role: Optional[str] = None
     created_at: str
 
+
 class LongTermMemoryItem(BaseModel):
     """Long-term memory item structure"""
     id: str
@@ -41,6 +42,7 @@ class LongTermMemoryItem(BaseModel):
     expiry_at: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
+
 class ConversationSummaryItem(BaseModel):
     """Conversation summary structure"""
     id: str
@@ -55,6 +57,7 @@ class ConversationSummaryItem(BaseModel):
     consolidation_status: str
     metadata: Optional[Dict[str, Any]] = None
 
+
 class DatabaseMessage(BaseModel):
     """Database message structure"""
     id: str
@@ -64,6 +67,7 @@ class DatabaseMessage(BaseModel):
     created_at: str
     metadata: Optional[Dict[str, Any]] = None
 
+
 class UserSummary(BaseModel):
     """User summary based on latest conversation summary"""
     user_id: str
@@ -71,6 +75,7 @@ class UserSummary(BaseModel):
     conversation_count: int
     has_history: bool
     latest_conversation_id: Optional[str] = None
+
 
 class CustomerData(BaseModel):
     """CRM customer data structure"""
@@ -83,6 +88,7 @@ class CustomerData(BaseModel):
     branch_id: str
     warmth_score: Optional[float] = None
     created_at: str
+
 
 class MemoryAccessPattern(BaseModel):
     """Memory access pattern structure"""
@@ -97,10 +103,12 @@ class MemoryAccessPattern(BaseModel):
     retrieval_method: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
+
 class MemoryConsolidationRequest(BaseModel):
     """Request to trigger memory consolidation"""
     user_id: str
     force: bool = False
+
 
 class MemorySearchRequest(BaseModel):
     """Request to search memories"""
@@ -118,7 +126,7 @@ async def get_users():
         try:
             result = db_client.client.table('users').select('*').order('created_at', desc=True).execute()
             users_data = result.data or []
-            
+
             users = [
                 UserInfo(
                     id=user['id'],
@@ -131,11 +139,11 @@ async def get_users():
             ]
         except Exception as users_error:
             logger.warning(f"Users table not found or error: {users_error}, falling back to customers")
-            
+
             # Fallback to customers table
             result = db_client.client.table('customers').select('*').order('created_at', desc=True).limit(20).execute()
             customers_data = result.data or []
-            
+
             users = [
                 UserInfo(
                     id=customer['id'],
@@ -162,26 +170,26 @@ async def get_user_crm_data(user_id: str):
     try:
         # First, get the user's customer_id from the users table
         user_result = db_client.client.table('users').select('customer_id').eq('id', user_id).execute()
-        
+
         if not user_result.data or not user_result.data[0].get('customer_id'):
             return APIResponse(
                 success=True,
                 message="User is not a customer or no CRM data found",
                 data=None
             )
-        
+
         customer_id = user_result.data[0]['customer_id']
-        
+
         # Now get the customer data using the correct customer_id
         result = db_client.client.table('customers').select('*').eq('id', customer_id).execute()
-        
+
         if not result.data:
             return APIResponse(
                 success=True,
                 message="No CRM data found for user",
                 data=None
             )
-        
+
         customer = result.data[0]
         customer_data = CustomerData(
             id=customer['id'],
@@ -212,7 +220,7 @@ async def get_user_long_term_memories(user_id: str):
         result = db_client.client.table('long_term_memories').select('*').or_(
             f'namespace.cs.{{{user_id}}},namespace.cs.{{user,{user_id}}}'
         ).order('accessed_at', desc=True).execute()
-        
+
         memories = []
         for memory in result.data or []:
             # Parse JSON fields that might be stored as strings
@@ -220,21 +228,21 @@ async def get_user_long_term_memories(user_id: str):
                 value = memory['value']
                 if isinstance(value, str):
                     value = json.loads(value)
-                
+
                 embedding = memory.get('embedding')
                 if embedding and isinstance(embedding, str):
                     embedding = json.loads(embedding)
-                
+
                 metadata = memory.get('metadata')
                 if metadata and isinstance(metadata, str):
                     metadata = json.loads(metadata)
-                    
+
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse JSON fields for memory {memory['id']}: {e}")
                 value = memory['value'] if not isinstance(memory['value'], str) else {}
                 embedding = None
                 metadata = memory.get('metadata')
-            
+
             memories.append(LongTermMemoryItem(
                 id=memory['id'],
                 namespace=memory['namespace'],
@@ -267,7 +275,7 @@ async def get_user_conversation_summaries(user_id: str):
         result = db_client.client.table('conversation_summaries').select('*').eq(
             'user_id', user_id
         ).order('created_at', desc=True).execute()
-        
+
         summaries = []
         for summary in result.data or []:
             summaries.append(ConversationSummaryItem(
@@ -299,7 +307,7 @@ async def get_user_summary(user_id: str):
     try:
         # Use the new database function to get user context
         result = db_client.client.rpc('get_user_context_from_conversations', {'target_user_id': user_id}).execute()
-        
+
         if result.data and len(result.data) > 0:
             context = result.data[0]
             user_summary = UserSummary(
@@ -335,21 +343,21 @@ async def get_user_messages(user_id: str, limit: int = Query(50, ge=1, le=200)):
         conversations_result = db_client.client.table('conversations').select('id').eq(
             'user_id', user_id
         ).order('created_at', desc=True).limit(5).execute()
-        
+
         if not conversations_result.data:
             return APIResponse(
                 success=True,
                 message="No conversations found for user",
                 data=[]
             )
-        
+
         conversation_ids = [conv['id'] for conv in conversations_result.data]
-        
+
         # Get messages from these conversations
         messages_result = db_client.client.table('messages').select('*').in_(
             'conversation_id', conversation_ids
         ).order('created_at', desc=True).limit(limit).execute()
-        
+
         messages = []
         for message in messages_result.data or []:
             messages.append(DatabaseMessage(
@@ -377,7 +385,7 @@ async def get_user_memory_access_patterns(user_id: str):
         result = db_client.client.table('memory_access_patterns').select('*').eq(
             'user_id', user_id
         ).order('access_frequency', desc=True).execute()
-        
+
         patterns = []
         for pattern in result.data or []:
             patterns.append(MemoryAccessPattern(
@@ -408,21 +416,21 @@ async def trigger_memory_consolidation(request: MemoryConsolidationRequest):
     try:
         from agents.memory import memory_manager
         from datetime import datetime
-        
+
         # Ensure memory manager is initialized
         await memory_manager._ensure_initialized()
-        
+
         # Trigger actual consolidation
         logger.info(f"Starting manual memory consolidation for user {request.user_id}")
-        
+
         if request.force:
             logger.info(f"Force flag enabled - bypassing all thresholds")
-        
+
         # Call the actual consolidation method
         consolidation_result = await memory_manager.consolidator.consolidate_user_summary_with_llm(
             user_id=request.user_id
         )
-        
+
         result = {
             "user_id": request.user_id,
             "consolidation_triggered": True,
@@ -431,9 +439,9 @@ async def trigger_memory_consolidation(request: MemoryConsolidationRequest):
             "consolidation_result": consolidation_result[:200] + "..." if consolidation_result and len(consolidation_result) > 200 else consolidation_result,
             "success": bool(consolidation_result and not consolidation_result.startswith("Error"))
         }
-        
+
         logger.info(f"Memory consolidation completed for user {request.user_id}")
-        
+
         return APIResponse(
             success=True,
             message="Memory consolidation triggered and executed successfully",
@@ -449,21 +457,21 @@ async def search_memories(request: MemorySearchRequest):
     try:
         # This would integrate with the embedding search system
         # For now, return a basic text search as placeholder
-        
+
         query_filter = db_client.client.table('long_term_memories').select('*')
-        
+
         if request.user_id:
             query_filter = query_filter.or_(
                 f'namespace.cs.{{{request.user_id}}},namespace.cs.{{user,{request.user_id}}}'
             )
-        
+
         if request.memory_type:
             query_filter = query_filter.eq('memory_type', request.memory_type)
-        
+
         # Simple text search on key and value for now
         # In a full implementation, this would use vector similarity
         result = query_filter.ilike('key', f'%{request.query}%').limit(request.limit).execute()
-        
+
         memories = []
         for memory in result.data or []:
             # Parse JSON fields that might be stored as strings
@@ -471,21 +479,21 @@ async def search_memories(request: MemorySearchRequest):
                 value = memory['value']
                 if isinstance(value, str):
                     value = json.loads(value)
-                
+
                 embedding = memory.get('embedding')
                 if embedding and isinstance(embedding, str):
                     embedding = json.loads(embedding)
-                
+
                 metadata = memory.get('metadata')
                 if metadata and isinstance(metadata, str):
                     metadata = json.loads(metadata)
-                    
+
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse JSON fields for memory {memory['id']}: {e}")
                 value = memory['value'] if not isinstance(memory['value'], str) else {}
                 embedding = None
                 metadata = memory.get('metadata')
-            
+
             memories.append(LongTermMemoryItem(
                 id=memory['id'],
                 namespace=memory['namespace'],
@@ -519,7 +527,7 @@ async def get_memory_stats():
         memory_count_result = db_client.client.table('long_term_memories').select('id', count='exact').execute()
         summary_count_result = db_client.client.table('conversation_summaries').select('id', count='exact').execute()
         message_count_result = db_client.client.table('messages').select('id', count='exact').execute()
-        
+
         stats = {
             "total_long_term_memories": memory_count_result.count or 0,
             "total_conversation_summaries": summary_count_result.count or 0,
@@ -534,4 +542,4 @@ async def get_memory_stats():
         )
     except Exception as e:
         logger.error(f"Error retrieving memory statistics: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve statistics: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve statistics: {str(e)}")

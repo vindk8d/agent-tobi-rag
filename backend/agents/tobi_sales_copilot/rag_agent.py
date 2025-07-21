@@ -3,18 +3,22 @@ Unified Tool-calling RAG Agent following LangChain best practices.
 Single agent node handles both tool calling and execution.
 """
 
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List
 from datetime import datetime
 from uuid import uuid4, UUID
 import logging
-import json
 import sys
-import os
 import asyncio
 
 from langgraph.graph import StateGraph, START, END
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage, BaseMessage
+from langchain_core.messages import (
+    HumanMessage,
+    SystemMessage,
+    AIMessage,
+    ToolMessage,
+    BaseMessage,
+)
 from langsmith import traceable
 
 # Handle both relative and absolute imports for LangGraph Studio compatibility
@@ -28,24 +32,24 @@ except ImportError:
     # Fallback to absolute imports when loaded directly by LangGraph Studio
     # Use explicit path resolution WITHOUT calling resolve() to avoid os.getcwd()
     import pathlib
-    
+
     # Get the absolute path of this file without using os.getcwd()
     current_file = pathlib.Path(__file__).absolute()
-    
+
     # Navigate to parent directories without using resolve()
     # This file is in backend/agents/tobi_sales_copilot/rag_agent.py, so we need to go up three levels
-    copilot_dir = current_file.parent   # backend/agents/tobi_sales_copilot/
-    agents_dir = copilot_dir.parent     # backend/agents/
-    backend_dir = agents_dir.parent     # backend/
-    project_root = backend_dir.parent   # project root
-    
+    copilot_dir = current_file.parent  # backend/agents/tobi_sales_copilot/
+    agents_dir = copilot_dir.parent  # backend/agents/
+    backend_dir = agents_dir.parent  # backend/
+    project_root = backend_dir.parent  # project root
+
     # Use absolute path without resolve() to avoid blocking calls
     project_root_str = str(project_root)
-    
+
     # Only add to sys.path if not already present
     if project_root_str not in sys.path:
         sys.path.insert(0, project_root_str)
-    
+
     # Now import with absolute paths
     from agents.tobi_sales_copilot.state import AgentState
     from agents.tools import get_all_tools, get_tool_names
@@ -56,18 +60,12 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-
-
-
-
-
-
 class UnifiedToolCallingRAGAgent:
     """
     Unified RAG agent that handles both tool calling and execution in one place.
     Follows LangChain best practices: tool creation → tool binding → tool calling → tool execution.
     """
-    
+
     def __init__(self):
         self.settings = None  # Will be loaded asynchronously
         self.tools = None  # Will be loaded asynchronously
@@ -76,107 +74,103 @@ class UnifiedToolCallingRAGAgent:
         self.tool_map = None  # Will be created asynchronously
         self.graph = None  # Will be built asynchronously
         self._initialized = False  # Track initialization status
-        
+
     async def _ensure_initialized(self):
         """Ensure the agent is initialized asynchronously."""
         if self._initialized:
             return
-            
+
         # Load settings asynchronously
         self.settings = await get_settings()
-        
+
         # Initialize memory manager first
         await memory_manager._ensure_initialized()
         self.memory_manager = memory_manager
-        
+
         # Register RAG-specific memory plugins
         await self._register_memory_plugins()
-        
+
         # Start background memory scheduler
         await memory_scheduler.start()
-        
+
         # Initialize LangSmith tracing asynchronously
         await setup_langsmith_tracing()
-        
+
         # Step 1: Tool creation (already done with @tool decorators)
         self.tools = get_all_tools()
         self.tool_names = get_tool_names()
-        
+
         # Use simple model selection - tools handle their own model selection dynamically
         # Default to chat model for agent coordination
-        
+
         # Create a tool lookup for execution
         self.tool_map = {tool.name: tool for tool in self.tools}
-        
+
         # Build graph with persistence
         self.graph = await self._build_graph()
-        
+
         # Log tracing status
         if self.settings.langsmith.tracing_enabled:
-            logger.info(f"LangSmith tracing enabled for project: {self.settings.langsmith.project}")
+            logger.info(
+                f"LangSmith tracing enabled for project: {self.settings.langsmith.project}"
+            )
         else:
             logger.info("LangSmith tracing disabled")
-            
-        self._initialized = True
-    
 
-    
+        self._initialized = True
+
     async def _build_graph(self) -> StateGraph:
         """Build a graph with automatic checkpointing and state persistence between agent steps."""
         # Get checkpointer for persistence
         checkpointer = await memory_manager.get_checkpointer()
-        
+
         graph = StateGraph(AgentState)
-        
+
         # Add nodes with automatic checkpointing between steps
         graph.add_node("employee_verification", self._employee_verification_node)
         graph.add_node("memory_preparation", self._memory_preparation_node)
         graph.add_node("agent", self._unified_agent_node)
         graph.add_node("memory_update", self._memory_update_node)
-        
+
         # Graph flow with employee verification gate
         graph.add_edge(START, "employee_verification")
-        
+
         # Conditional edge: if employee verified, continue to memory_preparation, else go to END
         graph.add_conditional_edges(
             "employee_verification",
             self._should_continue_after_verification,
-            {
-                "continue": "memory_preparation",
-                "end": END
-            }
+            {"continue": "memory_preparation", "end": END},
         )
-        
+
         graph.add_edge("memory_preparation", "agent")
         graph.add_edge("agent", "memory_update")
         graph.add_edge("memory_update", END)
-        
+
         # Compile with checkpointer for automatic persistence between steps
         return graph.compile(checkpointer=checkpointer)
-    
-
-    
-
-    
-
-    
-
 
     @traceable(name="employee_verification_node")
-    async def _employee_verification_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _employee_verification_node(
+        self, state: AgentState, config: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
         """
         Verify if the user is an active employee in the CRM database.
         If not, deny access and return to the START node.
         """
         try:
             user_id = state.get("user_id")
-            
+
             if not user_id:
-                logger.warning("Access denied: No user_id provided for employee verification.")
+                logger.warning(
+                    "Access denied: No user_id provided for employee verification."
+                )
                 # Return state with access denied message
                 from langchain_core.messages import AIMessage
-                error_message = AIMessage(content="Authentication required. Please ensure you're properly logged in as a company employee.")
-                
+
+                error_message = AIMessage(
+                    content="Authentication required. Please ensure you're properly logged in as a company employee."
+                )
+
                 return {
                     "messages": state.get("messages", []) + [error_message],
                     "conversation_id": state.get("conversation_id"),
@@ -185,35 +179,40 @@ class UnifiedToolCallingRAGAgent:
                     "retrieved_docs": [],
                     "sources": [],
                     "long_term_context": [],
-                    "employee_verified": False
+                    "employee_verified": False,
                 }
-            
+
             # Extract thread_id from config if no conversation_id is provided
             conversation_id = state.get("conversation_id")
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
                 if thread_id:
                     conversation_id = str(thread_id)  # Keep as string, not UUID object
-                    logger.info(f"Using thread_id {thread_id} as conversation_id for persistence")
-            
+                    logger.info(
+                        f"Using thread_id {thread_id} as conversation_id for persistence"
+                    )
+
             logger.info(f"Verifying employee access for user: {user_id}")
-            
+
             # Verify employee access
             is_employee = await self._verify_employee_access(user_id)
-            
+
             if not is_employee:
                 logger.warning(f"Access denied for non-employee user: {user_id}")
                 # Return state with access denied message
                 from langchain_core.messages import AIMessage
-                error_message = AIMessage(content="""I apologize, but I'm a sales support assistant designed exclusively for company employees. 
+
+                error_message = AIMessage(
+                    content="""I apologize, but I'm a sales support assistant designed exclusively for company employees.
 
 If you're a customer looking for assistance, please:
 - Visit our website or contact our customer service
 - Speak with one of our sales representatives
 - Call our customer support hotline
 
-If you're an employee and believe this is an error, please contact your system administrator.""")
-                
+If you're an employee and believe this is an error, please contact your system administrator."""
+                )
+
                 return {
                     "messages": state.get("messages", []) + [error_message],
                     "conversation_id": conversation_id,
@@ -222,11 +221,11 @@ If you're an employee and believe this is an error, please contact your system a
                     "retrieved_docs": [],
                     "sources": [],
                     "long_term_context": [],
-                    "employee_verified": False
+                    "employee_verified": False,
                 }
-            
+
             logger.info(f"Employee access verified for user: {user_id}")
-            
+
             # Return full state with employee verification flag
             return {
                 "messages": state.get("messages", []),
@@ -236,15 +235,18 @@ If you're an employee and believe this is an error, please contact your system a
                 "retrieved_docs": state.get("retrieved_docs", []),
                 "sources": state.get("sources", []),
                 "long_term_context": state.get("long_term_context", []),
-                "employee_verified": True
+                "employee_verified": True,
             }
-            
+
         except Exception as e:
             logger.error(f"Error in employee verification node: {str(e)}")
             # On error, deny access for security
             from langchain_core.messages import AIMessage
-            error_message = AIMessage(content="I'm temporarily unable to verify your access. Please try again later or contact your system administrator.")
-            
+
+            error_message = AIMessage(
+                content="I'm temporarily unable to verify your access. Please try again later or contact your system administrator."
+            )
+
             return {
                 "messages": state.get("messages", []) + [error_message],
                 "conversation_id": state.get("conversation_id"),
@@ -253,9 +255,9 @@ If you're an employee and believe this is an error, please contact your system a
                 "retrieved_docs": [],
                 "sources": [],
                 "long_term_context": [],
-                "employee_verified": False
+                "employee_verified": False,
             }
-    
+
     def _should_continue_after_verification(self, state: Dict[str, Any]) -> str:
         """
         Determine if the graph should continue to the next node (memory_preparation)
@@ -265,58 +267,71 @@ If you're an employee and believe this is an error, please contact your system a
             return "continue"
         else:
             return "end"
-    
 
     @traceable(name="memory_preparation_node")
-    async def _memory_preparation_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _memory_preparation_node(
+        self, state: AgentState, config: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
         """
         Prepare conversation memory with long-term context retrieval.
         LangGraph handles short-term persistence automatically.
         """
         try:
             await self._ensure_initialized()
-            
+
             messages = state.get("messages", [])
             conversation_id = state.get("conversation_id")
             user_id = state.get("user_id")
-            
+
             # Extract thread_id from config if no conversation_id is provided
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
                 if thread_id:
                     conversation_id = str(thread_id)  # Keep as string, not UUID object
-                    logger.info(f"Using thread_id {thread_id} as conversation_id for persistence")
-            
-            logger.info(f"Memory preparation for conversation {conversation_id}: {len(messages)} messages")
-            
+                    logger.info(
+                        f"Using thread_id {thread_id} as conversation_id for persistence"
+                    )
+
+            logger.info(
+                f"Memory preparation for conversation {conversation_id}: {len(messages)} messages"
+            )
+
             # Store incoming user messages to database
             if messages and config:
                 # Find the most recent human message to store
                 for msg in reversed(messages):
-                    if hasattr(msg, 'type') and msg.type == 'human':
+                    if hasattr(msg, "type") and msg.type == "human":
                         await self.memory_manager.store_message_from_agent(
                             message=msg,
                             config=config,
                             agent_type="rag",
-                            user_id=user_id
+                            user_id=user_id,
                         )
                         break
-            
+
             # Get cross-conversation user context (ensures latest summary encompasses all previous conversations)
             user_context = {}
             long_term_context = []
             if user_id:
                 print(f"         🔍 Getting user context for: {user_id}")
-                user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
-                
+                user_context = (
+                    await self.memory_manager.get_user_context_for_new_conversation(
+                        user_id
+                    )
+                )
+
                 # Add user's latest conversation summary to the conversation
                 if user_context.get("has_history", False):
                     latest_summary = user_context.get("latest_summary", "")
-                    print(f"         📚 Found user history: {len(latest_summary)} chars")
-                    
+                    print(
+                        f"         📚 Found user history: {len(latest_summary)} chars"
+                    )
+
                     # Create system message with user's context from latest conversation
                     from langchain_core.messages import SystemMessage
-                    system_context = SystemMessage(content=f"""
+
+                    system_context = SystemMessage(
+                        content=f"""
 USER CONTEXT (from latest conversation summary):
 
 {latest_summary}
@@ -324,27 +339,32 @@ USER CONTEXT (from latest conversation summary):
 CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
 
 Use this context to provide personalized, contextually aware responses that build on previous interactions.
-""")
+"""
+                    )
                     # Add system context to the beginning of messages
                     messages = [system_context] + messages
-                    print(f"         ✅ Added comprehensive user context to conversation")
-            
-            # Get relevant long-term context if we have a user query  
+                    print(
+                        f"         ✅ Added comprehensive user context to conversation"
+                    )
+
+            # Get relevant long-term context if we have a user query
             if user_id and messages:
                 # Extract current query for context retrieval
                 current_query = ""
                 for msg in reversed(messages):
-                    if hasattr(msg, 'type') and msg.type == 'human':
+                    if hasattr(msg, "type") and msg.type == "human":
                         current_query = msg.content
                         break
-                
+
                 if current_query:
                     long_term_context = await self.memory_manager.get_relevant_context(
                         user_id, current_query, max_contexts=3
                     )
                     if long_term_context:
-                        logger.info(f"Retrieved {len(long_term_context)} relevant context items")
-            
+                        logger.info(
+                            f"Retrieved {len(long_term_context)} relevant context items"
+                        )
+
             # Return state with long-term context
             return {
                 "messages": messages,
@@ -354,16 +374,20 @@ Use this context to provide personalized, contextually aware responses that buil
                 "retrieved_docs": state.get("retrieved_docs", []),
                 "sources": state.get("sources", []),
                 "long_term_context": long_term_context,
-                "employee_verified": state.get("employee_verified", True)  # Preserve verification status
+                "employee_verified": state.get(
+                    "employee_verified", True
+                ),  # Preserve verification status
             }
-            
+
         except Exception as e:
             logger.error(f"Error in memory preparation node: {str(e)}")
             # Return original state on error
             return state
-    
+
     @traceable(name="memory_update_node")
-    async def _memory_update_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _memory_update_node(
+        self, state: AgentState, config: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
         """
         Update long-term memory after agent execution.
         LangGraph handles short-term persistence automatically.
@@ -372,12 +396,12 @@ Use this context to provide personalized, contextually aware responses that buil
         print(f"   ⏰ Timestamp: {datetime.now()}")
         try:
             await self._ensure_initialized()
-            
+
             messages = state.get("messages", [])
             conversation_id = state.get("conversation_id")
             user_id = state.get("user_id")
             current_summary = state.get("conversation_summary")
-            
+
             print(f"\n🔄 MEMORY UPDATE NODE DEBUG:")
             print(f"   📊 State info:")
             print(f"      - Messages count: {len(messages)}")
@@ -385,7 +409,7 @@ Use this context to provide personalized, contextually aware responses that buil
             print(f"      - User ID: {user_id}")
             print(f"      - Has summary: {current_summary is not None}")
             print(f"      - Config available: {config is not None}")
-            
+
             # Extract thread_id from config if no conversation_id is provided
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
@@ -393,23 +417,27 @@ Use this context to provide personalized, contextually aware responses that buil
                 if thread_id:
                     conversation_id = UUID(thread_id)
                     print(f"      ✅ Using thread_id {thread_id} as conversation_id")
-                    logger.info(f"Using thread_id {thread_id} as conversation_id for persistence")
-            
-            logger.info(f"Memory update for conversation {conversation_id}: {len(messages)} messages")
-            
+                    logger.info(
+                        f"Using thread_id {thread_id} as conversation_id for persistence"
+                    )
+
+            logger.info(
+                f"Memory update for conversation {conversation_id}: {len(messages)} messages"
+            )
+
             # Store agent response messages to database
             if messages and config:
                 # Find the most recent AI message to store
                 for msg in reversed(messages):
-                    if hasattr(msg, 'type') and msg.type == 'ai':
+                    if hasattr(msg, "type") and msg.type == "ai":
                         await self.memory_manager.store_message_from_agent(
                             message=msg,
                             config=config,
                             agent_type="rag",
-                            user_id=user_id
+                            user_id=user_id,
                         )
                         break
-            
+
             # Store important information in long-term memory
             if user_id and messages and len(messages) >= 2:
                 # Check if this conversation contains storable information using generic infrastructure
@@ -419,49 +447,65 @@ Use this context to provide personalized, contextually aware responses that buil
                     await self.memory_manager.store_conversation_insights(
                         "rag", user_id, recent_messages, conversation_id
                     )
-            
+
             # Check if automatic conversation summarization should be triggered
             print(f"\n   🤖 SUMMARIZATION CHECK:")
             if user_id and conversation_id:
-                print(f"      ✅ Prerequisites met (user_id: {user_id[:12]}..., conversation_id: {str(conversation_id)[:8]}...)")
+                print(
+                    f"      ✅ Prerequisites met (user_id: {user_id[:12]}..., conversation_id: {str(conversation_id)[:8]}...)"
+                )
                 try:
                     print(f"      🔍 Calling check_and_trigger_summarization...")
                     summary = await self.memory_manager.consolidator.check_and_trigger_summarization(
                         str(conversation_id), user_id
                     )
                     if summary:
-                        print(f"      ✅ SUMMARIZATION TRIGGERED! Summary length: {len(summary)} chars")
-                        logger.info(f"Conversation {conversation_id} automatically summarized")
+                        print(
+                            f"      ✅ SUMMARIZATION TRIGGERED! Summary length: {len(summary)} chars"
+                        )
+                        logger.info(
+                            f"Conversation {conversation_id} automatically summarized"
+                        )
                     else:
-                        print(f"      ℹ️  No summarization triggered (likely insufficient messages)")
+                        print(
+                            f"      ℹ️  No summarization triggered (likely insufficient messages)"
+                        )
                 except Exception as e:
                     print(f"      ❌ Error in automatic summarization: {e}")
                     logger.error(f"Error in automatic summarization: {e}")
             else:
                 print(f"      ❌ Prerequisites not met:")
                 print(f"         - user_id present: {user_id is not None}")
-                print(f"         - conversation_id present: {conversation_id is not None}")
-            
+                print(
+                    f"         - conversation_id present: {conversation_id is not None}"
+                )
+
             logger.info(f"Memory update complete: long-term context processed")
-            
+
             print(f"\n   ✅ MEMORY UPDATE NODE COMPLETED")
             print(f"      📊 Final status:")
             print(f"         - Messages processed: {len(messages)}")
-            print(f"         - Long-term storage: {'✅' if user_id and len(messages) >= 2 else '❌'}")
-            print(f"         - Summarization check: {'✅' if user_id and conversation_id else '❌'}")
+            print(
+                f"         - Long-term storage: {'✅' if user_id and len(messages) >= 2 else '❌'}"
+            )
+            print(
+                f"         - Summarization check: {'✅' if user_id and conversation_id else '❌'}"
+            )
             print(f"      🔄 Returning state to LangGraph...")
-            
+
             # Return state unchanged - LangGraph handles persistence automatically
             return state
-            
+
         except Exception as e:
             print(f"\n   ❌ MEMORY UPDATE NODE ERROR: {str(e)}")
             logger.error(f"Error in memory update node: {str(e)}")
             # Return original state on error
             return state
-    
+
     @traceable(name="unified_agent_node")
-    async def _unified_agent_node(self, state: AgentState, config: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _unified_agent_node(
+        self, state: AgentState, config: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
         """
         Unified agent node that handles tool calling and execution.
         Follows LangChain best practices for tool calling workflow.
@@ -469,81 +513,91 @@ Use this context to provide personalized, contextually aware responses that buil
         try:
             # Ensure initialization before processing
             await self._ensure_initialized()
-            
+
             # Extract current query from messages for logging
             original_messages = state.get("messages", [])
             current_query = "No query"
             for msg in reversed(original_messages):
-                if hasattr(msg, 'type') and msg.type == 'human':
+                if hasattr(msg, "type") and msg.type == "human":
                     current_query = msg.content
                     break
-                elif isinstance(msg, dict) and msg.get('role') == 'human':
-                    current_query = msg.get('content', '')
+                elif isinstance(msg, dict) and msg.get("role") == "human":
+                    current_query = msg.get("content", "")
                     break
-            
+
             # Log thread_id and conversation_id for debugging
             conversation_id = state.get("conversation_id")
-            thread_id = config.get("configurable", {}).get("thread_id") if config else None
+            thread_id = (
+                config.get("configurable", {}).get("thread_id") if config else None
+            )
             logger.info(f"Agent processing query: {current_query}")
             logger.info(f"Thread ID: {thread_id}, Conversation ID: {conversation_id}")
-            
+
             # Simple model selection - use default chat model
             # Tools handle their own dynamic model selection internally
             selected_model = self.settings.openai_chat_model
-            
+
             # Get system prompt
             system_prompt = self._get_system_prompt()
-            
+
             # Apply context window management to prevent overflow
-            trimmed_messages, trim_stats = await context_manager.trim_messages_for_context(
-                messages=original_messages,
-                model=selected_model,
-                system_prompt=system_prompt,
-                max_messages=self.settings.memory.max_messages
+            trimmed_messages, trim_stats = (
+                await context_manager.trim_messages_for_context(
+                    messages=original_messages,
+                    model=selected_model,
+                    system_prompt=system_prompt,
+                    max_messages=self.settings.memory.max_messages,
+                )
             )
-            
+
             # Log context management information
             if trim_stats["trimmed_message_count"] > 0:
-                logger.info(f"Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
-                           f"final token count: {trim_stats['final_token_count']}")
-            
+                logger.info(
+                    f"Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
+                    f"final token count: {trim_stats['final_token_count']}"
+                )
+
             # Build processing messages with system prompt and trimmed conversation
-            processing_messages = [SystemMessage(content=system_prompt)] + trimmed_messages
-            
+            processing_messages = [
+                SystemMessage(content=system_prompt)
+            ] + trimmed_messages
+
             # Step 3: Tool calling - let model decide when to use tools
             max_tool_iterations = 3  # Allow more tool calls if needed
             iteration = 0
-            
+
             # Create LLM with selected model and bind tools
             llm = ChatOpenAI(
                 model=selected_model,
                 temperature=self.settings.openai_temperature,
                 max_tokens=self.settings.openai_max_tokens,
-                api_key=self.settings.openai_api_key
+                api_key=self.settings.openai_api_key,
             ).bind_tools(self.tools)
-            
+
             logger.info(f"Using model: {selected_model} for query processing")
-            
+
             while iteration < max_tool_iterations:
                 iteration += 1
                 logger.info(f"Agent iteration {iteration}")
-                
+
                 # Call the model with dynamically selected LLM
                 response = await llm.ainvoke(processing_messages)
                 processing_messages.append(response)
-                
+
                 # Check if model wants to use tools
-                if hasattr(response, 'tool_calls') and response.tool_calls:
+                if hasattr(response, "tool_calls") and response.tool_calls:
                     logger.info(f"Model called {len(response.tool_calls)} tools")
-                    
+
                     # Step 4: Tool execution - execute the tools
                     for tool_call in response.tool_calls:
                         tool_name = tool_call["name"]
                         tool_args = tool_call["args"]
                         tool_call_id = tool_call["id"]
-                        
-                        logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
-                        
+
+                        logger.info(
+                            f"Executing tool: {tool_name} with args: {tool_args}"
+                        )
+
                         try:
                             # Get the tool and execute it
                             tool = self.tool_map.get(tool_name)
@@ -551,24 +605,29 @@ Use this context to provide personalized, contextually aware responses that buil
                                 # Set user context for tools that need access to user information
                                 user_id = state.get("user_id")
                                 conversation_id = state.get("conversation_id")
-                                
-                                with UserContext(user_id=user_id, conversation_id=conversation_id):
+
+                                with UserContext(
+                                    user_id=user_id, conversation_id=conversation_id
+                                ):
                                     # Check if tool is async by examining the underlying function
-                                    if tool_name in ["simple_rag", "simple_query_crm_data"]:
+                                    if tool_name in [
+                                        "simple_rag",
+                                        "simple_query_crm_data",
+                                    ]:
                                         # Handle async tools
                                         tool_result = await tool.ainvoke(tool_args)
                                     else:
                                         # Handle sync tools
                                         tool_result = tool.invoke(tool_args)
-                                
+
                                 # Add tool result to messages
                                 tool_message = ToolMessage(
                                     content=str(tool_result),
                                     tool_call_id=tool_call_id,
-                                    name=tool_name
+                                    name=tool_name,
                                 )
                                 processing_messages.append(tool_message)
-                                
+
                             else:
                                 # Tool not found
                                 error_msg = f"Tool '{tool_name}' not found"
@@ -576,10 +635,10 @@ Use this context to provide personalized, contextually aware responses that buil
                                 tool_message = ToolMessage(
                                     content=error_msg,
                                     tool_call_id=tool_call_id,
-                                    name=tool_name
+                                    name=tool_name,
                                 )
                                 processing_messages.append(tool_message)
-                                
+
                         except Exception as e:
                             # Tool execution failed
                             error_msg = f"Error executing tool '{tool_name}': {str(e)}"
@@ -588,17 +647,17 @@ Use this context to provide personalized, contextually aware responses that buil
                             tool_message = ToolMessage(
                                 content=error_msg,
                                 tool_call_id=tool_call_id,
-                                name=tool_name
+                                name=tool_name,
                             )
                             processing_messages.append(tool_message)
-                    
+
                     # Continue to next iteration to let model process tool results
                     continue
                 else:
                     # Model didn't call tools, we have the final response
                     logger.info("Model provided final response without tool calls")
                     break
-            
+
             # If we exited the loop due to max iterations, ensure we get a final response
             if iteration >= max_tool_iterations:
                 logger.info("Max tool iterations reached, getting final response")
@@ -606,23 +665,23 @@ Use this context to provide personalized, contextually aware responses that buil
                 final_response = await llm.ainvoke(processing_messages)
                 processing_messages.append(final_response)
                 logger.info("Generated final response after tool execution")
-            
+
             # Extract sources from messages and update state
             sources = self._extract_sources_from_messages(processing_messages)
-            
+
             # Update the original messages with the AI responses (excluding system message)
             updated_messages = list(original_messages)
             for msg in processing_messages[1:]:  # Skip system message
-                if hasattr(msg, 'type') and msg.type in ['ai', 'tool']:
+                if hasattr(msg, "type") and msg.type in ["ai", "tool"]:
                     updated_messages.append(msg)
-            
+
             # Extract thread_id from config if needed for conversation_id
             conversation_id = state.get("conversation_id")
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
                 if thread_id:
                     conversation_id = UUID(thread_id)
-            
+
             # Update state with original messages preserved plus new responses
             return {
                 "messages": updated_messages,
@@ -630,35 +689,45 @@ Use this context to provide personalized, contextually aware responses that buil
                 "retrieved_docs": state.get("retrieved_docs", []),
                 "conversation_id": conversation_id,
                 "user_id": state.get("user_id"),
-                "conversation_summary": state.get("conversation_summary"),  # Preserve existing summary
-                "employee_verified": state.get("employee_verified", True)  # Preserve verification status
+                "conversation_summary": state.get(
+                    "conversation_summary"
+                ),  # Preserve existing summary
+                "employee_verified": state.get(
+                    "employee_verified", True
+                ),  # Preserve verification status
             }
-            
+
         except Exception as e:
             logger.error(f"Error in unified agent node: {str(e)}")
             # Add error message to the conversation
             original_messages = state.get("messages", [])
-            error_message = AIMessage(content="I apologize, but I encountered an error while processing your request.")
+            error_message = AIMessage(
+                content="I apologize, but I encountered an error while processing your request."
+            )
             updated_messages = list(original_messages)
             updated_messages.append(error_message)
-            
+
             # Extract thread_id from config if needed for conversation_id
             conversation_id = state.get("conversation_id")
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
                 if thread_id:
                     conversation_id = UUID(thread_id)
-            
+
             return {
                 "messages": updated_messages,
                 "sources": state.get("sources", []),
                 "retrieved_docs": state.get("retrieved_docs", []),
                 "conversation_id": conversation_id,
                 "user_id": state.get("user_id"),
-                "conversation_summary": state.get("conversation_summary"),  # Preserve existing summary
-                "employee_verified": state.get("employee_verified", True)  # Preserve verification status
+                "conversation_summary": state.get(
+                    "conversation_summary"
+                ),  # Preserve existing summary
+                "employee_verified": state.get(
+                    "employee_verified", True
+                ),  # Preserve verification status
             }
-    
+
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the unified agent."""
         return f"""You are a helpful sales assistant with access to company documents, tools, and user context.
@@ -745,15 +814,11 @@ Guidelines:
 - Use any available long-term context to personalize responses based on user preferences
 
 Important: Use the tools to help you provide the best possible assistance to the user."""
-    
 
-    
-
-    
     def _extract_sources_from_messages(self, messages: List) -> List[Dict[str, Any]]:
         """Extract sources from tool call results in messages."""
         sources = []
-        
+
         for message in messages:
             # Extract sources from LCEL-based RAG tools
             if isinstance(message, ToolMessage) and message.name in ["simple_rag"]:
@@ -763,118 +828,152 @@ Important: Use the tools to help you provide the best possible assistance to the
                     content = message.content
                     if "Sources (" in content:
                         # Parse sources from lcel_rag output format
-                        sources_section = content.split("Sources (")[1].split("):")[1] if "):" in content else ""
-                        for line in sources_section.split('\n'):
-                            if line.strip().startswith('•'):
+                        sources_section = (
+                            content.split("Sources (")[1].split("):")[1]
+                            if "):" in content
+                            else ""
+                        )
+                        for line in sources_section.split("\n"):
+                            if line.strip().startswith("•"):
                                 source = line.strip()[1:].strip()
                                 if source:
-                                    sources.append({
-                                        "source": source,
-                                        "similarity": 0.0  # LCEL tools don't expose individual similarity scores
-                                    })
+                                    sources.append(
+                                        {
+                                            "source": source,
+                                            "similarity": 0.0,  # LCEL tools don't expose individual similarity scores
+                                        }
+                                    )
                     elif "**Retrieved Documents (" in content:
                         # Parse sources from lcel_retrieval output format
-                        lines = content.split('\n')
+                        lines = content.split("\n")
                         for line in lines:
                             if line.startswith("Source: "):
                                 source = line.replace("Source: ", "").strip()
                                 if source:
-                                    sources.append({
-                                        "source": source,
-                                        "similarity": 0.0
-                                    })
+                                    sources.append(
+                                        {"source": source, "similarity": 0.0}
+                                    )
                 except Exception:
                     continue
-        
+
         return sources
-    
+
     async def _register_memory_plugins(self) -> None:
         """Register RAG-specific memory plugins with the memory manager."""
+
         # Register RAG-specific memory filter
         async def rag_memory_filter(messages: List[BaseMessage]) -> bool:
             """RAG-specific logic for determining if memory should be stored."""
             if len(messages) < 2:
                 return False
-            
+
             # Check if recent messages contain storable information
             recent_messages = messages[-3:] if len(messages) >= 3 else messages
-            
+
             for message in recent_messages:
                 content = str(message.content).lower()
-                
+
                 # RAG-specific patterns (preferences, facts, tool-related insights)
-                if any(phrase in content for phrase in [
-                    "i prefer", "i like", "i want", "i need",
-                    "my name is", "i am", "i work at", "i live in",
-                    "remember", "next time", "always", "never",
-                    "search for", "find me", "look up"  # RAG-specific patterns
-                ]):
+                if any(
+                    phrase in content
+                    for phrase in [
+                        "i prefer",
+                        "i like",
+                        "i want",
+                        "i need",
+                        "my name is",
+                        "i am",
+                        "i work at",
+                        "i live in",
+                        "remember",
+                        "next time",
+                        "always",
+                        "never",
+                        "search for",
+                        "find me",
+                        "look up",  # RAG-specific patterns
+                    ]
+                ):
                     return True
-            
+
             return False
-        
+
         # Register RAG-specific insight extractor
-        async def rag_insight_extractor(messages: List[BaseMessage], conversation_id: UUID) -> List[Dict[str, Any]]:
+        async def rag_insight_extractor(
+            messages: List[BaseMessage], conversation_id: UUID
+        ) -> List[Dict[str, Any]]:
             """RAG-specific logic for extracting insights from conversations."""
             insights = []
             for message in messages:
-                if hasattr(message, 'type') and message.type == 'human':
+                if hasattr(message, "type") and message.type == "human":
                     content = message.content.lower()
-                    
+
                     # Extract preferences
-                    if any(phrase in content for phrase in ["i prefer", "i like", "i want"]):
-                        insights.append({
-                            "type": "preference",
-                            "content": message.content,
-                            "extracted_at": datetime.now().isoformat(),
-                            "agent_type": "rag"
-                        })
-                    
+                    if any(
+                        phrase in content for phrase in ["i prefer", "i like", "i want"]
+                    ):
+                        insights.append(
+                            {
+                                "type": "preference",
+                                "content": message.content,
+                                "extracted_at": datetime.now().isoformat(),
+                                "agent_type": "rag",
+                            }
+                        )
+
                     # Extract facts
-                    elif any(phrase in content for phrase in ["my name is", "i am", "i work at"]):
-                        insights.append({
-                            "type": "personal_fact",
-                            "content": message.content,
-                            "extracted_at": datetime.now().isoformat(),
-                            "agent_type": "rag"
-                        })
-                    
+                    elif any(
+                        phrase in content
+                        for phrase in ["my name is", "i am", "i work at"]
+                    ):
+                        insights.append(
+                            {
+                                "type": "personal_fact",
+                                "content": message.content,
+                                "extracted_at": datetime.now().isoformat(),
+                                "agent_type": "rag",
+                            }
+                        )
+
                     # Extract RAG-specific search patterns
-                    elif any(phrase in content for phrase in ["search for", "find me", "look up"]):
-                        insights.append({
-                            "type": "search_pattern",
-                            "content": message.content,
-                            "extracted_at": datetime.now().isoformat(),
-                            "agent_type": "rag"
-                        })
-            
+                    elif any(
+                        phrase in content
+                        for phrase in ["search for", "find me", "look up"]
+                    ):
+                        insights.append(
+                            {
+                                "type": "search_pattern",
+                                "content": message.content,
+                                "extracted_at": datetime.now().isoformat(),
+                                "agent_type": "rag",
+                            }
+                        )
+
             return insights
-        
+
         # Register the plugins
         self.memory_manager.register_memory_filter("rag", rag_memory_filter)
         self.memory_manager.register_insight_extractor("rag", rag_insight_extractor)
-        
-        logger.info("RAG-specific memory plugins registered")
-    
 
-    
+        logger.info("RAG-specific memory plugins registered")
+
     async def _verify_employee_access(self, user_id: str) -> bool:
         """
         Verify if the user_id corresponds to an active employee in the CRM database.
-        
+
         Args:
             user_id: The users.id (UUID)
-            
+
         Returns:
             bool: True if user is an active employee, False otherwise
         """
         try:
             # Import database client
             from database import db_client
-            
+
             # Ensure database client is initialized
             await db_client._async_initialize_client()
-            
+
             # Look up the user in the users table to get the employee_id
             logger.info(f"Looking up user by ID: {user_id}")
             user_result = await asyncio.to_thread(
@@ -883,19 +982,21 @@ Important: Use the tools to help you provide the best possible assistance to the
                 .eq("id", user_id)
                 .execute()
             )
-            
+
             if not user_result.data or len(user_result.data) == 0:
                 logger.warning(f"No user found for user_id: {user_id}")
                 return False
-            
+
             user_record = user_result.data[0]
             employee_id = user_record.get("employee_id")
             user_type = user_record.get("user_type")
-            
+
             if not employee_id:
-                logger.warning(f"User {user_id} has no linked employee_id (user_type: {user_type})")
+                logger.warning(
+                    f"User {user_id} has no linked employee_id (user_type: {user_type})"
+                )
                 return False
-            
+
             # Step 2: Check if the employee_id exists in employees table and is active
             logger.info(f"Checking employee record for employee_id: {employee_id}")
             employee_result = await asyncio.to_thread(
@@ -905,60 +1006,77 @@ Important: Use the tools to help you provide the best possible assistance to the
                 .eq("is_active", True)
                 .execute()
             )
-            
+
             if employee_result.data and len(employee_result.data) > 0:
                 employee = employee_result.data[0]
-                logger.info(f"Employee access verified for {employee['name']} ({employee['position']}) - employee_id: {employee_id}")
+                logger.info(
+                    f"Employee access verified for {employee['name']} ({employee['position']}) - employee_id: {employee_id}"
+                )
                 return True
             else:
-                logger.warning(f"No active employee found for employee_id: {employee_id} (user_id: {user_id})")
+                logger.warning(
+                    f"No active employee found for employee_id: {employee_id} (user_id: {user_id})"
+                )
                 return False
-                
+
         except Exception as e:
-            logger.error(f"Error verifying employee access for user_id {user_id}: {str(e)}")
+            logger.error(
+                f"Error verifying employee access for user_id {user_id}: {str(e)}"
+            )
             # On database errors, deny access for security
             return False
-    
 
-    
     @traceable(name="rag_agent_invoke")
-    async def invoke(self, user_query: str, conversation_id: str = None, user_id: str = None, conversation_history: List = None) -> Dict[str, Any]:
+    async def invoke(
+        self,
+        user_query: str,
+        conversation_id: str = None,
+        user_id: str = None,
+        conversation_history: List = None,
+    ) -> Dict[str, Any]:
         """
         Invoke the unified tool-calling RAG agent with thread-based persistence.
         """
         # Ensure initialization before invoking
         await self._ensure_initialized()
-        
+
         # Generate conversation_id if not provided
         if not conversation_id:
             conversation_id = str(uuid4())
-            
+
         # Set up thread-based config for persistence
         config = await self.memory_manager.get_conversation_config(conversation_id)
-        
+
         # Try to load existing conversation state from our memory manager
-        existing_state = await self.memory_manager.load_conversation_state(conversation_id)
-        
+        existing_state = await self.memory_manager.load_conversation_state(
+            conversation_id
+        )
+
         # Initialize messages - start with existing messages or empty list
         messages = []
-        
-        if existing_state and existing_state.get('messages'):
+
+        if existing_state and existing_state.get("messages"):
             # Convert database messages to LangChain message objects
             # Database now uses LangChain-compatible role names directly
-            for msg in existing_state.get('messages', []):
+            for msg in existing_state.get("messages", []):
                 if isinstance(msg, dict):
                     content = msg.get("content")
                     if content:  # Only add messages with actual content
                         role = msg.get("role", "").lower()
                         if role in ["human", "user"]:
                             messages.append(HumanMessage(content=content))
-                        elif role in ["ai", "assistant"]:  # Removed 'bot' since DB now uses 'ai'
+                        elif role in [
+                            "ai",
+                            "assistant",
+                        ]:  # Removed 'bot' since DB now uses 'ai'
                             messages.append(AIMessage(content=content))
                         elif role == "system":
                             messages.append(SystemMessage(content=content))
                 elif isinstance(msg, BaseMessage):
                     messages.append(msg)
-            logger.info(f"Continuing conversation with {len(messages)} existing messages")
+            logger.info(
+                f"Continuing conversation with {len(messages)} existing messages"
+            )
         elif conversation_history:
             # Only add conversation_history if this is a new conversation
             for msg in conversation_history:
@@ -968,31 +1086,38 @@ Important: Use the tools to help you provide the best possible assistance to the
                         role = msg.get("role", "").lower()
                         if role in ["human", "user"]:
                             messages.append(HumanMessage(content=content))
-                        elif role in ["ai", "assistant"]:  # Removed 'bot' since DB now uses 'ai'
+                        elif role in [
+                            "ai",
+                            "assistant",
+                        ]:  # Removed 'bot' since DB now uses 'ai'
                             messages.append(AIMessage(content=content))
                 elif isinstance(msg, BaseMessage):
                     messages.append(msg)
-        
+
         # Add the current user query as a human message
         messages.append(HumanMessage(content=user_query))
-        
+
         # Initialize state with existing conversation context
         initial_state = AgentState(
             messages=messages,
             conversation_id=conversation_id,  # Keep as string, not UUID object
             user_id=user_id,
-            retrieved_docs=existing_state.get('retrieved_docs', []) if existing_state else [],
-            sources=existing_state.get('sources', []) if existing_state else [],
-            conversation_summary=existing_state.get('summary') if existing_state else None
+            retrieved_docs=(
+                existing_state.get("retrieved_docs", []) if existing_state else []
+            ),
+            sources=existing_state.get("sources", []) if existing_state else [],
+            conversation_summary=(
+                existing_state.get("summary") if existing_state else None
+            ),
         )
-        
+
         # Execute the graph with thread-based persistence
         # The memory preparation and update nodes handle automatic checkpointing and state persistence
         result = await self.graph.ainvoke(initial_state, config=config)
-        
+
         # Memory management (sliding window, summarization, and persistence) is now handled
         # automatically by the graph nodes with checkpointing between each step
-        
+
         return result
 
 
@@ -1005,11 +1130,13 @@ LinearToolCallingRAGAgent = UnifiedToolCallingRAGAgent  # For backward compatibi
 # This ensures Studio always shows the real implementation
 _agent_instance = UnifiedToolCallingRAGAgent()
 
+
 # Create a function to get the graph (lazy loading)
 async def get_graph():
     """Get the agent graph, initializing if needed."""
     await _agent_instance._ensure_initialized()
     return _agent_instance.graph
+
 
 # For LangGraph Studio compatibility, create the graph with persistence
 async def create_graph():
@@ -1017,25 +1144,26 @@ async def create_graph():
     try:
         # Create a new agent instance
         agent = UnifiedToolCallingRAGAgent()
-        
+
         # Initialize asynchronously with full persistence
         await agent._ensure_initialized()
-        
+
         return agent.graph
-        
+
     except Exception as e:
         logger.error(f"Error creating graph: {e}")
         raise
+
 
 # LangGraph Studio will call create_graph() directly
 # No need to initialize graph here - keep it simple
 
 # Export for LangGraph Studio
 __all__ = [
-    "UnifiedToolCallingRAGAgent", 
-    "ToolCallingRAGAgent", 
-    "SimpleRAGAgent", 
-    "LinearToolCallingRAGAgent", 
-    "create_graph", 
-    "get_graph"
-] 
+    "UnifiedToolCallingRAGAgent",
+    "ToolCallingRAGAgent",
+    "SimpleRAGAgent",
+    "LinearToolCallingRAGAgent",
+    "create_graph",
+    "get_graph",
+]

@@ -12,7 +12,7 @@ T = TypeVar('T')
 
 class BaseModel(PydanticBaseModel):
     """Base model with common functionality"""
-    
+
     class Config:
         # Enable validation on assignment
         validate_assignment = True
@@ -29,10 +29,10 @@ class BaseModel(PydanticBaseModel):
 
 class TimestampedModel(BaseModel):
     """Base model with timestamp fields"""
-    
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: Optional[datetime] = None
-    
+
     def update_timestamp(self):
         """Update the updated_at timestamp"""
         self.updated_at = datetime.utcnow()
@@ -40,22 +40,22 @@ class TimestampedModel(BaseModel):
 
 class IdentifiedModel(TimestampedModel):
     """Base model with ID and timestamps"""
-    
+
     id: UUID = Field(default_factory=uuid4)
-    
+
 
 class APIResponse(BaseModel, Generic[T]):
     """Standard API response format"""
-    
+
     success: bool = True
     message: str = "Success"
     data: Optional[T] = None
     error: Optional[str] = None
-    
+
     @classmethod
     def success_response(cls, data: Optional[T] = None, message: str = "Success"):
         return cls(success=True, message=message, data=data)
-    
+
     @classmethod
     def error_response(cls, error: str, message: str = "Error"):
-        return cls(success=False, message=message, error=error) 
+        return cls(success=False, message=message, error=error)
