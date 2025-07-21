@@ -23,7 +23,8 @@ from langgraph.store.base import BaseStore, Item
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.embeddings import Embeddings
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
+from rag.embeddings import OpenAIEmbeddings
 
 from config import get_settings
 from database import db_client
@@ -59,24 +60,35 @@ class ContextWindowManager:
         """Initialize tokenizer and settings asynchronously"""
         if self.tokenizer is None:
             self.settings = await get_settings()
-            try:
-                # Use tiktoken for accurate token counting
-                self.tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
-            except KeyError:
-                # Fallback encoding
-                self.tokenizer = tiktoken.get_encoding("cl100k_base")
+            
+            def _get_tokenizer():
+                try:
+                    # Use tiktoken for accurate token counting
+                    return tiktoken.encoding_for_model("gpt-3.5-turbo")
+                except KeyError:
+                    # Fallback encoding
+                    return tiktoken.get_encoding("cl100k_base")
+            
+            # Move tokenizer initialization to thread to avoid os.getcwd() blocking calls
+            self.tokenizer = await asyncio.to_thread(_get_tokenizer)
 
-    def count_tokens(self, text: str) -> int:
+    async def count_tokens(self, text: str) -> int:
         """Count tokens in text using tiktoken"""
-        if self.tokenizer is None:
-            # Fallback estimation if tokenizer not initialized
-            return int(len(text.split()) * 1.3)
-        return len(self.tokenizer.encode(text))
+        await self._ensure_initialized()
+        
+        def _count_tokens():
+            if self.tokenizer is None:
+                # Fallback estimation if tokenizer not initialized
+                return int(len(text.split()) * 1.3)
+            return len(self.tokenizer.encode(text))
+        
+        # Move token counting to thread to avoid any potential blocking calls
+        return await asyncio.to_thread(_count_tokens)
 
-    def count_message_tokens(self, message: BaseMessage) -> int:
+    async def count_message_tokens(self, message: BaseMessage) -> int:
         """Count tokens in a single message including metadata"""
         content = getattr(message, 'content', str(message))
-        base_tokens = self.count_tokens(content)
+        base_tokens = await self.count_tokens(content)
 
         # Add tokens for message formatting overhead
         if hasattr(message, 'type'):
@@ -89,17 +101,17 @@ class ContextWindowManager:
                 # Add tokens for tool calls if present
                 if hasattr(message, 'tool_calls') and message.tool_calls:
                     for tool_call in message.tool_calls:
-                        base_tokens += self.count_tokens(str(tool_call))
+                        base_tokens += await self.count_tokens(str(tool_call))
             elif message.type == 'tool':
                 base_tokens += 6  # Tool message overhead
 
         return base_tokens
 
-    def count_messages_tokens(self, messages: List[BaseMessage]) -> int:
+    async def count_messages_tokens(self, messages: List[BaseMessage]) -> int:
         """Count total tokens in a list of messages"""
         total_tokens = 0
         for message in messages:
-            total_tokens += self.count_message_tokens(message)
+            total_tokens += await self.count_message_tokens(message)
 
         # Add conversation-level overhead
         total_tokens += 6  # Conversation formatting overhead
@@ -131,7 +143,7 @@ class ContextWindowManager:
         working_messages = list(messages)
 
         # Count tokens in system prompt if provided
-        system_tokens = self.count_tokens(system_prompt) if system_prompt else 0
+        system_tokens = await self.count_tokens(system_prompt) if system_prompt else 0
 
         # Separate system messages from conversation messages
         system_messages = [msg for msg in working_messages if hasattr(msg, 'type') and msg.type == 'system']
@@ -144,7 +156,9 @@ class ContextWindowManager:
             conversation_messages = conversation_messages[-max_messages:]
 
         # Calculate current token usage
-        current_tokens = system_tokens + sum(self.count_message_tokens(msg) for msg in system_messages + conversation_messages)
+        current_tokens = system_tokens
+        for msg in system_messages + conversation_messages:
+            current_tokens += await self.count_message_tokens(msg)
 
         trim_stats = {
             "original_message_count": len(messages),
@@ -162,11 +176,13 @@ class ContextWindowManager:
 
             # Keep system messages and trim conversation messages from the beginning
             trimmed_conversation = []
-            running_tokens = system_tokens + sum(self.count_message_tokens(msg) for msg in system_messages)
+            running_tokens = system_tokens
+            for msg in system_messages:
+                running_tokens += await self.count_message_tokens(msg)
 
             # Add conversation messages from the end (most recent first)
             for message in reversed(conversation_messages):
-                message_tokens = self.count_message_tokens(message)
+                message_tokens = await self.count_message_tokens(message)
                 if running_tokens + message_tokens <= context_limit:
                     trimmed_conversation.insert(0, message)  # Insert at beginning to maintain order
                     running_tokens += message_tokens
@@ -451,7 +467,7 @@ class SupabaseLongTermMemoryStore(BaseStore):
         if not self._initialized:
             self.db_manager = SimpleDBManager()
             if self.embeddings is None:
-                self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+                self.embeddings = OpenAIEmbeddings()
             self._initialized = True
 
     # Required BaseStore interface methods
@@ -625,18 +641,8 @@ class SupabaseLongTermMemoryStore(BaseStore):
 
         try:
             # Generate embedding for the query
-            # Handle both sync and async embeddings
-            if hasattr(self.embeddings, 'aembed_query'):
-                query_embedding = await self.embeddings.aembed_query(query)
-            else:
-                # Check if embed_query returns a coroutine
-                result = self.embeddings.embed_query(query)
-                if asyncio.iscoroutine(result):
-                    query_embedding = await result
-                else:
-                    query_embedding = await asyncio.to_thread(
-                        lambda: result
-                    )
+            # OpenAIEmbeddings.embed_query is async, so just await it directly
+            query_embedding = await self.embeddings.embed_query(query)
 
             conn = await self.db_manager.get_connection()
             async with conn:
@@ -822,27 +828,27 @@ class ConversationConsolidator:
         try:
             from database import db_client
 
+            def _get_last_summarized_at():
+                return (db_client.client.table("conversations")
+                    .select("last_summarized_at")
+                    .eq("id", conversation_id)
+                    .execute())
+
+            def _count_messages(last_summarized_at=None):
+                query = db_client.client.table("messages").select("id", count="exact").eq("conversation_id", conversation_id)
+                if last_summarized_at:
+                    query = query.gt("created_at", last_summarized_at)
+                return query.execute()
+
             # First, get the last_summarized_at timestamp for this conversation
-            conv_result = (db_client.client.table("conversations")
-
-                .select("last_summarized_at")
-
-                .eq("id", conversation_id)
-
-                .execute())
+            conv_result = await asyncio.to_thread(_get_last_summarized_at)
 
             last_summarized_at = None
             if conv_result.data and len(conv_result.data) > 0:
                 last_summarized_at = conv_result.data[0].get('last_summarized_at')
 
             # Count messages since last summarization (or all messages if never summarized)
-            query = db_client.client.table("messages").select("id", count="exact").eq("conversation_id", conversation_id)
-
-            if last_summarized_at:
-                # Only count messages created after last summarization
-                query = query.gt("created_at", last_summarized_at)
-
-            result = query.execute()
+            result = await asyncio.to_thread(_count_messages, last_summarized_at)
             return result.count if result.count is not None else 0
         except Exception as e:
             logger.error(f"Error counting messages for conversation {conversation_id}: {e}")
@@ -853,10 +859,13 @@ class ConversationConsolidator:
         try:
             from database import db_client
 
-            result = (db_client.client.table("conversations")
-                .select("id,user_id,title,created_at,updated_at,metadata")
-                .eq("id", conversation_id)
-                .execute())
+            def _get_conversation():
+                return (db_client.client.table("conversations")
+                    .select("id,user_id,title,created_at,updated_at,metadata")
+                    .eq("id", conversation_id)
+                    .execute())
+
+            result = await asyncio.to_thread(_get_conversation)
 
             if result.data and len(result.data) > 0:
                 return result.data[0]
@@ -956,11 +965,14 @@ class ConversationConsolidator:
             # Use Supabase client for message retrieval
             from database import db_client
 
-            result = (db_client.client.table("messages")
-                .select("role,content,created_at,user_id")
-                .eq("conversation_id", conversation_id)
-                .order("created_at")
-                .execute())
+            def _get_messages():
+                return (db_client.client.table("messages")
+                    .select("role,content,created_at,user_id")
+                    .eq("conversation_id", conversation_id)
+                    .order("created_at")
+                    .execute())
+
+            result = await asyncio.to_thread(_get_messages)
 
             messages = result.data if result.data else []
             print(f"            ✅ Retrieved {len(messages)} messages for summarization")
@@ -976,12 +988,15 @@ class ConversationConsolidator:
         try:
             from database import db_client
 
-            result = (db_client.client.table("conversation_summaries")
-                .select("summary_text,created_at,message_count")
-                .eq("conversation_id", conversation_id)
-                .order("created_at", desc=True)
-                .limit(1)
-                .execute())
+            def _get_latest_summary():
+                return (db_client.client.table("conversation_summaries")
+                    .select("summary_text,created_at,message_count")
+                    .eq("conversation_id", conversation_id)
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute())
+
+            result = await asyncio.to_thread(_get_latest_summary)
 
             if result.data and len(result.data) > 0:
                 summary_data = result.data[0]
@@ -1005,36 +1020,49 @@ class ConversationConsolidator:
         try:
             from database import db_client
 
-            query = (db_client.client.table("messages")
-                .select("role,content,created_at,user_id")
-                .eq("conversation_id", conversation_id)
-                .order("created_at"))
+            def _get_messages_since_summary(last_summary_time):
+                return (db_client.client.table("messages")
+                    .select("role,content,created_at,user_id")
+                    .eq("conversation_id", conversation_id)
+                    .order("created_at")
+                    .gt("created_at", last_summary_time)
+                    .execute())
+
+            def _count_messages():
+                return (db_client.client.table("messages")
+                    .select("id", count="exact")
+                    .eq("conversation_id", conversation_id)
+                    .execute())
+
+            def _get_last_n_messages(offset, limit):
+                return (db_client.client.table("messages")
+                    .select("role,content,created_at,user_id")
+                    .eq("conversation_id", conversation_id)
+                    .order("created_at")
+                    .range(offset, offset + limit - 1)
+                    .execute())
 
             if previous_summary:
                 # Get messages since the last summary
                 last_summary_time = previous_summary['created_at']
-                query = query.gt("created_at", last_summary_time)
                 print(f"            📅 Getting messages since last summary: {last_summary_time}")
+                result = await asyncio.to_thread(_get_messages_since_summary, last_summary_time)
             else:
                 # No previous summary - get the last 10 messages for first summarization
                 # First count total messages
-                count_result = (db_client.client.table("messages")
-
-                    .select("id", count="exact")
-
-                    .eq("conversation_id", conversation_id)
-
-                    .execute())
+                count_result = await asyncio.to_thread(_count_messages)
                 total_messages = count_result.count
 
                 if total_messages > 10:
                     # Skip earlier messages, get only the latest 10
                     offset = total_messages - 10
-                    query = query.range(offset, offset + 9)  # range is inclusive
+                    result = await asyncio.to_thread(_get_last_n_messages, offset, 10)
+                else:
+                    # Get all messages if 10 or fewer
+                    result = await asyncio.to_thread(_get_last_n_messages, 0, total_messages)
 
                 print(f"            🆕 No previous summary - getting last 10 of {total_messages} total messages")
 
-            result = query.execute()
             messages = result.data if result.data else []
             print(f"            ✅ Retrieved {len(messages)} recent messages")
             return messages
@@ -1299,32 +1327,31 @@ class ConversationConsolidator:
             print(f"\n         🔍 RETRIEVING CROSS-CONVERSATION CONTEXT:")
             print(f"            👤 User: {user_id}")
 
-            # Get user context using the simplified database function
-            query = "SELECT * FROM get_user_context_from_conversations(%s)"
-            conn = await self.db_manager.get_connection()
-            async with conn as connection:
-                cur = await connection.cursor()
-                async with cur:
-                    await cur.execute(query, (user_id,))
-                    result = await cur.fetchone()
+            # Get user context using Supabase RPC call  
+            from database import db_client
+            
+            def _get_user_context():
+                return db_client.client.rpc('get_user_context_from_conversations', {'target_user_id': user_id}).execute()
+            
+            result = await asyncio.to_thread(_get_user_context)
 
-                    if result:
-                        print(f"            ✅ Found user context")
-                        latest_summary, conversation_count, latest_conversation_id, has_history = result
-                        return {
-                            "latest_summary": latest_summary,
-                            "conversation_count": conversation_count or 0,
-                            "latest_conversation_id": str(latest_conversation_id) if latest_conversation_id else None,
-                            "has_history": bool(has_history)
-                        }
-                    else:
-                        print(f"            📝 No context found - new user")
-                        return {
-                            "latest_summary": "New user - no conversation history yet.",
-                            "conversation_count": 0,
-                            "latest_conversation_id": None,
-                            "has_history": False
-                        }
+            if result.data and len(result.data) > 0:
+                print(f"            ✅ Found user context")
+                context_data = result.data[0]
+                return {
+                    "latest_summary": context_data.get("latest_summary"),
+                    "conversation_count": context_data.get("conversation_count", 0),
+                    "latest_conversation_id": str(context_data.get("latest_conversation_id")) if context_data.get("latest_conversation_id") else None,
+                    "has_history": bool(context_data.get("has_history", False))
+                }
+            else:
+                print(f"            📝 No context found - new user")
+                return {
+                    "latest_summary": "New user - no conversation history yet.",
+                    "conversation_count": 0,
+                    "latest_conversation_id": None,
+                    "has_history": False
+                }
 
         except Exception as e:
             print(f"            ❌ Error retrieving user context: {e}")
@@ -1647,7 +1674,7 @@ class MemoryManager:
                 self.llm = self._create_memory_llm()
 
             if self.embeddings is None:
-                self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+                self.embeddings = OpenAIEmbeddings()
 
             # Initialize long-term memory store
             self.long_term_store = SupabaseLongTermMemoryStore(

@@ -543,3 +543,37 @@ async def get_memory_stats():
     except Exception as e:
         logger.error(f"Error retrieving memory statistics: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve statistics: {str(e)}")
+
+
+@router.get("/connection-pool-status")
+async def get_db_connection_pool_status():
+    """Get current database connection pool status for monitoring connection usage."""
+    try:
+        from agents.tools import get_connection_pool_status
+        pool_status = await get_connection_pool_status()
+        
+        return APIResponse(
+            success=True,
+            message="Connection pool status retrieved successfully",
+            data=pool_status
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving connection pool status: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve connection pool status: {str(e)}")
+
+
+@router.post("/close-connections")
+async def close_db_connections():
+    """Close all database connections to free up the connection pool (use in emergencies)."""
+    try:
+        from agents.tools import close_database_connections
+        await close_database_connections()
+        
+        return APIResponse(
+            success=True,
+            message="Database connections closed successfully",
+            data={"connections_closed": True}
+        )
+    except Exception as e:
+        logger.error(f"Error closing database connections: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to close connections: {str(e)}")

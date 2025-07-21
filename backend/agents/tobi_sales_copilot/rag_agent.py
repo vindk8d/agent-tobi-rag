@@ -9,8 +9,10 @@ from uuid import uuid4, UUID
 import logging
 import sys
 import asyncio
+import os
 
 from langgraph.graph import StateGraph, START, END
+from langgraph.errors import GraphInterrupt
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
     HumanMessage,
@@ -21,41 +23,19 @@ from langchain_core.messages import (
 )
 from langsmith import traceable
 
-# Handle both relative and absolute imports for LangGraph Studio compatibility
-try:
-    from .state import AgentState
-    from ..tools import get_all_tools, get_tool_names
-    from ..memory import memory_manager, memory_scheduler, context_manager
-    from ..tools import UserContext
-    from ...config import get_settings, setup_langsmith_tracing
-except ImportError:
-    # Fallback to absolute imports when loaded directly by LangGraph Studio
-    # Use explicit path resolution WITHOUT calling resolve() to avoid os.getcwd()
-    import pathlib
+# Import strategy for LangGraph Studio compatibility
+# Add backend directory to path for absolute imports
+import pathlib
+backend_path = pathlib.Path(__file__).parent.parent.parent
+if str(backend_path) not in sys.path:
+    sys.path.insert(0, str(backend_path))
 
-    # Get the absolute path of this file without using os.getcwd()
-    current_file = pathlib.Path(__file__).absolute()
-
-    # Navigate to parent directories without using resolve()
-    # This file is in backend/agents/tobi_sales_copilot/rag_agent.py, so we need to go up three levels
-    copilot_dir = current_file.parent  # backend/agents/tobi_sales_copilot/
-    agents_dir = copilot_dir.parent  # backend/agents/
-    backend_dir = agents_dir.parent  # backend/
-    project_root = backend_dir.parent  # project root
-
-    # Use absolute path without resolve() to avoid blocking calls
-    project_root_str = str(project_root)
-
-    # Only add to sys.path if not already present
-    if project_root_str not in sys.path:
-        sys.path.insert(0, project_root_str)
-
-    # Now import with absolute paths
-    from agents.tobi_sales_copilot.state import AgentState
-    from agents.tools import get_all_tools, get_tool_names
-    from agents.memory import memory_manager, memory_scheduler, context_manager
-    from agents.tools import UserContext
-    from config import get_settings, setup_langsmith_tracing
+# Now use absolute imports
+from agents.tobi_sales_copilot.state import AgentState
+from agents.tools import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
+from agents.memory import memory_manager, memory_scheduler, context_manager
+from config import get_settings, setup_langsmith_tracing
+from database import db_client
 
 logger = logging.getLogger(__name__)
 
@@ -126,49 +106,46 @@ class UnifiedToolCallingRAGAgent:
 
         graph = StateGraph(AgentState)
 
-        # Add nodes with automatic checkpointing between steps
-        graph.add_node("employee_verification", self._employee_verification_node)
-        graph.add_node("memory_preparation", self._memory_preparation_node)
-        graph.add_node("agent", self._unified_agent_node)
-        graph.add_node("memory_update", self._memory_update_node)
+                # Add nodes with automatic checkpointing between steps
+        graph.add_node("user_verification", self._user_verification_node)
+        graph.add_node("employee_agent", self._employee_agent_node)
+        graph.add_node("customer_agent", self._customer_agent_node)
 
-        # Graph flow with employee verification gate
-        graph.add_edge(START, "employee_verification")
+        # Simplified graph flow with direct routing from user verification
+        graph.add_edge(START, "user_verification")
 
-        # Conditional edge: if employee verified, continue to memory_preparation, else go to END
+        # Direct conditional routing from user verification to appropriate agent
         graph.add_conditional_edges(
-            "employee_verification",
-            self._should_continue_after_verification,
-            {"continue": "memory_preparation", "end": END},
+            "user_verification",
+            self._route_after_user_verification,
+            {"employee_agent": "employee_agent", "customer_agent": "customer_agent", "end": END},
         )
-
-        graph.add_edge("memory_preparation", "agent")
-        graph.add_edge("agent", "memory_update")
-        graph.add_edge("memory_update", END)
+        
+        # Both agents go directly to END (interrupts handled within nodes)
+        graph.add_edge("employee_agent", END)
+        graph.add_edge("customer_agent", END)
 
         # Compile with checkpointer for automatic persistence between steps
         return graph.compile(checkpointer=checkpointer)
 
-    @traceable(name="employee_verification_node")
-    async def _employee_verification_node(
+    @traceable(name="user_verification_node")
+    async def _user_verification_node(
         self, state: AgentState, config: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        Verify if the user is an active employee in the CRM database.
-        If not, deny access and return to the START node.
+        Verify user access and determine user type (employee, customer, unknown).
+        Sets user_type in user context system for tool access control.
         """
         try:
             user_id = state.get("user_id")
 
             if not user_id:
                 logger.warning(
-                    "Access denied: No user_id provided for employee verification."
+                    "[USER_VERIFICATION_NODE] Access denied: No user_id provided"
                 )
                 # Return state with access denied message
-                from langchain_core.messages import AIMessage
-
                 error_message = AIMessage(
-                    content="Authentication required. Please ensure you're properly logged in as a company employee."
+                    content="Authentication required. Please ensure you're properly logged in."
                 )
 
                 return {
@@ -179,7 +156,7 @@ class UnifiedToolCallingRAGAgent:
                     "retrieved_docs": [],
                     "sources": [],
                     "long_term_context": [],
-                    "employee_verified": False,
+                    "user_verified": False,
                 }
 
             # Extract thread_id from config if no conversation_id is provided
@@ -189,28 +166,31 @@ class UnifiedToolCallingRAGAgent:
                 if thread_id:
                     conversation_id = str(thread_id)  # Keep as string, not UUID object
                     logger.info(
-                        f"Using thread_id {thread_id} as conversation_id for persistence"
+                        f"[USER_VERIFICATION_NODE] Using thread_id {thread_id} as conversation_id for persistence"
                     )
 
-            logger.info(f"Verifying employee access for user: {user_id}")
+            logger.info(f"[USER_VERIFICATION_NODE] Verifying user access for user: {user_id}")
 
-            # Verify employee access
-            is_employee = await self._verify_employee_access(user_id)
+            # Verify user access and get user type
+            user_type = await self._verify_user_access(user_id)
+            logger.info(f"[USER_VERIFICATION_NODE] User type determined: {user_type}")
 
-            if not is_employee:
-                logger.warning(f"Access denied for non-employee user: {user_id}")
+            # Set user type in user context system (not in AgentState)
+            with UserContext(user_id=user_id, conversation_id=conversation_id, user_type=user_type):
+                logger.info(f"[USER_VERIFICATION_NODE] User context set - user_type: {user_type}")
+
+            if user_type == "unknown":
+                logger.warning(f"[USER_VERIFICATION_NODE] Access denied for unknown user: {user_id}")
                 # Return state with access denied message
-                from langchain_core.messages import AIMessage
-
                 error_message = AIMessage(
-                    content="""I apologize, but I'm a sales support assistant designed exclusively for company employees.
+                    content="""I apologize, but I'm unable to verify your access to the system.
 
-If you're a customer looking for assistance, please:
-- Visit our website or contact our customer service
-- Speak with one of our sales representatives
-- Call our customer support hotline
+This could be due to:
+- Your account may be inactive or suspended
+- You may not have the necessary permissions
+- There may be a temporary system issue
 
-If you're an employee and believe this is an error, please contact your system administrator."""
+Please contact your system administrator for assistance, or try again later."""
                 )
 
                 return {
@@ -221,12 +201,13 @@ If you're an employee and believe this is an error, please contact your system a
                     "retrieved_docs": [],
                     "sources": [],
                     "long_term_context": [],
-                    "employee_verified": False,
+                    "user_verified": False,
                 }
 
-            logger.info(f"Employee access verified for user: {user_id}")
+            # Access granted for employee or customer
+            logger.info(f"[USER_VERIFICATION_NODE] ✅ Access granted for {user_type} user: {user_id}")
 
-            # Return full state with employee verification flag
+            # Return full state with user verification flag
             return {
                 "messages": state.get("messages", []),
                 "conversation_id": conversation_id,
@@ -235,14 +216,13 @@ If you're an employee and believe this is an error, please contact your system a
                 "retrieved_docs": state.get("retrieved_docs", []),
                 "sources": state.get("sources", []),
                 "long_term_context": state.get("long_term_context", []),
-                "employee_verified": True,
+                "user_verified": True,
+                "user_type": user_type,  # Add user_type to state for debugging (not stored)
             }
 
         except Exception as e:
-            logger.error(f"Error in employee verification node: {str(e)}")
+            logger.error(f"[USER_VERIFICATION_NODE] Error in user verification node: {str(e)}")
             # On error, deny access for security
-            from langchain_core.messages import AIMessage
-
             error_message = AIMessage(
                 content="I'm temporarily unable to verify your access. Please try again later or contact your system administrator."
             )
@@ -255,50 +235,103 @@ If you're an employee and believe this is an error, please contact your system a
                 "retrieved_docs": [],
                 "sources": [],
                 "long_term_context": [],
-                "employee_verified": False,
+                "user_verified": False,
             }
 
-    def _should_continue_after_verification(self, state: Dict[str, Any]) -> str:
+
+
+    def _route_after_user_verification(self, state: Dict[str, Any]) -> str:
         """
-        Determine if the graph should continue to the next node (memory_preparation)
-        based on the result of the employee_verification_node.
+        Route users directly from verification to the appropriate agent node based on user type.
+        
+        Args:
+            state: Current agent state containing user_verified and user_type
+            
+        Returns:
+            str: Node name to route to ('employee_agent', 'customer_agent', or 'end')
         """
-        if state.get("employee_verified", False):
-            return "continue"
+        # First check if user is verified
+        if not state.get("user_verified", False):
+            logger.info(f"[ROUTING] User not verified - ending conversation")
+            return "end"
+        
+        # Route verified users based on user type
+        user_type = state.get("user_type", "unknown")
+        user_id = state.get("user_id", "unknown")
+        
+        logger.info(f"[ROUTING] Routing verified user {user_id} with user_type: {user_type}")
+        
+        if user_type in ["employee", "admin"]:
+            logger.info(f"[ROUTING] ✅ Routing {user_type} user directly to employee_agent")
+            return "employee_agent"
+        elif user_type == "customer":
+            logger.info(f"[ROUTING] ✅ Routing customer user directly to customer_agent")
+            return "customer_agent"
         else:
+            # This should never happen if user_verification works correctly
+            logger.error(f"[ROUTING] ❌ UNEXPECTED: Unknown user_type '{user_type}' for verified user - ending conversation for safety")
             return "end"
 
-    @traceable(name="memory_preparation_node")
-    async def _memory_preparation_node(
+
+
+    @traceable(name="employee_agent_node")
+    async def _employee_agent_node(
         self, state: AgentState, config: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        Prepare conversation memory with long-term context retrieval.
-        LangGraph handles short-term persistence automatically.
+        Employee agent node that handles complete workflow for employee users:
+        1. Memory preparation (context retrieval)
+        2. Tool calling and execution with full access
+        3. Memory update (context storage)
+        
+        Follows LangChain best practices for tool calling workflow.
         """
         try:
+            # Ensure initialization before processing
             await self._ensure_initialized()
 
+            # Validate user context at node entry
+            user_type = state.get("user_type", "unknown")
+            user_id = state.get("user_id")
+            
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Starting complete workflow for user_type: {user_type}, user_id: {user_id}")
+            
+            # Employee agent should only process employee users
+            if user_type not in ["employee", "admin"]:
+                logger.warning(f"[EMPLOYEE_AGENT_NODE] Invalid user_type '{user_type}' for employee agent - should not reach here")
+                error_message = AIMessage(
+                    content="I apologize, but there seems to be a routing error. Please try your request again."
+                )
+                
+                return {
+                    "messages": state.get("messages", []) + [error_message],
+                    "sources": [],
+                    "retrieved_docs": [],
+                    "conversation_id": state.get("conversation_id"),
+                    "user_id": user_id,
+                    "conversation_summary": state.get("conversation_summary"),
+                    "user_verified": state.get("user_verified", True),
+                }
+
+            # =================================================================
+            # STEP 1: MEMORY PREPARATION (integrated from memory_preparation_node)
+            # =================================================================
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Step 1: Memory preparation")
+            
             messages = state.get("messages", [])
             conversation_id = state.get("conversation_id")
-            user_id = state.get("user_id")
 
             # Extract thread_id from config if no conversation_id is provided
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
                 if thread_id:
-                    conversation_id = str(thread_id)  # Keep as string, not UUID object
-                    logger.info(
-                        f"Using thread_id {thread_id} as conversation_id for persistence"
-                    )
+                    conversation_id = str(thread_id)
+                    logger.info(f"[EMPLOYEE_AGENT_NODE] Using thread_id {thread_id} as conversation_id for persistence")
 
-            logger.info(
-                f"Memory preparation for conversation {conversation_id}: {len(messages)} messages"
-            )
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Memory preparation for conversation {conversation_id}: {len(messages)} messages")
 
             # Store incoming user messages to database
             if messages and config:
-                # Find the most recent human message to store
                 for msg in reversed(messages):
                     if hasattr(msg, "type") and msg.type == "human":
                         await self.memory_manager.store_message_from_agent(
@@ -309,27 +342,15 @@ If you're an employee and believe this is an error, please contact your system a
                         )
                         break
 
-            # Get cross-conversation user context (ensures latest summary encompasses all previous conversations)
+            # Get cross-conversation user context
             user_context = {}
             long_term_context = []
             if user_id:
-                print(f"         🔍 Getting user context for: {user_id}")
-                user_context = (
-                    await self.memory_manager.get_user_context_for_new_conversation(
-                        user_id
-                    )
-                )
-
-                # Add user's latest conversation summary to the conversation
+                user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
                 if user_context.get("has_history", False):
                     latest_summary = user_context.get("latest_summary", "")
-                    print(
-                        f"         📚 Found user history: {len(latest_summary)} chars"
-                    )
-
-                    # Create system message with user's context from latest conversation
-                    from langchain_core.messages import SystemMessage
-
+                    logger.info(f"[EMPLOYEE_AGENT_NODE] Found user history: {len(latest_summary)} chars")
+                    
                     system_context = SystemMessage(
                         content=f"""
 USER CONTEXT (from latest conversation summary):
@@ -341,19 +362,18 @@ CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
 Use this context to provide personalized, contextually aware responses that build on previous interactions.
 """
                     )
-                    # Add system context to the beginning of messages
                     messages = [system_context] + messages
-                    print(
-                        f"         ✅ Added comprehensive user context to conversation"
-                    )
+                    logger.info("[EMPLOYEE_AGENT_NODE] Added comprehensive user context to conversation")
 
-            # Get relevant long-term context if we have a user query
+            # Get relevant long-term context for current query
             if user_id and messages:
-                # Extract current query for context retrieval
                 current_query = ""
                 for msg in reversed(messages):
                     if hasattr(msg, "type") and msg.type == "human":
                         current_query = msg.content
+                        break
+                    elif isinstance(msg, dict) and msg.get("role") == "human":
+                        current_query = msg.get("content", "")
                         break
 
                 if current_query:
@@ -361,161 +381,15 @@ Use this context to provide personalized, contextually aware responses that buil
                         user_id, current_query, max_contexts=3
                     )
                     if long_term_context:
-                        logger.info(
-                            f"Retrieved {len(long_term_context)} relevant context items"
-                        )
+                        logger.info(f"[EMPLOYEE_AGENT_NODE] Retrieved {len(long_term_context)} relevant context items")
+            
+            # =================================================================
+            # STEP 2: TOOL EXECUTION (main agent logic)
+            # =================================================================
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Step 2: Tool execution")
 
-            # Return state with long-term context
-            return {
-                "messages": messages,
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "conversation_summary": state.get("conversation_summary"),
-                "retrieved_docs": state.get("retrieved_docs", []),
-                "sources": state.get("sources", []),
-                "long_term_context": long_term_context,
-                "employee_verified": state.get(
-                    "employee_verified", True
-                ),  # Preserve verification status
-            }
-
-        except Exception as e:
-            logger.error(f"Error in memory preparation node: {str(e)}")
-            # Return original state on error
-            return state
-
-    @traceable(name="memory_update_node")
-    async def _memory_update_node(
-        self, state: AgentState, config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Update long-term memory after agent execution.
-        LangGraph handles short-term persistence automatically.
-        """
-        print(f"\n🚨 MEMORY UPDATE NODE CALLED! 🚨")
-        print(f"   ⏰ Timestamp: {datetime.now()}")
-        try:
-            await self._ensure_initialized()
-
-            messages = state.get("messages", [])
-            conversation_id = state.get("conversation_id")
-            user_id = state.get("user_id")
-            current_summary = state.get("conversation_summary")
-
-            print(f"\n🔄 MEMORY UPDATE NODE DEBUG:")
-            print(f"   📊 State info:")
-            print(f"      - Messages count: {len(messages)}")
-            print(f"      - Conversation ID: {conversation_id}")
-            print(f"      - User ID: {user_id}")
-            print(f"      - Has summary: {current_summary is not None}")
-            print(f"      - Config available: {config is not None}")
-
-            # Extract thread_id from config if no conversation_id is provided
-            if not conversation_id and config:
-                thread_id = config.get("configurable", {}).get("thread_id")
-                print(f"      - Thread ID from config: {thread_id}")
-                if thread_id:
-                    conversation_id = UUID(thread_id)
-                    print(f"      ✅ Using thread_id {thread_id} as conversation_id")
-                    logger.info(
-                        f"Using thread_id {thread_id} as conversation_id for persistence"
-                    )
-
-            logger.info(
-                f"Memory update for conversation {conversation_id}: {len(messages)} messages"
-            )
-
-            # Store agent response messages to database
-            if messages and config:
-                # Find the most recent AI message to store
-                for msg in reversed(messages):
-                    if hasattr(msg, "type") and msg.type == "ai":
-                        await self.memory_manager.store_message_from_agent(
-                            message=msg,
-                            config=config,
-                            agent_type="rag",
-                            user_id=user_id,
-                        )
-                        break
-
-            # Store important information in long-term memory
-            if user_id and messages and len(messages) >= 2:
-                # Check if this conversation contains storable information using generic infrastructure
-                if await self.memory_manager.should_store_memory("rag", messages):
-                    # Extract and store insights using RAG-specific plugins
-                    recent_messages = messages[-3:] if len(messages) >= 3 else messages
-                    await self.memory_manager.store_conversation_insights(
-                        "rag", user_id, recent_messages, conversation_id
-                    )
-
-            # Check if automatic conversation summarization should be triggered
-            print(f"\n   🤖 SUMMARIZATION CHECK:")
-            if user_id and conversation_id:
-                print(
-                    f"      ✅ Prerequisites met (user_id: {user_id[:12]}..., conversation_id: {str(conversation_id)[:8]}...)"
-                )
-                try:
-                    print(f"      🔍 Calling check_and_trigger_summarization...")
-                    summary = await self.memory_manager.consolidator.check_and_trigger_summarization(
-                        str(conversation_id), user_id
-                    )
-                    if summary:
-                        print(
-                            f"      ✅ SUMMARIZATION TRIGGERED! Summary length: {len(summary)} chars"
-                        )
-                        logger.info(
-                            f"Conversation {conversation_id} automatically summarized"
-                        )
-                    else:
-                        print(
-                            f"      ℹ️  No summarization triggered (likely insufficient messages)"
-                        )
-                except Exception as e:
-                    print(f"      ❌ Error in automatic summarization: {e}")
-                    logger.error(f"Error in automatic summarization: {e}")
-            else:
-                print(f"      ❌ Prerequisites not met:")
-                print(f"         - user_id present: {user_id is not None}")
-                print(
-                    f"         - conversation_id present: {conversation_id is not None}"
-                )
-
-            logger.info(f"Memory update complete: long-term context processed")
-
-            print(f"\n   ✅ MEMORY UPDATE NODE COMPLETED")
-            print(f"      📊 Final status:")
-            print(f"         - Messages processed: {len(messages)}")
-            print(
-                f"         - Long-term storage: {'✅' if user_id and len(messages) >= 2 else '❌'}"
-            )
-            print(
-                f"         - Summarization check: {'✅' if user_id and conversation_id else '❌'}"
-            )
-            print(f"      🔄 Returning state to LangGraph...")
-
-            # Return state unchanged - LangGraph handles persistence automatically
-            return state
-
-        except Exception as e:
-            print(f"\n   ❌ MEMORY UPDATE NODE ERROR: {str(e)}")
-            logger.error(f"Error in memory update node: {str(e)}")
-            # Return original state on error
-            return state
-
-    @traceable(name="unified_agent_node")
-    async def _unified_agent_node(
-        self, state: AgentState, config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Unified agent node that handles tool calling and execution.
-        Follows LangChain best practices for tool calling workflow.
-        """
-        try:
-            # Ensure initialization before processing
-            await self._ensure_initialized()
-
-            # Extract current query from messages for logging
-            original_messages = state.get("messages", [])
+            # Use messages from memory preparation (includes user context)
+            original_messages = messages
             current_query = "No query"
             for msg in reversed(original_messages):
                 if hasattr(msg, "type") and msg.type == "human":
@@ -530,8 +404,8 @@ Use this context to provide personalized, contextually aware responses that buil
             thread_id = (
                 config.get("configurable", {}).get("thread_id") if config else None
             )
-            logger.info(f"Agent processing query: {current_query}")
-            logger.info(f"Thread ID: {thread_id}, Conversation ID: {conversation_id}")
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Processing query: {current_query}")
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Thread ID: {thread_id}, Conversation ID: {conversation_id}")
 
             # Simple model selection - use default chat model
             # Tools handle their own dynamic model selection internally
@@ -553,7 +427,7 @@ Use this context to provide personalized, contextually aware responses that buil
             # Log context management information
             if trim_stats["trimmed_message_count"] > 0:
                 logger.info(
-                    f"Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
+                    f"[EMPLOYEE_AGENT_NODE] Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
                     f"final token count: {trim_stats['final_token_count']}"
                 )
 
@@ -574,11 +448,11 @@ Use this context to provide personalized, contextually aware responses that buil
                 api_key=self.settings.openai_api_key,
             ).bind_tools(self.tools)
 
-            logger.info(f"Using model: {selected_model} for query processing")
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Using model: {selected_model} for employee query processing")
 
             while iteration < max_tool_iterations:
                 iteration += 1
-                logger.info(f"Agent iteration {iteration}")
+                logger.info(f"[EMPLOYEE_AGENT_NODE] Agent iteration {iteration}")
 
                 # Call the model with dynamically selected LLM
                 response = await llm.ainvoke(processing_messages)
@@ -605,14 +479,16 @@ Use this context to provide personalized, contextually aware responses that buil
                                 # Set user context for tools that need access to user information
                                 user_id = state.get("user_id")
                                 conversation_id = state.get("conversation_id")
+                                user_type = state.get("user_type", "unknown")
 
                                 with UserContext(
-                                    user_id=user_id, conversation_id=conversation_id
+                                    user_id=user_id, conversation_id=conversation_id, user_type=user_type
                                 ):
                                     # Check if tool is async by examining the underlying function
                                     if tool_name in [
                                         "simple_rag",
                                         "simple_query_crm_data",
+                                        "trigger_customer_message",
                                     ]:
                                         # Handle async tools
                                         tool_result = await tool.ainvoke(tool_args)
@@ -620,7 +496,9 @@ Use this context to provide personalized, contextually aware responses that buil
                                         # Handle sync tools
                                         tool_result = tool.invoke(tool_args)
 
-                                # Add tool result to messages
+
+
+                                # Add tool result to messages (for non-interrupt tools)
                                 tool_message = ToolMessage(
                                     content=str(tool_result),
                                     tool_call_id=tool_call_id,
@@ -639,6 +517,11 @@ Use this context to provide personalized, contextually aware responses that buil
                                 )
                                 processing_messages.append(tool_message)
 
+                        except GraphInterrupt as e:
+                            # Tool triggered human-in-the-loop interrupt (this is expected behavior)
+                            logger.info(f"Tool '{tool_name}' triggered human-in-the-loop interrupt: {str(e)}")
+                            # Re-raise the interrupt so LangGraph can handle it properly
+                            raise e
                         except Exception as e:
                             # Tool execution failed
                             error_msg = f"Error executing tool '{tool_name}': {str(e)}"
@@ -676,29 +559,66 @@ Use this context to provide personalized, contextually aware responses that buil
                     updated_messages.append(msg)
 
             # Extract thread_id from config if needed for conversation_id
-            conversation_id = state.get("conversation_id")
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
                 if thread_id:
                     conversation_id = UUID(thread_id)
 
-            # Update state with original messages preserved plus new responses
+            # =================================================================
+            # STEP 3: MEMORY UPDATE (integrated from memory_update_node)
+            # =================================================================
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Step 3: Memory update")
+            
+            # Store agent response messages to database
+            if updated_messages and config:
+                for msg in reversed(updated_messages):
+                    if hasattr(msg, "type") and msg.type == "ai":
+                        await self.memory_manager.store_message_from_agent(
+                            message=msg,
+                            config=config,
+                            agent_type="rag",
+                            user_id=user_id,
+                        )
+                        break
+
+            # Store important information in long-term memory
+            if user_id and updated_messages and len(updated_messages) >= 2:
+                if await self.memory_manager.should_store_memory("rag", updated_messages):
+                    recent_messages = updated_messages[-3:] if len(updated_messages) >= 3 else updated_messages
+                    await self.memory_manager.store_conversation_insights(
+                        "rag", user_id, recent_messages, conversation_id
+                    )
+
+            # Check if automatic conversation summarization should be triggered
+            if user_id and conversation_id:
+                try:
+                    summary = await self.memory_manager.consolidator.check_and_trigger_summarization(
+                        str(conversation_id), user_id
+                    )
+                    if summary:
+                        logger.info(f"[EMPLOYEE_AGENT_NODE] Conversation {conversation_id} automatically summarized")
+                except Exception as e:
+                    logger.error(f"[EMPLOYEE_AGENT_NODE] Error in automatic summarization: {e}")
+
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Complete workflow finished successfully")
+
+            # Return final state
             return {
                 "messages": updated_messages,
                 "sources": sources,
                 "retrieved_docs": state.get("retrieved_docs", []),
                 "conversation_id": conversation_id,
                 "user_id": state.get("user_id"),
-                "conversation_summary": state.get(
-                    "conversation_summary"
-                ),  # Preserve existing summary
-                "employee_verified": state.get(
-                    "employee_verified", True
-                ),  # Preserve verification status
+                "conversation_summary": state.get("conversation_summary"),
+                "user_verified": state.get("user_verified", True),
             }
 
+        except GraphInterrupt:
+            # Human-in-the-loop interrupt is expected behavior - re-raise it
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Human-in-the-loop interrupt triggered, passing to LangGraph")
+            raise
         except Exception as e:
-            logger.error(f"Error in unified agent node: {str(e)}")
+            logger.error(f"[EMPLOYEE_AGENT_NODE] Error in employee agent node: {str(e)}")
             # Add error message to the conversation
             original_messages = state.get("messages", [])
             error_message = AIMessage(
@@ -723,10 +643,418 @@ Use this context to provide personalized, contextually aware responses that buil
                 "conversation_summary": state.get(
                     "conversation_summary"
                 ),  # Preserve existing summary
-                "employee_verified": state.get(
-                    "employee_verified", True
+                "user_verified": state.get(
+                    "user_verified", True
                 ),  # Preserve verification status
             }
+
+    @traceable(name="customer_agent_node")
+    async def _customer_agent_node(
+        self, state: AgentState, config: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Customer agent node that handles complete workflow for customer users:
+        1. Memory preparation (context retrieval)
+        2. Tool calling and execution with restricted access
+        3. Memory update (context storage)
+        
+        Implements table-level restrictions for customer CRM access (vehicles/pricing only).
+        Follows LangChain best practices for tool calling workflow.
+        """
+        try:
+            # Ensure initialization before processing
+            await self._ensure_initialized()
+
+            # Validate user context at node entry
+            user_type = state.get("user_type", "unknown")
+            user_id = state.get("user_id")
+            
+            logger.info(f"[CUSTOMER_AGENT_NODE] Starting complete workflow for user_type: {user_type}, user_id: {user_id}")
+            
+            # Customer agent should only process customer users
+            if user_type not in ["customer"]:
+                logger.warning(f"[CUSTOMER_AGENT_NODE] Invalid user_type '{user_type}' for customer agent - should not reach here")
+                error_message = AIMessage(
+                    content="I apologize, but there seems to be a routing error. Please try your request again."
+                )
+                
+                return {
+                    "messages": state.get("messages", []) + [error_message],
+                    "sources": [],
+                    "retrieved_docs": [],
+                    "conversation_id": state.get("conversation_id"),
+                    "user_id": user_id,
+                    "conversation_summary": state.get("conversation_summary"),
+                    "user_verified": state.get("user_verified", True),
+                }
+
+            # =================================================================
+            # STEP 1: MEMORY PREPARATION (integrated from memory_preparation_node)
+            # =================================================================
+            logger.info(f"[CUSTOMER_AGENT_NODE] Step 1: Memory preparation")
+            
+            messages = state.get("messages", [])
+            conversation_id = state.get("conversation_id")
+
+            # Extract thread_id from config if no conversation_id is provided
+            if not conversation_id and config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+                if thread_id:
+                    conversation_id = str(thread_id)
+                    logger.info(f"[CUSTOMER_AGENT_NODE] Using thread_id {thread_id} as conversation_id for persistence")
+
+            logger.info(f"[CUSTOMER_AGENT_NODE] Memory preparation for conversation {conversation_id}: {len(messages)} messages")
+
+            # Store incoming user messages to database
+            if messages and config:
+                for msg in reversed(messages):
+                    if hasattr(msg, "type") and msg.type == "human":
+                        await self.memory_manager.store_message_from_agent(
+                            message=msg,
+                            config=config,
+                            agent_type="rag",
+                            user_id=user_id,
+                        )
+                        break
+
+            # Get cross-conversation user context
+            user_context = {}
+            long_term_context = []
+            if user_id:
+                user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
+                if user_context.get("has_history", False):
+                    latest_summary = user_context.get("latest_summary", "")
+                    logger.info(f"[CUSTOMER_AGENT_NODE] Found user history: {len(latest_summary)} chars")
+                    
+                    system_context = SystemMessage(
+                        content=f"""
+USER CONTEXT (from latest conversation summary):
+
+{latest_summary}
+
+CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
+
+Use this context to provide personalized, contextually aware responses that build on previous interactions.
+"""
+                    )
+                    messages = [system_context] + messages
+                    logger.info("[CUSTOMER_AGENT_NODE] Added comprehensive user context to conversation")
+
+            # Get relevant long-term context for current query
+            if user_id and messages:
+                current_query = ""
+                for msg in reversed(messages):
+                    if hasattr(msg, "type") and msg.type == "human":
+                        current_query = msg.content
+                        break
+
+                if current_query:
+                    long_term_context = await self.memory_manager.get_relevant_context(
+                        user_id, current_query, max_contexts=3
+                    )
+                    if long_term_context:
+                        logger.info(f"[CUSTOMER_AGENT_NODE] Retrieved {len(long_term_context)} relevant context items")
+            
+            # =================================================================
+            # STEP 2: TOOL EXECUTION (main agent logic)
+            # =================================================================
+            logger.info(f"[CUSTOMER_AGENT_NODE] Step 2: Tool execution")
+
+            # Use messages from memory preparation (includes user context)
+            original_messages = messages
+            current_query = "No query"
+            for msg in reversed(original_messages):
+                if hasattr(msg, "type") and msg.type == "human":
+                    current_query = msg.content
+                    break
+                elif isinstance(msg, dict) and msg.get("role") == "human":
+                    current_query = msg.get("content", "")
+                    break
+
+            # Log thread_id and conversation_id for debugging
+            conversation_id = state.get("conversation_id")
+            thread_id = (
+                config.get("configurable", {}).get("thread_id") if config else None
+            )
+            logger.info(f"[CUSTOMER_AGENT_NODE] Processing query: {current_query}")
+            logger.info(f"[CUSTOMER_AGENT_NODE] Thread ID: {thread_id}, Conversation ID: {conversation_id}")
+
+            # Use customer-specific model selection
+            selected_model = self.settings.openai_chat_model
+
+            # Get customer-specific system prompt
+            system_prompt = self._get_customer_system_prompt()
+
+            # Apply context window management to prevent overflow
+            trimmed_messages, trim_stats = (
+                await context_manager.trim_messages_for_context(
+                    messages=original_messages,
+                    model=selected_model,
+                    system_prompt=system_prompt,
+                    max_messages=self.settings.memory.max_messages,
+                )
+            )
+
+            # Log context management information
+            if trim_stats["trimmed_message_count"] > 0:
+                logger.info(
+                    f"[CUSTOMER_AGENT_NODE] Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
+                    f"final token count: {trim_stats['final_token_count']}"
+                )
+
+            # Build processing messages with customer system prompt and trimmed conversation
+            processing_messages = [
+                SystemMessage(content=system_prompt)
+            ] + trimmed_messages
+
+            # Get customer-specific tools (restricted access)
+            customer_tools = get_tools_for_user_type(user_type="customer")
+            
+            # Create LLM with selected model and bind customer tools
+            llm = ChatOpenAI(
+                model=selected_model,
+                temperature=self.settings.openai_temperature,
+                max_tokens=self.settings.openai_max_tokens,
+                api_key=self.settings.openai_api_key,
+            ).bind_tools(customer_tools)
+
+            logger.info(f"[CUSTOMER_AGENT_NODE] Using model: {selected_model} for customer query processing")
+            logger.info(f"[CUSTOMER_AGENT_NODE] Customer tools available: {[tool.name for tool in customer_tools]}")
+
+            # Tool calling workflow for customers
+            max_tool_iterations = 3  
+            iteration = 0
+
+            while iteration < max_tool_iterations:
+                iteration += 1
+                logger.info(f"[CUSTOMER_AGENT_NODE] Agent iteration {iteration}")
+
+                # Call the model with customer tools
+                response = await llm.ainvoke(processing_messages)
+                processing_messages.append(response)
+
+                # Check if model wants to use tools
+                if hasattr(response, "tool_calls") and response.tool_calls:
+                    logger.info(f"[CUSTOMER_AGENT_NODE] Model called {len(response.tool_calls)} tools")
+
+                    # Execute the tools with customer restrictions
+                    for tool_call in response.tool_calls:
+                        tool_name = tool_call["name"]
+                        tool_args = tool_call["args"]
+                        tool_call_id = tool_call["id"]
+
+                        logger.info(f"[CUSTOMER_AGENT_NODE] Executing tool: {tool_name} with args: {tool_args}")
+
+                        try:
+                            # Get the tool and execute it
+                            customer_tool_map = {tool.name: tool for tool in customer_tools}
+                            tool = customer_tool_map.get(tool_name)
+                            if tool:
+                                # Set user context for customer tools
+                                user_id = state.get("user_id")
+                                conversation_id = state.get("conversation_id")
+                                user_type = state.get("user_type", "customer")
+
+                                with UserContext(
+                                    user_id=user_id, conversation_id=conversation_id, user_type=user_type
+                                ):
+                                    # Handle async tools
+                                    if tool_name in [
+                                        "simple_rag",
+                                        "simple_query_crm_data",
+                                        "trigger_customer_message",
+                                    ]:
+                                        tool_result = await tool.ainvoke(tool_args)
+                                    else:
+                                        tool_result = tool.invoke(tool_args)
+
+                                # Add tool result to messages
+                                tool_message = ToolMessage(
+                                    content=str(tool_result),
+                                    tool_call_id=tool_call_id,
+                                    name=tool_name,
+                                )
+                                processing_messages.append(tool_message)
+
+                            else:
+                                # Tool not found or not allowed for customers
+                                error_msg = f"Tool '{tool_name}' not available for customer users"
+                                logger.error(f"[CUSTOMER_AGENT_NODE] {error_msg}")
+                                tool_message = ToolMessage(
+                                    content=error_msg,
+                                    tool_call_id=tool_call_id,
+                                    name=tool_name,
+                                )
+                                processing_messages.append(tool_message)
+
+                        except GraphInterrupt as e:
+                            # Tool triggered human-in-the-loop interrupt (this is expected behavior)
+                            logger.info(f"[CUSTOMER_AGENT_NODE] Tool '{tool_name}' triggered human-in-the-loop interrupt: {str(e)}")
+                            # Re-raise the interrupt so LangGraph can handle it properly
+                            raise e
+                        except Exception as e:
+                            # Tool execution failed
+                            error_msg = f"Error executing tool '{tool_name}': {str(e)}"
+                            logger.error(f"[CUSTOMER_AGENT_NODE] {error_msg}")
+                            logger.error(f"[CUSTOMER_AGENT_NODE] Tool args that caused error: {tool_args}")
+                            tool_message = ToolMessage(
+                                content=error_msg,
+                                tool_call_id=tool_call_id,
+                                name=tool_name,
+                            )
+                            processing_messages.append(tool_message)
+
+                    # Continue to next iteration to let model process tool results
+                    continue
+                else:
+                    # Model didn't call tools, we have the final response
+                    logger.info("[CUSTOMER_AGENT_NODE] Model provided final response without tool calls")
+                    break
+
+            # If we exited the loop due to max iterations, ensure we get a final response
+            if iteration >= max_tool_iterations:
+                logger.info("[CUSTOMER_AGENT_NODE] Max tool iterations reached, getting final response")
+                final_response = await llm.ainvoke(processing_messages)
+                processing_messages.append(final_response)
+                logger.info("[CUSTOMER_AGENT_NODE] Generated final response after tool execution")
+
+            # Extract sources from messages and update state
+            sources = self._extract_sources_from_messages(processing_messages)
+
+            # Update the original messages with the AI responses (excluding system message)
+            updated_messages = list(original_messages)
+            for msg in processing_messages[1:]:  # Skip system message
+                if hasattr(msg, "type") and msg.type in ["ai", "tool"]:
+                    updated_messages.append(msg)
+
+            # Extract thread_id from config if needed for conversation_id
+            if not conversation_id and config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+                if thread_id:
+                    conversation_id = UUID(thread_id)
+
+            # =================================================================
+            # STEP 3: MEMORY UPDATE (integrated from memory_update_node)
+            # =================================================================
+            logger.info(f"[CUSTOMER_AGENT_NODE] Step 3: Memory update")
+            
+            # Store agent response messages to database
+            if updated_messages and config:
+                for msg in reversed(updated_messages):
+                    if hasattr(msg, "type") and msg.type == "ai":
+                        await self.memory_manager.store_message_from_agent(
+                            message=msg,
+                            config=config,
+                            agent_type="rag",
+                            user_id=user_id,
+                        )
+                        break
+
+            # Store important information in long-term memory
+            if user_id and updated_messages and len(updated_messages) >= 2:
+                if await self.memory_manager.should_store_memory("rag", updated_messages):
+                    recent_messages = updated_messages[-3:] if len(updated_messages) >= 3 else updated_messages
+                    await self.memory_manager.store_conversation_insights(
+                        "rag", user_id, recent_messages, conversation_id
+                    )
+
+            # Check if automatic conversation summarization should be triggered
+            if user_id and conversation_id:
+                try:
+                    summary = await self.memory_manager.consolidator.check_and_trigger_summarization(
+                        str(conversation_id), user_id
+                    )
+                    if summary:
+                        logger.info(f"[CUSTOMER_AGENT_NODE] Conversation {conversation_id} automatically summarized")
+                except Exception as e:
+                    logger.error(f"[CUSTOMER_AGENT_NODE] Error in automatic summarization: {e}")
+
+            logger.info(f"[CUSTOMER_AGENT_NODE] Complete workflow finished successfully")
+
+            # Return final state
+            return {
+                "messages": updated_messages,
+                "sources": sources,
+                "retrieved_docs": state.get("retrieved_docs", []),
+                "conversation_id": conversation_id,
+                "user_id": state.get("user_id"),
+                "conversation_summary": state.get("conversation_summary"),
+                "user_verified": state.get("user_verified", True),
+            }
+
+        except GraphInterrupt:
+            # Human-in-the-loop interrupt is expected behavior - re-raise it
+            logger.info(f"[CUSTOMER_AGENT_NODE] Human-in-the-loop interrupt triggered, passing to LangGraph")
+            raise
+        except Exception as e:
+            logger.error(f"[CUSTOMER_AGENT_NODE] Error in customer agent node: {str(e)}")
+            # Add error message to the conversation
+            original_messages = state.get("messages", [])
+            error_message = AIMessage(
+                content="I apologize, but I encountered an error while processing your request."
+            )
+            updated_messages = list(original_messages)
+            updated_messages.append(error_message)
+
+            # Extract thread_id from config if needed for conversation_id
+            conversation_id = state.get("conversation_id")
+            if not conversation_id and config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+                if thread_id:
+                    conversation_id = UUID(thread_id)
+
+            return {
+                "messages": updated_messages,
+                "sources": state.get("sources", []),
+                "retrieved_docs": state.get("retrieved_docs", []),
+                "conversation_id": conversation_id,
+                "user_id": state.get("user_id"),
+                "conversation_summary": state.get("conversation_summary"),
+                "user_verified": state.get("user_verified", True),
+            }
+
+    def _get_customer_system_prompt(self) -> str:
+        """Get the customer-specific system prompt with restricted capabilities."""
+        return f"""You are a helpful vehicle sales assistant designed specifically for customers looking for vehicle information.
+
+You have access to limited tools for customer inquiries:
+- simple_rag: Search company documents and vehicle information
+- simple_query_crm_data: Query vehicle specifications and pricing (RESTRICTED ACCESS)
+
+**IMPORTANT - Your Access Restrictions:**
+- You can ONLY help with vehicle specifications, models, features, and pricing information
+- You CANNOT access employee information, customer records, sales opportunities, or internal business data
+- You CANNOT provide information about other customers or internal company operations
+
+**What you CAN help with:**
+- Vehicle models, specifications, and features
+- Pricing information and available discounts
+- Vehicle comparisons and recommendations
+- Inventory availability
+- Vehicle features and options
+
+**What you CANNOT help with:**
+- Employee information or contact details
+- Other customer information or records
+- Sales opportunities or deals
+- Internal company operations
+- Business performance data
+
+Your goal is to help customers find the right vehicle by providing accurate information about our vehicle inventory and pricing.
+
+Be friendly, helpful, and focus on addressing the customer's vehicle-related questions. If asked about restricted information, politely explain that you can only assist with vehicle and pricing information.
+
+Available tools:
+{', '.join(['simple_rag', 'simple_query_crm_data'])}
+
+Guidelines:
+- Use simple_rag for comprehensive document-based answers about vehicles and company information
+- Use simple_query_crm_data for specific vehicle specifications and pricing questions  
+- Be helpful and customer-focused in your responses
+- If asked about restricted data, redirect to vehicle and pricing topics
+- Provide source citations when documents are found
+
+Remember: You are here to help customers make informed vehicle purchasing decisions!"""
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the unified agent."""
@@ -746,7 +1074,7 @@ Your workflow options:
 2. Use lcel_generation to generate responses based on retrieved documents
 
 **Option 3 - CRM Data Queries:**
-1. Use query_crm_data for specific business questions about sales, customers, vehicles, pricing, and performance metrics
+1. Use simple_query_crm_data for specific business questions about sales, customers, vehicles, pricing, and performance metrics
 
 Tool Usage Examples:
 - simple_rag: {{"question": "user's complete question", "top_k": 5}}
@@ -957,74 +1285,139 @@ Important: Use the tools to help you provide the best possible assistance to the
 
         logger.info("RAG-specific memory plugins registered")
 
-    async def _verify_employee_access(self, user_id: str) -> bool:
+    async def _verify_user_access(self, user_id: str) -> str:
         """
-        Verify if the user_id corresponds to an active employee in the CRM database.
+        Verify user access and return user type (employee, customer, unknown).
+        
+        This function replaces the previous employee-only verification with dual-user support.
+        It determines if a user is an employee, customer, or unknown based on database records.
 
         Args:
             user_id: The users.id (UUID)
 
         Returns:
-            bool: True if user is an active employee, False otherwise
+            str: User type - 'employee', 'customer', or 'unknown'
         """
         try:
             # Import database client
-            from database import db_client
-
             # Ensure database client is initialized
             await db_client._async_initialize_client()
 
-            # Look up the user in the users table to get the employee_id
-            logger.info(f"Looking up user by ID: {user_id}")
+            # Look up the user in the users table
+            logger.info(f"[USER_VERIFICATION] Looking up user by ID: {user_id}")
             user_result = await asyncio.to_thread(
                 lambda: db_client.client.table("users")
-                .select("employee_id, user_type")
+                .select("id, user_type, employee_id, customer_id, email, display_name, is_active")
                 .eq("id", user_id)
                 .execute()
             )
 
             if not user_result.data or len(user_result.data) == 0:
-                logger.warning(f"No user found for user_id: {user_id}")
-                return False
+                logger.warning(f"[USER_VERIFICATION] No user found for user_id: {user_id}")
+                return "unknown"
 
             user_record = user_result.data[0]
+            user_type = user_record.get("user_type", "").lower()
             employee_id = user_record.get("employee_id")
-            user_type = user_record.get("user_type")
+            customer_id = user_record.get("customer_id")
+            is_active = user_record.get("is_active", False)
+            email = user_record.get("email", "")
+            display_name = user_record.get("display_name", "")
 
-            if not employee_id:
-                logger.warning(
-                    f"User {user_id} has no linked employee_id (user_type: {user_type})"
+            logger.info(f"[USER_VERIFICATION] User found - Type: {user_type}, Active: {is_active}, Email: {email}")
+
+            # Check if user is active
+            if not is_active:
+                logger.warning(f"[USER_VERIFICATION] User {user_id} is inactive - denying access")
+                return "unknown"
+
+            # Handle employee users
+            if user_type == "employee":
+                if not employee_id:
+                    logger.warning(f"[USER_VERIFICATION] Employee user {user_id} has no employee_id - treating as unknown")
+                    return "unknown"
+
+                # Verify employee record exists and is active
+                logger.info(f"[USER_VERIFICATION] Verifying employee record for employee_id: {employee_id}")
+                employee_result = await asyncio.to_thread(
+                    lambda: db_client.client.table("employees")
+                    .select("id, name, email, position, is_active")
+                    .eq("id", employee_id)
+                    .eq("is_active", True)
+                    .execute()
                 )
-                return False
 
-            # Step 2: Check if the employee_id exists in employees table and is active
-            logger.info(f"Checking employee record for employee_id: {employee_id}")
-            employee_result = await asyncio.to_thread(
-                lambda: db_client.client.table("employees")
-                .select("id, name, email, position, is_active")
-                .eq("id", employee_id)
-                .eq("is_active", True)
-                .execute()
-            )
+                if employee_result.data and len(employee_result.data) > 0:
+                    employee = employee_result.data[0]
+                    logger.info(f"[USER_VERIFICATION] ✅ Employee access verified - {employee['name']} ({employee['position']})")
+                    return "employee"
+                else:
+                    logger.warning(f"[USER_VERIFICATION] No active employee found for employee_id: {employee_id}")
+                    return "unknown"
 
-            if employee_result.data and len(employee_result.data) > 0:
-                employee = employee_result.data[0]
-                logger.info(
-                    f"Employee access verified for {employee['name']} ({employee['position']}) - employee_id: {employee_id}"
+            # Handle customer users
+            elif user_type == "customer":
+                if not customer_id:
+                    logger.warning(f"[USER_VERIFICATION] Customer user {user_id} has no customer_id - treating as unknown")
+                    return "unknown"
+
+                # Verify customer record exists
+                logger.info(f"[USER_VERIFICATION] Verifying customer record for customer_id: {customer_id}")
+                customer_result = await asyncio.to_thread(
+                    lambda: db_client.client.table("customers")
+                    .select("id, name, email")
+                    .eq("id", customer_id)
+                    .execute()
                 )
-                return True
+
+                if customer_result.data and len(customer_result.data) > 0:
+                    customer = customer_result.data[0]
+                    logger.info(f"[USER_VERIFICATION] ✅ Customer access verified - {customer['name']} ({customer['email']})")
+                    return "customer"
+                else:
+                    logger.warning(f"[USER_VERIFICATION] No customer found for customer_id: {customer_id}")
+                    return "unknown"
+
+            # Handle admin users (treat as employees for now)
+            elif user_type == "admin":
+                logger.info(f"[USER_VERIFICATION] ✅ Admin user detected - granting employee-level access")
+                return "employee"
+
+            # Handle system users (deny access)
+            elif user_type == "system":
+                logger.warning(f"[USER_VERIFICATION] System user detected - denying access for security")
+                return "unknown"
+
+            # Handle unknown user types
             else:
-                logger.warning(
-                    f"No active employee found for employee_id: {employee_id} (user_id: {user_id})"
-                )
-                return False
+                logger.warning(f"[USER_VERIFICATION] Unknown user_type: {user_type} for user {user_id}")
+                return "unknown"
 
         except Exception as e:
-            logger.error(
-                f"Error verifying employee access for user_id {user_id}: {str(e)}"
-            )
-            # On database errors, deny access for security
-            return False
+            logger.error(f"[USER_VERIFICATION] Error verifying user access for user_id {user_id}: {str(e)}")
+            # On database errors, return unknown for security
+            return "unknown"
+
+    async def _verify_employee_access(self, user_id: str) -> bool:
+        """
+        Legacy method for backward compatibility.
+        
+        This method now uses the new _verify_user_access function internally
+        but maintains the boolean return type for existing code.
+
+        Args:
+            user_id: The users.id (UUID)
+
+        Returns:
+            bool: True if user is an employee (including admin), False otherwise
+        """
+        logger.info(f"[LEGACY] _verify_employee_access called - delegating to _verify_user_access")
+        user_type = await self._verify_user_access(user_id)
+        
+        # Return True for employees and admins, False for customers and unknown
+        is_employee = user_type in ["employee", "admin"]
+        logger.info(f"[LEGACY] User type '{user_type}' -> employee access: {is_employee}")
+        return is_employee
 
     @traceable(name="rag_agent_invoke")
     async def invoke(
@@ -1102,6 +1495,8 @@ Important: Use the tools to help you provide the best possible assistance to the
             messages=messages,
             conversation_id=conversation_id,  # Keep as string, not UUID object
             user_id=user_id,
+            user_verified=False,  # Will be set by user_verification node
+            user_type=None,  # Will be set by user_verification node
             retrieved_docs=(
                 existing_state.get("retrieved_docs", []) if existing_state else []
             ),
@@ -1109,6 +1504,7 @@ Important: Use the tools to help you provide the best possible assistance to the
             conversation_summary=(
                 existing_state.get("summary") if existing_state else None
             ),
+            long_term_context=[],  # Initialize empty, will be populated by nodes
         )
 
         # Execute the graph with thread-based persistence

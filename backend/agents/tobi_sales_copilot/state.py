@@ -30,6 +30,10 @@ class AgentState(TypedDict):
     conversation_id: Optional[str]
     user_id: Optional[str]
 
+    # User authentication and authorization state (essential for routing)
+    user_verified: Optional[bool]
+    user_type: Optional[str]  # 'employee', 'customer', 'admin', 'unknown'
+
     # RAG context and results (current session)
     retrieved_docs: List[Dict[str, Any]]
     sources: List[Dict[str, Any]]

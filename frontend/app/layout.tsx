@@ -6,14 +6,7 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'RAG-Tobi - Salesperson Copilot',
-  description: 'AI-powered salesperson copilot with RAG functionality for enhanced sales support',
-  keywords: ['AI', 'Sales', 'Copilot', 'RAG', 'Artificial Intelligence', 'Sales Assistant'],
-  authors: [{ name: 'RAG-Tobi Team' }],
-  viewport: 'width=device-width, initial-scale=1',
-  themeColor: '#3b82f6',
-  icons: {
-    icon: '/favicon.ico',
-  },
+  description: 'AI-powered salesperson copilot with RAG capabilities',
 };
 
 export default function RootLayout({
@@ -43,6 +36,34 @@ export default function RootLayout({
                   </div>
                 </div>
                 <div className="flex items-center space-x-4">
+                  {/* Navigation Links */}
+                  <nav className="hidden md:flex space-x-4">
+                    <a
+                      href="/"
+                      className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                    >
+                      Dashboard
+                    </a>
+                    <a
+                      href="/manage"
+                      className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                    >
+                      Manage
+                    </a>
+                    <a
+                      href="/dualagentdebug"
+                      className="text-blue-600 hover:text-blue-800 px-3 py-2 rounded-md text-sm font-medium border border-blue-200 hover:border-blue-300"
+                    >
+                      🚀 Debug
+                    </a>
+                    <a
+                      href="/memorycheck"
+                      className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                    >
+                      Memory
+                    </a>
+                  </nav>
+                  
                   <div className="hidden md:block">
                     <div className="flex items-center space-x-2">
                       <div className="w-2 h-2 bg-green-500 rounded-full"></div>

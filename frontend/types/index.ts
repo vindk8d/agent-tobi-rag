@@ -18,11 +18,7 @@ export interface APIResponse<T = any> {
 }
 
 // Conversation types
-export enum MessageRole {
-  USER = "user",
-  ASSISTANT = "assistant",
-  SYSTEM = "system",
-}
+export type MessageRole = 'human' | 'ai' | 'system' | 'tool';
 
 export enum ConversationType {
   CHAT = "chat",
@@ -35,6 +31,45 @@ export interface Message {
   content: string;
   timestamp?: string;
   metadata?: Record<string, any>;
+}
+
+// Confirmation system types
+export enum ConfirmationStatus {
+  PENDING = "pending",
+  APPROVED = "approved", 
+  CANCELLED = "cancelled",
+  MODIFIED = "modified",
+  TIMEOUT = "timeout"
+}
+
+export interface ConfirmationRequest {
+  confirmation_id: string;
+  customer_id: string;
+  customer_name: string;
+  customer_email?: string;
+  message_content: string;
+  message_type: string;
+  requested_by: string;
+  requested_at: string;
+  expires_at: string;
+  status: ConfirmationStatus;
+  conversation_id: string;
+}
+
+export interface ConfirmationResponse {
+  confirmation_id: string;
+  action: ConfirmationStatus;
+  modified_message?: string;
+  responded_at: string;
+  notes?: string;
+}
+
+export interface DeliveryResult {
+  confirmation_id: string;
+  delivery_status: string;
+  delivery_message: string;
+  delivered_at?: string;
+  delivery_details: Record<string, any>;
 }
 
 export interface ConversationRequest {
