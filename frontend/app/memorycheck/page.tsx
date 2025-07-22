@@ -63,7 +63,7 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
       // Show welcome message when no user is selected
       setChatMessages([
         {
-          id: '1',
+          id: `welcome-${Date.now()}`,
           role: 'assistant',
           content: "Hello! I'm your AI assistant. I can help you with sales questions, analyze customer data, and provide insights based on our memory system. Please select a user from the memory debug interface to continue.",
           timestamp: new Date()
@@ -102,7 +102,7 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
           // Show welcome message for user
           setChatMessages([
             {
-              id: '1',
+              id: `welcome-user-${Date.now()}`,
               role: 'assistant',
               content: "Hello! I'm ready to assist you with sales questions, customer data analysis, and insights. How can I help you today?",
               timestamp: new Date()
@@ -114,7 +114,7 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
         // Fall back to welcome message
         setChatMessages([
           {
-            id: '1',
+            id: `welcome-fallback-${Date.now()}`,
             role: 'assistant',  
             content: "Hello! I'm ready to assist you with sales questions, customer data analysis, and insights. How can I help you today?",
             timestamp: new Date()
@@ -126,7 +126,7 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
       // Fall back to welcome message
       setChatMessages([
         {
-          id: '1',
+          id: `welcome-error-${Date.now()}`,
           role: 'assistant',
           content: "Hello! I'm ready to assist you with sales questions, customer data analysis, and insights. How can I help you today?",
           timestamp: new Date()
@@ -171,22 +171,39 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
 
       const result = await response.json();
       
-             if (result.success && result.data) {
-        const assistantMessage: ChatMessage = {
-          id: result.data.conversation_id,
-          role: 'assistant',
-          content: result.data.message,
-          timestamp: new Date()
-        };
-
-        setChatMessages(prev => [...prev, assistantMessage]);
-        
-        // Track the conversation ID for deletion
-        if (result.data.conversation_id && !currentConversationId) {
-          setCurrentConversationId(result.data.conversation_id);
-        }
+      // Debug logging
+      console.log('Chat API response:', result);
+      console.log('Response structure:', {
+        hasMessage: !!result.message,
+        hasConversationId: !!result.conversation_id,
+        hasSuccess: !!result.success,
+        hasData: !!result.data
+      });
+      
+      // Handle both direct ChatResponse format and wrapped format
+      let responseData;
+      if (result.success && result.data) {
+        // Wrapped format
+        responseData = result.data;
+      } else if (result.message && result.conversation_id) {
+        // Direct ChatResponse format
+        responseData = result;
       } else {
-        throw new Error(result.message || 'Failed to get agent response');
+        throw new Error('Invalid response format from agent');
+      }
+
+      const assistantMessage: ChatMessage = {
+        id: `${responseData.conversation_id}-${Date.now()}`, // Unique ID combining conversation ID and timestamp
+        role: 'assistant',
+        content: responseData.message,
+        timestamp: new Date()
+      };
+
+      setChatMessages(prev => [...prev, assistantMessage]);
+      
+      // Track the conversation ID for deletion
+      if (responseData.conversation_id && !currentConversationId) {
+        setCurrentConversationId(responseData.conversation_id);
       }
     } catch (error) {
       const errorMessage: ChatMessage = {
@@ -1064,7 +1081,7 @@ export default function MemoryCheckPage() {
                     {(loadingStates.memoryData || loadingStates.masterSummaryData || loadingStates.conversationData || loadingStates.messages) && (
                       <svg className="animate-spin h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        <path className="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 4 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
                     )}
                     {lastUpdated.memoryData && (

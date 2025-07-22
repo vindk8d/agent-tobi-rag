@@ -44,6 +44,23 @@ class AgentState(TypedDict):
     # Optional conversation summary (for very long conversations)
     conversation_summary: Optional[str]
 
+    # HITL (Human-in-the-Loop) customer messaging state - SEPARATED NODE DESIGN
+    # 
+    # PHASE 1: Employee Agent → Confirmation Node
+    # confirmation_data: When present, triggers routing to confirmation node for user approval
+    # Contains customer message details: customer_id, message_content, message_type, customer_name
+    confirmation_data: Optional[Dict[str, Any]]
+    
+    # PHASE 2: Confirmation Node → Execution Node  
+    # execution_data: When present, triggers routing to execution node for message delivery
+    # Contains approved delivery details: customer_id, message_content, message_type, customer_info
+    execution_data: Optional[Dict[str, Any]]
+    
+    # PHASE 3: Execution Node → END
+    # confirmation_result: When present, indicates completion (prevents re-execution)
+    # Contains delivery status: 'delivered', 'cancelled', 'failed' with optional details
+    confirmation_result: Optional[str]
+
 
 class ConversationMemory(TypedDict):
     """

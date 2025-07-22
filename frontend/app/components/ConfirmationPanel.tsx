@@ -22,7 +22,7 @@ export default function ConfirmationPanel({
   useEffect(() => {
     const fetchPendingConfirmations = async () => {
       try {
-        const response = await fetch(`/api/confirmation/pending/${conversationId}`);
+        const response = await fetch(`http://localhost:8000/api/v1/chat/confirmation/pending/${conversationId}`);
         const result = await response.json();
         
         if (result.success) {
@@ -50,15 +50,30 @@ export default function ConfirmationPanel({
   ) => {
     setLoading(true);
     try {
-      const response: ConfirmationResponse = {
-        confirmation_id: confirmationId,
-        action,
+      // Convert ConfirmationStatus to backend-expected action values
+      let backendAction: string;
+      switch (action) {
+        case ConfirmationStatus.APPROVED:
+          backendAction = "approve";
+          break;
+        case ConfirmationStatus.CANCELLED:
+          backendAction = "deny";
+          break;
+        case ConfirmationStatus.MODIFIED:
+          backendAction = "approve"; // Modified messages are approved with changes
+          break;
+        default:
+          backendAction = "deny";
+      }
+
+      const response = {
+        action: backendAction,
         modified_message: modifiedMessage,
         responded_at: new Date().toISOString(),
         notes
       };
 
-      const result = await fetch('/api/confirmation/respond', {
+      const result = await fetch(`http://localhost:8000/api/v1/chat/confirmation/${confirmationId}/respond`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -68,7 +83,7 @@ export default function ConfirmationPanel({
 
       const responseData = await result.json();
       
-      if (responseData.success) {
+      if (responseData.status === "success") {
         // Remove the confirmation from pending list
         setPendingConfirmations(prev => 
           prev.filter(req => req.confirmation_id !== confirmationId)
@@ -76,12 +91,18 @@ export default function ConfirmationPanel({
         
         // Notify parent component
         if (onConfirmationResponse) {
-          onConfirmationResponse(response);
+          onConfirmationResponse({
+            confirmation_id: confirmationId,
+            action: action,
+            modified_message: modifiedMessage,
+            responded_at: new Date().toISOString(),
+            notes
+          });
         }
         
         setError(null);
       } else {
-        setError(responseData.error || 'Failed to process confirmation');
+        setError(responseData.detail || 'Failed to process confirmation');
       }
     } catch (err) {
       setError('Error processing confirmation');

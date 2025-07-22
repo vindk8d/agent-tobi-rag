@@ -12,7 +12,9 @@ Following the principle: Use LLM intelligence rather than keyword matching or co
 
 import logging
 import contextvars
-from datetime import datetime
+import json
+import uuid
+from datetime import datetime, date
 from enum import Enum
 from typing import Optional, List
 from langchain_core.tools import tool
@@ -790,6 +792,182 @@ async def _get_rag_llm():
 # CUSTOMER MESSAGING TOOL (Employee Only)
 # =============================================================================
 
+async def _deliver_message_via_chat(customer_info: dict, formatted_message: str, message_type: str, sender_employee_id: str) -> dict:
+    """
+    Deliver a message to a customer via chat by creating a new conversation or adding to existing one.
+    
+    Args:
+        customer_info: Customer information dictionary
+        formatted_message: The formatted message content to deliver
+        message_type: Type of message (follow_up, information, promotional, support)
+        sender_employee_id: ID of the employee sending the message
+        
+    Returns:
+        Dict with delivery status: {"success": bool, "conversation_id": str, "error": str or None}
+    """
+    try:
+        engine = await _get_sql_engine()
+        customer_id = customer_info.get("customer_id")
+        customer_name = customer_info.get("name", "Customer")
+        
+        # Look up the customer's user_id from the users table
+        with engine.connect() as conn:
+            user_result = conn.execute(
+                text("""
+                    SELECT id FROM users 
+                    WHERE customer_id = :customer_id AND user_type = 'customer' AND is_active = true
+                    LIMIT 1
+                """),
+                {"customer_id": customer_id}
+            )
+            user_row = user_result.fetchone()
+            
+            if not user_row:
+                logger.warning(f"No active user account found for customer {customer_id}")
+                return {
+                    "success": False,
+                    "conversation_id": None,
+                    "error": f"Customer {customer_name} does not have an active chat account"
+                }
+            
+            customer_user_id = str(user_row[0])
+            
+            # Check for existing conversation with this customer (most recent)
+            conv_result = conn.execute(
+                text("""
+                    SELECT id FROM conversations 
+                    WHERE user_id = :user_id 
+                    ORDER BY updated_at DESC 
+                    LIMIT 1
+                """),
+                {"user_id": customer_user_id}
+            )
+            conv_row = conv_result.fetchone()
+            
+            if conv_row:
+                # Use existing conversation
+                conversation_id = str(conv_row[0])
+                logger.info(f"Using existing conversation {conversation_id} for customer {customer_name}")
+            else:
+                # Create new conversation
+                import uuid
+                conversation_id = str(uuid.uuid4())
+                conn.execute(
+                    text("""
+                        INSERT INTO conversations (id, user_id, title, created_at, updated_at, metadata)
+                        VALUES (:id, :user_id, :title, NOW(), NOW(), :metadata)
+                    """),
+                    {
+                        "id": conversation_id,
+                        "user_id": customer_user_id,
+                        "title": f"Message from Employee - {message_type.title()}",
+                        "metadata": f'{{"message_type": "{message_type}", "sender_employee_id": "{sender_employee_id}"}}'
+                    }
+                )
+                logger.info(f"Created new conversation {conversation_id} for customer {customer_name}")
+            
+            # Insert the message as an AI message (from the agent/employee)
+            message_id = str(uuid.uuid4())
+            conn.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, role, content, created_at, metadata)
+                    VALUES (:id, :conversation_id, :role, :content, NOW(), :metadata)
+                """),
+                {
+                    "id": message_id,
+                    "conversation_id": conversation_id,
+                    "role": "ai",  # Message from assistant/employee
+                    "content": formatted_message,
+                    "metadata": f'{{"message_type": "{message_type}", "sender_employee_id": "{sender_employee_id}", "customer_outreach": true}}'
+                }
+            )
+            
+            # Update conversation timestamp
+            conn.execute(
+                text("UPDATE conversations SET updated_at = NOW() WHERE id = :id"),
+                {"id": conversation_id}
+            )
+            
+            logger.info(f"Successfully delivered message to customer {customer_name} via chat (conversation: {conversation_id})")
+            
+            return {
+                "success": True,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "error": None
+            }
+            
+    except Exception as e:
+        logger.error(f"Error delivering message via chat to customer {customer_info.get('name', 'Unknown')}: {e}")
+        return {
+            "success": False,
+            "conversation_id": None,
+            "error": str(e)
+        }
+
+
+async def _track_message_delivery(customer_info: dict, delivery_result: dict, message_type: str, sender_employee_id: str) -> dict:
+    """
+    Track message delivery status for monitoring and feedback.
+    
+    Args:
+        customer_info: Customer information dictionary
+        delivery_result: Result from _deliver_message_via_chat
+        message_type: Type of message delivered
+        sender_employee_id: ID of the employee who sent the message
+        
+    Returns:
+        Dict with tracking status and details
+    """
+    try:
+        engine = await _get_sql_engine()
+        
+        with engine.connect() as conn:
+            # Store delivery tracking in a simple log table (we'll use query_logs for now)
+            tracking_id = str(uuid.uuid4())
+            tracking_data = {
+                "delivery_id": tracking_id,
+                "customer_id": customer_info.get("customer_id"),
+                "customer_name": customer_info.get("name", "Unknown"),
+                "message_type": message_type,
+                "sender_employee_id": sender_employee_id,
+                "success": delivery_result.get("success", False),
+                "conversation_id": delivery_result.get("conversation_id"),
+                "error": delivery_result.get("error"),
+                "delivered_at": datetime.now().isoformat()
+            }
+            
+            conn.execute(
+                text("""
+                    INSERT INTO query_logs (id, conversation_id, query, response, created_at, metadata)
+                    VALUES (:id, :conversation_id, :query, :response, NOW(), :metadata)
+                """),
+                {
+                    "id": tracking_id,
+                    "conversation_id": delivery_result.get("conversation_id"),
+                    "query": f"CUSTOMER_MESSAGE_DELIVERY: {message_type}",
+                    "response": "SUCCESS" if delivery_result.get("success") else f"FAILED: {delivery_result.get('error')}",
+                    "metadata": f'{json.dumps(tracking_data, cls=DateTimeEncoder)}'
+                }
+            )
+            
+            logger.info(f"Tracked message delivery: {tracking_id} - Success: {delivery_result.get('success')}")
+            
+            return {
+                "tracking_id": tracking_id,
+                "tracked": True,
+                "delivery_status": "success" if delivery_result.get("success") else "failed"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error tracking message delivery: {e}")
+        return {
+            "tracking_id": None,
+            "tracked": False,
+            "error": str(e)
+        }
+
+
 async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
     """
     Look up customer information by customer identifier (UUID, name, or email).
@@ -1095,10 +1273,10 @@ class TriggerCustomerMessageParams(BaseModel):
 @traceable(name="trigger_customer_message")
 async def trigger_customer_message(customer_id: str, message_content: str, message_type: str = "follow_up") -> str:
     """
-    Send a message to a customer with human-in-the-loop confirmation (Employee Only).
+    Prepare a customer message for human-in-the-loop confirmation (Employee Only).
     
-    Uses LangGraph's native interrupt functionality to pause execution and wait for
-    human confirmation before delivering messages to customers.
+    This tool validates inputs, prepares the message, and returns confirmation data
+    for the agent node to populate in AgentState for state-driven HITL routing.
     
     Args:
         customer_id: The customer identifier (UUID, name, or email address) to message
@@ -1106,7 +1284,7 @@ async def trigger_customer_message(customer_id: str, message_content: str, messa
         message_type: Type of message (follow_up, information, promotional, support)
     
     Returns:
-        Final delivery result after human confirmation
+        Confirmation request data with CONFIRMATION_REQUIRED indicator for state-driven routing
     """
     try:
         # Check user type - only employees can use this tool
@@ -1114,6 +1292,11 @@ async def trigger_customer_message(customer_id: str, message_content: str, messa
         if user_type not in ["employee", "admin"]:
             logger.warning(f"[CUSTOMER_MESSAGE] Non-employee user ({user_type}) attempted to use customer messaging tool")
             return "I apologize, but customer messaging is only available to employees. Please contact your administrator if you need assistance."
+        
+        # Get current employee ID for tracking
+        sender_employee_id = await get_current_employee_id()
+        if not sender_employee_id:
+            return "Error: Unable to identify your employee account. Please ensure you're logged in as an employee."
         
         # Validate inputs
         if not customer_id or not customer_id.strip():
@@ -1136,135 +1319,145 @@ async def trigger_customer_message(customer_id: str, message_content: str, messa
                     error_msg += f"• {warning}\n"
             return error_msg.strip()
         
-        logger.info(f"[CUSTOMER_MESSAGE] Employee {get_current_user_id()} initiated message to customer {customer_id}")
+        logger.info(f"[CUSTOMER_MESSAGE] Employee {sender_employee_id} preparing message for customer {customer_id}")
         
         # Validate customer exists and get customer information
         customer_info = await _lookup_customer(customer_id)
         if not customer_info:
             return f"Error: Customer '{customer_id}' not found. Please verify the customer identifier (name, email, or UUID) and try again."
         
-        logger.info(f"[CUSTOMER_MESSAGE] Validated customer: {customer_info['first_name']} {customer_info['last_name']} ({customer_info['email']})")
+        logger.info(f"[CUSTOMER_MESSAGE] Validated customer: {customer_info.get('name', 'Unknown')} ({customer_info.get('email', 'no-email')})")
         
         # Format the message with professional templates
         formatted_message = _format_message_by_type(message_content, message_type, customer_info)
         
-        # Create comprehensive confirmation prompt for the interrupt
-        interrupt_message = f"""🚨 **CUSTOMER MESSAGE CONFIRMATION REQUIRED**
-
-📧 **Target Customer:**
-  • Name: {customer_info['first_name']} {customer_info['last_name']}
-  • Email: {customer_info['email']}
-  • Phone: {customer_info.get('phone', 'N/A')}
-  • Customer ID: {customer_id}
-
-📝 **Message Details:**
-  • Type: {message_type.replace('_', ' ').title()}
-  • Character Count: {validation_result['character_count']}/{validation_result['max_length']}
-  • Word Count: {validation_result['word_count']} words"""
-
-        # Add warnings if any
-        if validation_result["warnings"]:
-            interrupt_message += f"\n\n⚠️ **Suggestions for Improvement:**"
-            for warning in validation_result["warnings"]:
-                interrupt_message += f"\n  • {warning}"
-
-        interrupt_message += f"""
-
-📄 **Formatted Message Preview:**
-{'-' * 60}
-{formatted_message}
-{'-' * 60}
-
-**Please respond with one of the following:**
-• "APPROVE" - Send the message as shown above
-• "CANCEL" - Cancel the message and do not send
-• "MODIFY: [your changes]" - Suggest modifications to the message
-
-What is your decision?"""
-
-        logger.info(f"[CUSTOMER_MESSAGE] Triggering interrupt for confirmation - Customer: {customer_id}")
+        # Prepare confirmation data for state-driven HITL approach
+        confirmation_data = {
+            "requires_human_confirmation": True,
+            "confirmation_type": "customer_message",
+            "customer_info": customer_info,
+            "message_content": message_content,
+            "formatted_message": formatted_message,
+            "message_type": message_type,
+            "validation_result": validation_result,
+            "customer_id": customer_id,
+            "sender_employee_id": sender_employee_id,
+            "requested_by": get_current_user_id(),
+            "timestamp": datetime.now().isoformat()
+        }
         
-        # Use LangGraph's native interrupt to pause execution and wait for human input
-        confirmation_response = interrupt(interrupt_message)
+        logger.info(f"[CUSTOMER_MESSAGE] Message prepared for state-driven HITL confirmation - Customer: {customer_id}")
         
-        # Process the confirmation response (execution resumes here after human input)
-        if not confirmation_response:
-            return "❌ **Message Cancelled:** No confirmation response received. The message was not sent."
-        
-        response_text = str(confirmation_response).upper().strip()
-        customer_name = f"{customer_info['first_name']} {customer_info['last_name']}"
-        
-        logger.info(f"[CUSTOMER_MESSAGE] Processing confirmation response: {response_text[:50]}...")
-        
-        if response_text == "APPROVE":
-            # Execute message delivery
-            logger.info(f"[CUSTOMER_MESSAGE] Message approved - executing delivery to customer {customer_id}")
+        # Return confirmation data with state-driven indicator for node to handle
+        # The node will detect this pattern and populate confirmation_data in AgentState
+        try:
+            # Create a custom JSON encoder to handle datetime objects
+            class DateTimeEncoder(json.JSONEncoder):
+                def default(self, obj):
+                    if isinstance(obj, (datetime, date)):
+                        return obj.isoformat()
+                    return super().default(obj)
             
-            # Simulate message delivery (Phase 2 implementation - will be replaced with actual delivery)
-            import asyncio
-            import random
-            
-            await asyncio.sleep(1)  # Simulate delivery delay
-            delivery_successful = random.random() < 0.95  # 95% success rate
-            
-            if delivery_successful:
-                logger.info(f"[CUSTOMER_MESSAGE] Message delivered successfully to customer {customer_id}")
-                return f"""✅ **Message Delivered Successfully!**
+            confirmation_json = json.dumps(confirmation_data, cls=DateTimeEncoder)
+            return f"STATE_DRIVEN_CONFIRMATION_REQUIRED: {confirmation_json}"
+        except Exception as e:
+            logger.error(f"Error serializing confirmation data: {e}")
+            return f"Error preparing customer message for confirmation: {str(e)}"
 
-The message has been delivered to {customer_name} ({customer_info['email']}).
-
-**Message Type:** {message_type.replace('_', ' ').title()}
-**Delivered at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-The customer has been successfully contacted with your {message_type.replace('_', ' ')} message."""
-            else:
-                logger.warning(f"[CUSTOMER_MESSAGE] Message delivery failed to customer {customer_id}")
-                return f"""❌ **Message Delivery Failed**
-
-Failed to deliver message to {customer_name} - delivery service unavailable.
-
-**Failed at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-Please try sending the message again or contact the customer through alternative means."""
-
-        elif response_text == "CANCEL":
-            logger.info(f"[CUSTOMER_MESSAGE] Message cancelled by employee for customer {customer_id}")
-            return f"""⭕ **Message Cancelled**
-
-The message to {customer_name} has been cancelled and was not sent.
-
-You can create a new message anytime using the customer messaging tool."""
-
-        elif response_text.startswith("MODIFY:"):
-            # Extract modification suggestion
-            modification = str(confirmation_response)[7:].strip()  # Remove "MODIFY:" prefix
-            logger.info(f"[CUSTOMER_MESSAGE] Employee requested modifications for customer {customer_id}: {modification}")
-            return f"""🔄 **Modification Requested**
-
-Your suggested changes: "{modification}"
-
-Please use the customer messaging tool again with your revised message content. The system will validate and format your updated message for another confirmation cycle."""
-
-        else:
-            logger.warning(f"[CUSTOMER_MESSAGE] Invalid confirmation response: {confirmation_response}")
-            return f"""❓ **Invalid Response**
-
-Your response "{confirmation_response}" was not recognized.
-
-Please respond with:
-• "APPROVE" to send the message
-• "CANCEL" to cancel the message  
-• "MODIFY: [your changes]" to suggest modifications
-
-The message was not sent. Please try the customer messaging tool again."""
-
-    except GraphInterrupt:
-        # Interrupt is expected behavior for human-in-the-loop - re-raise it
-        logger.info(f"[CUSTOMER_MESSAGE] Triggering human-in-the-loop interrupt for customer messaging confirmation")
-        raise
     except Exception as e:
         logger.error(f"Error in trigger_customer_message: {e}")
-        return f"Sorry, I encountered an error while processing your customer message request. Please try again or contact support if the issue persists."
+        return f"Sorry, I encountered an error while preparing your customer message request. Please try again or contact support if the issue persists."
+
+
+async def _handle_customer_message_confirmation(confirmation_data: dict, human_response: str) -> str:
+    """
+    Handle the customer message confirmation response and attempt delivery.
+    
+    Args:
+        confirmation_data: The confirmation data from trigger_customer_message
+        human_response: The human's response (should contain 'approve' or 'deny')
+        
+    Returns:
+        String response with delivery results and feedback
+    """
+    try:
+        customer_info = confirmation_data.get("customer_info", {})
+        customer_name = customer_info.get("name", "Unknown Customer")
+        formatted_message = confirmation_data.get("formatted_message", "")
+        message_type = confirmation_data.get("message_type", "general")
+        sender_employee_id = confirmation_data.get("sender_employee_id")
+        
+        # Parse human response
+        if not human_response or "approve" not in human_response.lower():
+            logger.info(f"[CUSTOMER_MESSAGE_CONFIRMATION] Human denied or provided invalid response: {human_response}")
+            return f"❌ **Message Cancelled**\n\nThe message to {customer_name} was not sent as requested."
+        
+        logger.info(f"[CUSTOMER_MESSAGE_CONFIRMATION] Human approved message sending to {customer_name}")
+        
+        # Attempt message delivery via chat
+        delivery_result = await _deliver_message_via_chat(
+            customer_info=customer_info,
+            formatted_message=formatted_message,
+            message_type=message_type,
+            sender_employee_id=sender_employee_id
+        )
+        
+        # Track the delivery attempt
+        tracking_result = await _track_message_delivery(
+            customer_info=customer_info,
+            delivery_result=delivery_result,
+            message_type=message_type,
+            sender_employee_id=sender_employee_id
+        )
+        
+        # Prepare detailed feedback based on delivery results
+        if delivery_result.get("success"):
+            conversation_id = delivery_result.get("conversation_id")
+            tracking_id = tracking_result.get("tracking_id", "unknown")
+            
+            success_response = f"""✅ **Message Sent Successfully!**
+
+**Customer:** {customer_name}
+**Message Type:** {message_type.title()}
+**Delivery Method:** Chat message
+**Conversation ID:** {conversation_id}
+**Tracking ID:** {tracking_id}
+
+**Message Preview:**
+{confirmation_data.get('message_content', '')[:150]}{'...' if len(confirmation_data.get('message_content', '')) > 150 else ''}
+
+The customer will see this message the next time they access their chat interface."""
+            
+            logger.info(f"[CUSTOMER_MESSAGE_CONFIRMATION] Message delivered successfully to {customer_name} (conversation: {conversation_id})")
+            return success_response
+        else:
+            error_details = delivery_result.get("error", "Unknown delivery error")
+            tracking_id = tracking_result.get("tracking_id", "unknown")
+            
+            failure_response = f"""❌ **Message Delivery Failed**
+
+**Customer:** {customer_name}
+**Message Type:** {message_type.title()}
+**Error:** {error_details}
+**Tracking ID:** {tracking_id}
+
+**Possible Reasons:**
+• Customer doesn't have an active chat account
+• Database connection issues
+• Technical system error
+
+Please try again later or contact technical support if the issue persists."""
+            
+            logger.error(f"[CUSTOMER_MESSAGE_CONFIRMATION] Message delivery failed to {customer_name}: {error_details}")
+            return failure_response
+        
+    except Exception as e:
+        logger.error(f"[CUSTOMER_MESSAGE_CONFIRMATION] Error handling confirmation: {e}")
+        return f"""❌ **Confirmation Processing Error**
+
+An unexpected error occurred while processing your message confirmation: {str(e)}
+
+Please try the message request again or contact technical support."""
 
 
 # =============================================================================

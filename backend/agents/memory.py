@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import tiktoken
-from typing import Dict, List, Optional, Any, Tuple, Union, Callable
+from typing import Dict, List, Optional, Any, Tuple, Union, Callable, Literal
 from uuid import UUID, uuid4
 from datetime import datetime, timedelta
 
@@ -299,13 +299,13 @@ class SimpleDBCursor:
                         namespace, key, value, embedding, memory_type, expiry_at = params
                         result = await asyncio.to_thread(
                             lambda: self.client.client.rpc('put_long_term_memory', {
-                                'p_namespace': namespace,
-                                'p_key': key,
-                                'p_value': value,
-                                'p_embedding': embedding,
-                                'p_memory_type': memory_type,
-                                'p_expiry_at': expiry_at
-                            }).execute()
+                                'p_namespace': convert_datetime_to_iso(namespace),
+                                'p_key': convert_datetime_to_iso(key),
+                                'p_value': convert_datetime_to_iso(value),
+                                'p_embedding': convert_datetime_to_iso(embedding),
+                                'p_memory_type': convert_datetime_to_iso(memory_type),
+                                'p_expiry_at': convert_datetime_to_iso(expiry_at
+                            )}).execute()
                         )
                         self.result = result
                 elif "get_long_term_memory" in query:
@@ -313,9 +313,9 @@ class SimpleDBCursor:
                         namespace, key = params
                         result = await asyncio.to_thread(
                             lambda: self.client.client.rpc('get_long_term_memory', {
-                                'p_namespace': namespace,
-                                'p_key': key
-                            }).execute()
+                                'p_namespace': convert_datetime_to_iso(namespace),
+                                'p_key': convert_datetime_to_iso(key
+                            )}).execute()
                         )
                         self.result = result
                 elif "delete_long_term_memory" in query:
@@ -323,9 +323,9 @@ class SimpleDBCursor:
                         namespace, key = params
                         result = await asyncio.to_thread(
                             lambda: self.client.client.rpc('delete_long_term_memory', {
-                                'p_namespace': namespace,
-                                'p_key': key
-                            }).execute()
+                                'p_namespace': convert_datetime_to_iso(namespace),
+                                'p_key': convert_datetime_to_iso(key
+                            )}).execute()
                         )
                         self.result = result
                 elif "search_long_term_memories_by_prefix" in query:
@@ -333,11 +333,11 @@ class SimpleDBCursor:
                         embedding, namespace_prefix, threshold, match_count = params
                         result = await asyncio.to_thread(
                             lambda: self.client.client.rpc('search_long_term_memories_by_prefix', {
-                                'query_embedding': embedding,
-                                'namespace_prefix': namespace_prefix,
-                                'similarity_threshold': threshold,
-                                'match_count': match_count
-                            }).execute()
+                                'query_embedding': convert_datetime_to_iso(embedding),
+                                'namespace_prefix': convert_datetime_to_iso(namespace_prefix),
+                                'similarity_threshold': convert_datetime_to_iso(threshold),
+                                'match_count': convert_datetime_to_iso(match_count
+                            )}).execute()
                         )
                         self.result = result
                 elif "search_conversation_summaries" in query:
@@ -345,12 +345,12 @@ class SimpleDBCursor:
                         embedding, user_id, threshold, match_count, summary_type = params
                         result = await asyncio.to_thread(
                             lambda: self.client.client.rpc('search_conversation_summaries', {
-                                'query_embedding': embedding,
-                                'target_user_id': user_id,
-                                'similarity_threshold': threshold,
-                                'match_count': match_count,
-                                'summary_type_filter': summary_type
-                            }).execute()
+                                'query_embedding': convert_datetime_to_iso(embedding),
+                                'target_user_id': convert_datetime_to_iso(user_id),
+                                'similarity_threshold': convert_datetime_to_iso(threshold),
+                                'match_count': convert_datetime_to_iso(match_count),
+                                'summary_type_filter': convert_datetime_to_iso(summary_type
+                            )}).execute()
                         )
                         self.result = result
                 elif "update_memory_access_pattern" in query:
@@ -363,12 +363,12 @@ class SimpleDBCursor:
                             access_context = access_context.isoformat()
                         result = await asyncio.to_thread(
                             lambda: self.client.client.rpc('update_memory_access_pattern', {
-                                'p_user_id': user_id,
-                                'p_memory_namespace': namespace,
-                                'p_memory_key': key,
-                                'p_access_context': access_context,
-                                'p_retrieval_method': retrieval_method
-                            }).execute()
+                                'p_user_id': convert_datetime_to_iso(user_id),
+                                'p_memory_namespace': convert_datetime_to_iso(namespace),
+                                'p_memory_key': convert_datetime_to_iso(key),
+                                'p_access_context': convert_datetime_to_iso(access_context),
+                                'p_retrieval_method': convert_datetime_to_iso(retrieval_method
+                            )}).execute()
                         )
                         self.result = result
                 else:
@@ -447,6 +447,28 @@ class SimpleDBCursor:
 # =============================================================================
 # LONG-TERM MEMORY STORE (LangGraph Store Implementation)
 # =============================================================================
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle datetime objects."""
+    
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+def convert_datetime_to_iso(obj):
+    """Recursively convert datetime objects to ISO format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {key: convert_datetime_to_iso(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_datetime_to_iso(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_datetime_to_iso(item) for item in obj)
+    else:
+        return obj
+
 
 class SupabaseLongTermMemoryStore(BaseStore):
     """
@@ -558,8 +580,18 @@ class SupabaseLongTermMemoryStore(BaseStore):
             async with conn as connection:
                 cur = await connection.cursor()
                 async with cur:
-                    # Serialize value to JSON for storage
-                    value_json = json.dumps(value) if not isinstance(value, str) else value
+                    # Serialize value to JSON for storage with datetime handling
+                    if not isinstance(value, str):
+                        try:
+                            value_json = json.dumps(value, cls=DateTimeEncoder)
+                        except TypeError as e:
+                            logger.warning(f"JSON serialization failed with DateTimeEncoder, using fallback: {e}")
+                            # Fallback: recursively convert datetime objects to strings
+                            converted_value = convert_datetime_to_iso(value)
+                            value_json = json.dumps(converted_value)
+                    else:
+                        value_json = value
+                    
                     await cur.execute(
                         "SELECT put_long_term_memory(%s, %s, %s, %s, %s, %s)",
                         (list(namespace), key, value_json, embedding, 'semantic', expiry_at)
@@ -705,6 +737,19 @@ class SupabaseLongTermMemoryStore(BaseStore):
     def batch(self, requests):
         """Batch method - not implemented for this store."""
         raise NotImplementedError("Batch operations not supported for SupabaseLongTermMemoryStore")
+
+    def _convert_datetime_to_iso(self, obj: Any) -> Any:
+        """Recursively convert datetime objects to ISO format strings."""
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {key: convert_datetime_to_iso(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_datetime_to_iso(item) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(self._convert_datetime_to_iso(item) for item in obj)
+        else:
+            return obj
 
 
 # =============================================================================
@@ -2074,24 +2119,28 @@ class MemoryManager:
                 content = str(message.content)
                 metadata = getattr(message, 'metadata', {}) or {}
 
-                # Map LangChain message types to our role system
-                # Note: Database constraint now allows LangChain-compatible types: 'ai', 'human', 'assistant', 'system', etc.
+                # Map LangChain message types to database-compatible roles
+                # Database constraint: ('user', 'assistant', 'system')
                 if hasattr(message, 'type'):
                     role_mapping = {
-                        'human': 'human',
-                        'ai': 'ai',         # Direct mapping - now compatible with DB
-                        'system': 'system', # Direct mapping - now supported in DB
-                        'assistant': 'assistant'  # Direct mapping - now supported in DB
+                        'human': 'user',      # LangChain 'human' -> DB 'user'
+                        'ai': 'assistant',    # LangChain 'ai' -> DB 'assistant'
+                        'system': 'system',   # LangChain 'system' -> DB 'system'
+                        'assistant': 'assistant'  # LangChain 'assistant' -> DB 'assistant'
                     }
-                    role = role_mapping.get(message.type, 'ai')    # Default to 'ai' for unknown types
+                    role = role_mapping.get(message.type, 'assistant')    # Default to 'assistant' for unknown types
                 elif hasattr(message, 'role'):
                     # Handle direct role assignments and normalize them
                     role = message.role.lower() if isinstance(message.role, str) else str(message.role)
-                    # All roles now pass through directly since they're LangChain-compatible
-                    # Convert legacy 'user' to 'human' for consistency
-                    if role == 'user':
-                        role = 'human'
-                    # 'ai', 'human', 'assistant', 'system' pass through as-is
+                    # Map to database-compatible roles
+                    if role in ['human', 'user']:
+                        role = 'user'
+                    elif role in ['ai', 'assistant']:
+                        role = 'assistant'
+                    elif role == 'system':
+                        role = 'system'
+                    else:
+                        role = 'assistant'  # Default fallback
 
             # Skip empty messages
             if not content.strip():

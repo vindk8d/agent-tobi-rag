@@ -336,27 +336,40 @@ async def get_user_summary(user_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to retrieve user summary: {str(e)}")
 
 @router.get("/users/{user_id}/messages", response_model=APIResponse[List[DatabaseMessage]])
-async def get_user_messages(user_id: str, limit: int = Query(50, ge=1, le=200)):
-    """Get recent messages for a specific user"""
+async def get_user_messages(user_id: str, limit: int = Query(50, ge=1, le=200), conversation_id: Optional[str] = Query(None)):
+    """Get recent messages for a specific user, optionally filtered by conversation_id"""
     try:
-        # First get conversations for this user
-        conversations_result = db_client.client.table('conversations').select('id').eq(
-            'user_id', user_id
-        ).order('created_at', desc=True).limit(5).execute()
+        if conversation_id:
+            # If conversation_id is provided, get messages only from that conversation
+            conversation_result = db_client.client.table('conversations').select('id').eq('id', conversation_id).eq('user_id', user_id).execute()
+            if not conversation_result.data:
+                return APIResponse(
+                    success=True,
+                    message="Conversation not found or doesn't belong to user",
+                    data=[]
+                )
+            
+            messages_result = db_client.client.table('messages').select('*').eq(
+                'conversation_id', conversation_id
+            ).order('created_at', asc=True).limit(limit).execute()
+        else:
+            # Get messages from all conversations for this user (original behavior)
+            conversations_result = db_client.client.table('conversations').select('id').eq(
+                'user_id', user_id
+            ).order('created_at', desc=True).limit(5).execute()
 
-        if not conversations_result.data:
-            return APIResponse(
-                success=True,
-                message="No conversations found for user",
-                data=[]
-            )
+            if not conversations_result.data:
+                return APIResponse(
+                    success=True,
+                    message="No conversations found for user",
+                    data=[]
+                )
 
-        conversation_ids = [conv['id'] for conv in conversations_result.data]
+            conversation_ids = [conv['id'] for conv in conversations_result.data]
 
-        # Get messages from these conversations
-        messages_result = db_client.client.table('messages').select('*').in_(
-            'conversation_id', conversation_ids
-        ).order('created_at', desc=True).limit(limit).execute()
+            messages_result = db_client.client.table('messages').select('*').in_(
+                'conversation_id', conversation_ids
+            ).order('created_at', desc=True).limit(limit).execute()
 
         messages = []
         for message in messages_result.data or []:
@@ -376,6 +389,44 @@ async def get_user_messages(user_id: str, limit: int = Query(50, ge=1, le=200)):
         )
     except Exception as e:
         logger.error(f"Error retrieving messages for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve messages: {str(e)}")
+
+@router.get("/conversations/{conversation_id}/messages", response_model=APIResponse[List[DatabaseMessage]])
+async def get_conversation_messages(conversation_id: str, limit: int = Query(50, ge=1, le=200)):
+    """Get messages for a specific conversation"""
+    try:
+        # Check if conversation exists
+        conversation_result = db_client.client.table('conversations').select('id').eq('id', conversation_id).execute()
+        if not conversation_result.data:
+            return APIResponse(
+                success=True,
+                message="Conversation not found",
+                data=[]
+            )
+
+        # Get messages from this specific conversation
+        messages_result = db_client.client.table('messages').select('*').eq(
+            'conversation_id', conversation_id
+        ).order('created_at', asc=True).limit(limit).execute()
+
+        messages = []
+        for message in messages_result.data or []:
+            messages.append(DatabaseMessage(
+                id=message['id'],
+                conversation_id=message['conversation_id'],
+                role=message['role'],
+                content=message['content'],
+                created_at=message['created_at'],
+                metadata=message.get('metadata')
+            ))
+
+        return APIResponse(
+            success=True,
+            message="Messages retrieved successfully",
+            data=messages
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving messages for conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve messages: {str(e)}")
 
 @router.get("/users/{user_id}/memory-patterns", response_model=APIResponse[List[MemoryAccessPattern]])
