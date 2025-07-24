@@ -65,13 +65,12 @@ Currently, our agent system only serves employees through a single verification 
 ### Customer Outreach System
 
 7. **Customer Messaging Tool**: Create a new tool available only to employee agents for triggering customer outreach
-8. **Dedicated HITL Node with Combined Interrupt-Execution**: Implement a separate `customer_message_confirmation_and_delivery` node that:
-   - **Triggers when needed**: Employee agent sets confirmation state flag when customer messaging tool is used
-   - **Atomic confirmation+delivery**: Single node handles human confirmation AND message execution within interrupt flow
-   - **Immediate feedback**: Present confirmation dialog, execute delivery, and provide status before resumption
-   - **State-driven routing**: Use conditional edges to route to HITL node when confirmation is needed
-   - **Side effect protection**: Track delivery state to prevent re-execution on node resume
-   - **Complete feedback cycle**: Resume execution only after providing employee with:
+8. **Interrupt-Based Confirmation with Delivery Feedback**: Use LangGraph's `interrupt()` mechanism to:
+   - Pause execution when customer messaging is triggered
+   - Present confirmation dialog to employee with message details and action options
+   - If confirmed: Attempt actual message delivery to the customer
+   - Collect success/failure status of the delivery attempt
+   - Resume execution only after gathering delivery feedback, providing the employee with:
      - Success confirmation and delivery details
      - Cancellation acknowledgment (if user cancelled)
      - Failure notification with error details (if delivery failed)
@@ -79,12 +78,7 @@ Currently, our agent system only serves employees through a single verification 
 ### Memory and State Management
 9. **User Context Enhancement**: Extend existing user context system in `tools.py` to cache user type after first verification lookup, providing efficient access control without polluting the persistent AgentState
 
-10. **HITL State Management**: Extend AgentState with minimal essential fields for dedicated HITL node:
-    - `confirmation_data: Optional[Dict[str, Any]]`: Customer message details for confirmation display and routing trigger
-    - `confirmation_result: Optional[str]`: Delivery status result for conversation continuity and side effect protection
-    - **Implicit Logic**: Use data presence/absence for routing decisions and re-execution prevention (no redundant flags)
-
-11. **Memory Isolation**: Ensure customer conversations don't interfere with employee memory and vice versa
+10. **Memory Isolation**: Ensure customer conversations don't interfere with employee memory and vice versa
 
 ### Error Handling and Fallbacks
 
@@ -111,11 +105,7 @@ Currently, our agent system only serves employees through a single verification 
 
 ### LangGraph Implementation
 - Use conditional edges for user type routing
-- Implement dedicated HITL node architecture for customer messaging:
-  - **Separate dedicated node**: `customer_message_confirmation_and_delivery` node isolated from main agent logic
-  - **Combined interrupt+execution**: Single node handles both human confirmation AND message delivery
-  - **Atomic feedback**: Delivery status provided immediately within interrupt flow before resumption
-  - **Side effect protection**: State tracking prevents re-execution of message delivery on node resume
+- Implement interrupt patterns for customer messaging confirmation
 - Maintain existing checkpointing and memory management
 
 ### Tool Architecture  

@@ -80,29 +80,6 @@ This document breaks down the implementation of the Dual User Agent System featu
 
 ## Phase 2: Enhanced Features (Customer Messaging)
 
-> **Architecture Decision**: Phase 2 implements a **dedicated HITL node** approach with **combined interrupt+execution** to meet PRD requirements for immediate delivery feedback. This separates HITL concerns from main agent logic while providing atomic confirmation+delivery operations within the interrupt flow.
-> 
-> **UPDATED Graph Structure (Cleaner Approach)**:
-> ```
-> employee_agent → customer_message_confirmation_and_delivery → employee_agent → END
-> customer_agent → END (direct, no customer messaging capability)
-> ```
-> 
-> **Key Benefits of Updated Structure**:
-> - **Centralized Response Handling**: Employee agent manages delivery results when resumed from HITL
-> - **Cleaner Execution Flow**: No confusing parallel paths to END
-> - **Better State Management**: Proper cleanup of confirmation variables in employee_agent
-> - **Logical Correctness**: Only employees can trigger customer messaging
-> 
-> **State Management Philosophy**: Following the principle of minimal state for cost-efficiency, we use only 2 essential state variables with implicit logic for routing and side effect protection, eliminating redundant flags.
-> 
-> **Design Principles for Future Development**:
-> - **Centralized Response Handling**: All HITL operations should route back to the originating agent for result handling
-> - **Implicit Routing Logic**: Use state presence (not flags) to trigger routing decisions  
-> - **Clean State Management**: Originating agent responsible for state cleanup after HITL completion
-> - **Logical Flow Separation**: Customers cannot trigger actions that require employee approval
-> - **Single Responsibility**: Each node has one clear purpose in the conversation flow
-
 ### Task 2.1: Customer Messaging Tool Development ✅
 **Priority:** Medium | **Effort:** High | **Dependencies:** Phase 1 complete
 
@@ -121,50 +98,37 @@ This document breaks down the implementation of the Dual User Agent System featu
   - Add character limits and content filtering
   - Support different message types (follow_up, information, etc.)
 
-### Task 2.2: Dedicated HITL Node with Combined Interrupt-Execution System ✅
+### Task 2.2: Interrupt-Based Confirmation with Delivery System
 **Priority:** Medium | **Effort:** High | **Dependencies:** Task 2.1
 
-- [x] **2.2.1** Extend AgentState for HITL node support (MINIMAL)
-  - Add `confirmation_data: Optional[Dict[str, Any]]` for message details and implicit routing trigger
-  - Add `confirmation_result: Optional[str]` for delivery status feedback and implicit side effect protection
-  - Implement implicit logic: routing based on data presence, re-execution prevention based on result existence
-  - Eliminate redundant flags to minimize state footprint per design philosophy
+- [x] **2.2.1** Implement LangGraph interrupt mechanism
+  - Study LangGraph interrupt patterns and best practices
+  - Create interrupt trigger in customer messaging tool
+  - Use LangGraph's built-in interrupt state management (no AgentState changes needed)
   
-- [x] **2.2.2** Create dedicated `customer_message_confirmation_and_delivery` node
-  - Implement separate node isolated from main agent logic
-  - Handle LangGraph interrupt mechanism within dedicated node
-  - Combine human confirmation AND message delivery in single atomic operation
-  - **UPDATED**: Route back to employee_agent (not END) for centralized response handling
-  - **UPDATED**: Employee_agent detects HITL resumption and provides delivery feedback
+- [x] **2.2.2** Create confirmation UI/API structure
+  - Design confirmation message format
+  - Include customer details, message content, and action options
+  - Implement timeout handling (5-minute default)
   
-- [x] **2.2.3** Update customer messaging tool for state-driven approach
-  - **IMPLEMENTED**: Modified `trigger_customer_message` tool with `STATE_DRIVEN_CONFIRMATION_REQUIRED` indicator
-  - **IMPLEMENTED**: Removed embedded interrupt logic from tool and employee agent node
-  - **IMPLEMENTED**: Employee agent node populates `confirmation_data` in AgentState for HITL consumption  
-  - **IMPLEMENTED**: Tool result enables implicit routing to HITL node via state presence
-  
-- [x] **2.2.4** Implement conditional routing to HITL node **COMPLETED WITH UPDATED ARCHITECTURE**
-  - **UPDATED**: Only employee_agent routes to HITL (customer_agent → END direct)
-  - Create routing function `_route_employee_to_hitl_or_end` with implicit logic
-  - **UPDATED**: Route from HITL node back to employee_agent (not END) for response handling
-  - **UPDATED**: Employee_agent handles HITL resumption with proper state cleanup
-  
-- [x] **2.2.5** Add side effect protection and state tracking **COMPLETED WITH UPDATED ARCHITECTURE**
-  - **IMPLEMENTED**: HITL node uses `confirmation_result` for side effect protection
-  - **IMPLEMENTED**: Employee_agent detects resumption and handles delivery results gracefully
-  - **IMPLEMENTED**: Delivery happens only once using result presence as guard condition
-  - **IMPLEMENTED**: State cleanup in employee_agent maintains minimal state footprint
+- [x] **2.2.3** Build interrupt resolution with delivery workflow ✅ (SIMPLIFIED)
+  - **LangGraph Native Interrupt**: Uses interrupt() function directly in trigger_customer_message tool
+  - **Single Execution Path**: Tool pauses → human responds → tool continues → delivery → result
+  - **Simplified State Management**: No separate nodes, routing, or API complexity  
+  - **Built-in Resume Pattern**: LangGraph handles interrupt/resume cycle natively
+  - Handle user confirmation (approve/cancel/modify) via interrupt response
+  - Execute delivery simulation directly in tool after confirmation
+  - Return final delivery status to conversation flow
 
-- [x] **2.2.6** Generate and run comprehensive Phase 2 tests ✅
-  - **CREATED**: Comprehensive test suite (`test_phase2_state_driven_hitl.py`) with 15+ detailed test cases
-  - **CREATED**: Dedicated test runner (`run_phase2_state_driven_tests.py`) with reporting capabilities
-  - **CREATED**: Validation script (`validate_phase2_state_driven.py`) for environment-independent testing
-  - **VALIDATED**: State-driven tool behavior, routing logic, HITL node functionality
-  - **VALIDATED**: Employee agent state handling, side effect protection, Phase 1 integration
-  - **VALIDATED**: Atomic confirmation+delivery operations and error handling scenarios
-  - **DOCUMENTED**: Complete test coverage for cleaner graph architecture
+- [ ] **2.2.4** Generate and run comprehensive Phase 2 tests
+  - Create test suite for customer messaging tool functionality
+  - Test interrupt mechanisms and confirmation workflows
+  - Validate message delivery simulation and error handling
+  - Test user experience flows for both employee and customer perspectives
+  - Ensure Phase 2 features integrate properly with Phase 1 foundation
+  - Generate test reports and validate success criteria
 
-- [x] **2.2.7** Build dual agent debug frontend interface ✅
+- [ ] **2.2.5** Build dual agent debug frontend interface
   - Create `/frontend/app/dualagentdebug` route and page
   - Implement dual chat interfaces (customer and employee side-by-side)
   - Add user/customer selection dropdowns with database integration
@@ -299,10 +263,7 @@ This document breaks down the implementation of the Dual User Agent System featu
 - [x] All existing employee functionality preserved
 - [x] Customer users can access appropriate tools only
 - [x] Unknown users receive helpful fallback messages
-- [ ] Dedicated HITL node with atomic confirmation+delivery workflow works
-- [ ] Immediate delivery feedback provided before conversation resumption
-- [ ] Implicit side effect protection prevents message re-delivery using minimal state
-- [ ] Routing logic works correctly with only 2 state variables (50% reduction from initial design)
+- [x] Customer messaging with confirmation workflow works
 - [x] No security bypasses possible for customer users
 
 ### Performance
