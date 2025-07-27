@@ -10,10 +10,11 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 
-from database import db_client
+from core.database import db_client
 from models.base import APIResponse
+from core.config import get_settings
 from agents.memory import get_connection_statistics, log_connection_status
-from agents.connection_reset import (
+from infrastructure.connection_reset import (
     reset_all_connections, 
     emergency_connection_reset, 
     get_connection_status as get_comprehensive_connection_status,
@@ -26,6 +27,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Response models for memory debug endpoints
+class MemoryConfiguration(BaseModel):
+    """Memory system configuration"""
+    memory_max_messages: int
+    memory_summary_interval: int
+    memory_auto_summarize: bool
+
+
 class UserInfo(BaseModel):
     """User information for memory debug"""
     id: str
@@ -828,3 +836,23 @@ async def quick_connection_reset():
     except Exception as e:
         logger.error(f"Error in quick connection reset: {e}")
         raise HTTPException(status_code=500, detail=f"Error during quick reset: {str(e)}")
+
+
+@router.get("/memory/config", response_model=APIResponse[MemoryConfiguration])
+async def get_memory_config():
+    """Get current memory system configuration settings."""
+    try:
+        settings = await get_settings()
+        memory_config = MemoryConfiguration(
+            memory_max_messages=settings.memory_max_messages,
+            memory_summary_interval=settings.memory_summary_interval,
+            memory_auto_summarize=settings.memory_auto_summarize
+        )
+        return APIResponse(
+            success=True,
+            message="Memory configuration retrieved successfully",
+            data=memory_config
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving memory configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve memory configuration: {str(e)}")

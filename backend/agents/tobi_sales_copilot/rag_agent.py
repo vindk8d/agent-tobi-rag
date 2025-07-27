@@ -36,8 +36,8 @@ from agents.tobi_sales_copilot.state import AgentState
 from agents.tools import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
 from agents.memory import memory_manager, memory_scheduler, context_manager
 from agents.hitl import parse_tool_response, hitl_node
-from config import get_settings, setup_langsmith_tracing
-from database import db_client
+from core.config import get_settings, setup_langsmith_tracing
+from core.database import db_client
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ class UnifiedToolCallingRAGAgent:
             logger.info(f"[USER_VERIFICATION_NODE] Starting identification for user: {user_id}")
 
             # Perform centralized user identification
-            from database import db_client
+            from core.database import db_client
             await db_client._async_initialize_client()
 
             # Look up user in database
@@ -797,8 +797,10 @@ This information from your past interactions may help me better assist you.
             
             if user_id and conversation_id:
                 try:
+                    # CRITICAL: Pass agent's working context messages (implements moving context window)
+                    # These messages have already been processed through the moving context window in the agent node
                     summary = await self.memory_manager.consolidator.check_and_trigger_summarization(
-                        str(conversation_id), user_id
+                        str(conversation_id), user_id, agent_context_messages=messages
                     )
                     if summary:
                         logger.info(f"[EA_MEMORY_STORE] Conversation {conversation_id} automatically summarized")
@@ -936,8 +938,10 @@ This information from your past interactions may help me better assist you.
             
             if user_id and conversation_id:
                 try:
+                    # CRITICAL: Pass agent's working context messages (implements moving context window)
+                    # These messages have already been processed through the moving context window in the agent node
                     summary = await self.memory_manager.consolidator.check_and_trigger_summarization(
-                        str(conversation_id), user_id
+                        str(conversation_id), user_id, agent_context_messages=messages
                     )
                     if summary:
                         logger.info(f"[CA_MEMORY_STORE] Customer conversation {conversation_id} automatically summarized")
@@ -1449,6 +1453,19 @@ Failed to deliver your message to {customer_name}.
                 iteration += 1
                 logger.info(f"[EMPLOYEE_AGENT_NODE] Agent iteration {iteration}")
 
+                # CRITICAL: Implement LangGraph-style moving context window
+                # Trim processing_messages to prevent context window bloat while preserving database records
+                max_context_messages = getattr(self.settings, 'memory_max_messages', 12)
+                
+                if len(processing_messages) > max_context_messages:
+                    # Keep system message + recent messages within limit
+                    system_msg = processing_messages[0] if processing_messages and isinstance(processing_messages[0], SystemMessage) else None
+                    recent_messages = processing_messages[-(max_context_messages-1):] if system_msg else processing_messages[-max_context_messages:]
+                    
+                    trimmed_messages = ([system_msg] + recent_messages) if system_msg else recent_messages
+                    logger.info(f"[EMPLOYEE_AGENT_NODE] 🔄 Applied moving context window: {len(processing_messages)} → {len(trimmed_messages)} messages")
+                    processing_messages = trimmed_messages
+
                 # Call the model
                 response = await llm.ainvoke(processing_messages)
                 processing_messages.append(response)
@@ -1759,6 +1776,19 @@ Be helpful, professional, and make full use of your available tools to assist wi
             while iteration < max_tool_iterations:
                 iteration += 1
                 logger.info(f"[CUSTOMER_AGENT_NODE] Agent iteration {iteration}")
+
+                # CRITICAL: Implement LangGraph-style moving context window
+                # Trim processing_messages to prevent context window bloat while preserving database records
+                max_context_messages = getattr(self.settings, 'memory_max_messages', 12)
+                
+                if len(processing_messages) > max_context_messages:
+                    # Keep system message + recent messages within limit
+                    system_msg = processing_messages[0] if processing_messages and isinstance(processing_messages[0], SystemMessage) else None
+                    recent_messages = processing_messages[-(max_context_messages-1):] if system_msg else processing_messages[-max_context_messages:]
+                    
+                    trimmed_messages = ([system_msg] + recent_messages) if system_msg else recent_messages
+                    logger.info(f"[CUSTOMER_AGENT_NODE] 🔄 Applied moving context window: {len(processing_messages)} → {len(trimmed_messages)} messages")
+                    processing_messages = trimmed_messages
 
                 # Call the model with customer tools
                 response = await llm.ainvoke(processing_messages)
@@ -2154,7 +2184,7 @@ Be helpful, professional, and make full use of your available tools to assist wi
         integration with the existing chat system.
         """
         try:
-            from database import db_client
+            from core.database import db_client
             import uuid
             
             # Look for existing active conversations for this user
@@ -2338,7 +2368,7 @@ Be helpful, professional, and make full use of your available tools to assist wi
             The user_id (UUID) if successful, None otherwise
         """
         try:
-            from database import db_client
+            from core.database import db_client
             
             # First, try to find an existing user for this customer
             existing_user = db_client.client.table("users").select("id").eq("customer_id", customer_id).execute()
@@ -2977,7 +3007,7 @@ Important: Use the tools to help you provide the best possible assistance to the
                 actual_user_id = None
                 try:
                     # Get user_id from the conversation record in database
-                    from database import db_client
+                    from core.database import db_client
                     conversation_result = await asyncio.to_thread(
                         lambda: db_client.client.table("conversations")
                         .select("user_id")

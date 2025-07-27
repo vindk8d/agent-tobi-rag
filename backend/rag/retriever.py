@@ -4,7 +4,7 @@ Semantic retriever for similarity search with configurable threshold and source 
 from typing import List, Dict, Any, Optional
 from .embeddings import OpenAIEmbeddings
 from .vector_store import SupabaseVectorStore
-from config import get_settings
+from core.config import get_settings
 import asyncio
 import logging
 

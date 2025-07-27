@@ -105,6 +105,11 @@ export default function DualAgentDebugPage() {
   const [debugMode, setDebugMode] = useState(false);
   const [showSources, setShowSources] = useState(true);
 
+  // Hot reload state
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+  const [lastMessageUpdate, setLastMessageUpdate] = useState<string | null>(null);
+  const [hotReloadNotification, setHotReloadNotification] = useState<string | null>(null);
+
   // Refs for auto-scroll
   const employeeChatRef = useRef<HTMLDivElement>(null);
   const customerChatRef = useRef<HTMLDivElement>(null);
@@ -149,63 +154,195 @@ export default function DualAgentDebugPage() {
       return;
     }
 
-    const employeeChannel = supabase
-      .channel('employee-messages')
-      .on('postgres_changes', 
-        { 
-          event: 'INSERT', 
-          schema: 'public', 
-          table: 'messages'
-        }, 
-        (payload) => {
-          console.log('Employee message change:', payload);
-          // Check if this message belongs to the current employee's conversation
-          if (payload.new && selectedEmployeeRef.current && employeeConversationRef.current) {
-            const newMessage = payload.new;
-            console.log(`Employee: Checking message conversation_id ${newMessage.conversation_id} vs current ${employeeConversationRef.current}`);
-            if (newMessage.conversation_id === employeeConversationRef.current) {
-              console.log('Employee: Reloading messages due to new message');
-              // Reload messages after a short delay to ensure database consistency
-              setTimeout(() => {
-                loadEmployeeMessages();
-              }, 100);
-            }
-          }
-        }
-      )
-      .subscribe();
+    console.log('🔄 Setting up realtime subscriptions for hot reload');
+    console.log('👨‍💼 Employee user:', selectedEmployeeUser?.id);
+    console.log('👤 Customer user:', selectedCustomerUser?.id);
 
-    const customerChannel = supabase
-      .channel('customer-messages')
-      .on('postgres_changes', 
-        { 
-          event: 'INSERT', 
-          schema: 'public', 
-          table: 'messages'
-        }, 
-        (payload) => {
-          console.log('Customer message change:', payload);
-          // Check if this message belongs to the current customer's conversation
-          if (payload.new && selectedCustomerRef.current && customerConversationRef.current) {
-            const newMessage = payload.new;
-            console.log(`Customer: Checking message conversation_id ${newMessage.conversation_id} vs current ${customerConversationRef.current}`);
-            if (newMessage.conversation_id === customerConversationRef.current) {
-              console.log('Customer: Reloading messages due to new message');
-              // Reload messages after a short delay to ensure database consistency
-              setTimeout(() => {
-                loadCustomerMessages();
-              }, 100);
-            }
-          }
-        }
-      )
-      .subscribe();
+    // Set status to connecting
+    setRealtimeStatus('connecting');
 
-    return () => {
-      supabase.removeChannel(employeeChannel);
-      supabase.removeChannel(customerChannel);
+    // Create separate channels for employee and customer to avoid conflicts
+    const channels: any[] = [];
+    let connectedChannels = 0;
+    const totalChannels = (selectedEmployeeUser ? 1 : 0) + (selectedCustomerUser ? 1 : 0) + 1; // +1 for generic
+
+    const checkAllConnected = () => {
+      connectedChannels++;
+      if (connectedChannels >= totalChannels) {
+        setRealtimeStatus('connected');
+      }
     };
-  }, []); // Empty dependency array since we use refs to avoid stale closures
+
+    // Employee messages subscription
+    if (selectedEmployeeUser) {
+      const employeeChannel = supabase
+        .channel(`employee-messages-${selectedEmployeeUser.id}`)
+        .on('postgres_changes', 
+          { 
+            event: '*', // Listen to INSERT, UPDATE, DELETE
+            schema: 'public', 
+            table: 'messages'
+          }, 
+          (payload) => {
+            console.log('🔔 Employee message change detected:', payload);
+            setLastMessageUpdate(`Employee: ${new Date().toLocaleTimeString()}`);
+            
+            // Check if this message belongs to the current employee's conversation
+            if (payload.new && selectedEmployeeRef.current && employeeConversationRef.current) {
+              const newMessage = payload.new as any;
+              console.log(`👨‍💼 Employee: Checking message conversation_id ${newMessage?.conversation_id} vs current ${employeeConversationRef.current}`);
+              
+              if (newMessage?.conversation_id === employeeConversationRef.current) {
+                console.log('✅ Employee: Message belongs to current conversation - reloading messages');
+                // Immediate reload without delay for better UX
+                loadEmployeeMessages();
+                
+                // Show hot reload notification
+                setHotReloadNotification('Employee message updated via hot reload');
+                setTimeout(() => setHotReloadNotification(null), 3000);
+              } else {
+                console.log('❌ Employee: Message from different conversation, ignoring');
+              }
+            } else if (payload.old && selectedEmployeeRef.current && employeeConversationRef.current) {
+              // Handle DELETE events
+              const deletedMessage = payload.old as any;
+              if (deletedMessage?.conversation_id === employeeConversationRef.current) {
+                console.log('🗑️ Employee: Message deleted from current conversation - reloading messages');
+                loadEmployeeMessages();
+                
+                // Show hot reload notification
+                setHotReloadNotification('Employee message deleted via hot reload');
+                setTimeout(() => setHotReloadNotification(null), 3000);
+              }
+            }
+          }
+        )
+        .subscribe((status) => {
+          console.log('👨‍💼 Employee realtime subscription status:', status);
+          if (status === 'SUBSCRIBED') {
+            checkAllConnected();
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            setRealtimeStatus('disconnected');
+          }
+        });
+      
+      channels.push(employeeChannel);
+    }
+
+    // Customer messages subscription  
+    if (selectedCustomerUser) {
+      const customerChannel = supabase
+        .channel(`customer-messages-${selectedCustomerUser.id}`)
+        .on('postgres_changes', 
+          { 
+            event: '*', // Listen to INSERT, UPDATE, DELETE
+            schema: 'public', 
+            table: 'messages'
+          }, 
+          (payload) => {
+            console.log('🔔 Customer message change detected:', payload);
+            setLastMessageUpdate(`Customer: ${new Date().toLocaleTimeString()}`);
+            
+            // Check if this message belongs to the current customer's conversation
+            if (payload.new && selectedCustomerRef.current && customerConversationRef.current) {
+              const newMessage = payload.new as any;
+              console.log(`👤 Customer: Checking message conversation_id ${newMessage?.conversation_id} vs current ${customerConversationRef.current}`);
+              
+              if (newMessage?.conversation_id === customerConversationRef.current) {
+                console.log('✅ Customer: Message belongs to current conversation - reloading messages');
+                // Immediate reload without delay for better UX
+                loadCustomerMessages();
+                
+                // Show hot reload notification
+                setHotReloadNotification('Customer message updated via hot reload');
+                setTimeout(() => setHotReloadNotification(null), 3000);
+              } else {
+                console.log('❌ Customer: Message from different conversation, ignoring');
+              }
+            } else if (payload.old && selectedCustomerRef.current && customerConversationRef.current) {
+              // Handle DELETE events
+              const deletedMessage = payload.old as any;
+              if (deletedMessage?.conversation_id === customerConversationRef.current) {
+                console.log('🗑️ Customer: Message deleted from current conversation - reloading messages');
+                loadCustomerMessages();
+                
+                // Show hot reload notification
+                setHotReloadNotification('Customer message deleted via hot reload');
+                setTimeout(() => setHotReloadNotification(null), 3000);
+              }
+            }
+          }
+        )
+        .subscribe((status) => {
+          console.log('👤 Customer realtime subscription status:', status);
+          if (status === 'SUBSCRIBED') {
+            checkAllConnected();
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            setRealtimeStatus('disconnected');
+          }
+        });
+      
+      channels.push(customerChannel);
+    }
+
+    // Generic message subscription for any conversation changes (fallback)
+    const genericChannel = supabase
+      .channel('all-messages-fallback')
+      .on('postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages'
+        },
+        (payload) => {
+          console.log('🔔 Generic message change detected:', payload);
+          setLastMessageUpdate(`Generic: ${new Date().toLocaleTimeString()}`);
+          
+          // Check if this message belongs to either current conversation
+          if (payload.new) {
+            const newMessage = payload.new as any;
+            const isEmployeeMessage = employeeConversationRef.current && 
+              newMessage?.conversation_id === employeeConversationRef.current;
+            const isCustomerMessage = customerConversationRef.current && 
+              newMessage?.conversation_id === customerConversationRef.current;
+            
+            if (isEmployeeMessage) {
+              console.log('🔄 Generic: Employee message detected, reloading');
+              loadEmployeeMessages();
+              setHotReloadNotification('Employee message updated (generic fallback)');
+              setTimeout(() => setHotReloadNotification(null), 3000);
+            }
+            
+            if (isCustomerMessage) {
+              console.log('🔄 Generic: Customer message detected, reloading');
+              loadCustomerMessages();
+              setHotReloadNotification('Customer message updated (generic fallback)');
+              setTimeout(() => setHotReloadNotification(null), 3000);
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('🌐 Generic realtime subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          checkAllConnected();
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          setRealtimeStatus('disconnected');
+        }
+      });
+    
+    channels.push(genericChannel);
+
+    // Cleanup function
+    return () => {
+      console.log('🧹 Cleaning up realtime subscriptions');
+      setRealtimeStatus('disconnected');
+      setLastMessageUpdate(null);
+      channels.forEach(channel => {
+        supabase.removeChannel(channel);
+      });
+    };
+  }, [selectedEmployeeUser?.id, selectedCustomerUser?.id]); // Re-run when users change
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -929,6 +1066,16 @@ export default function DualAgentDebugPage() {
           </p>
         </div>
 
+        {/* Hot Reload Notification */}
+        {hotReloadNotification && (
+          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center space-x-2">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+            <div className="text-sm text-blue-800 font-medium">
+              🔄 {hotReloadNotification}
+            </div>
+          </div>
+        )}
+
         {/* Controls */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1002,6 +1149,26 @@ export default function DualAgentDebugPage() {
                   />
                   <span className="text-sm">Debug Mode</span>
                 </label>
+                
+                {/* Hot Reload Status Indicator */}
+                <div className="pt-2 border-t border-gray-200">
+                  <div className="flex items-center space-x-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      realtimeStatus === 'connected' ? 'bg-green-500' :
+                      realtimeStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
+                      'bg-red-500'
+                    }`}></div>
+                    <span className="text-xs font-medium">
+                      Hot Reload: {realtimeStatus === 'connected' ? 'Connected' :
+                      realtimeStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+                    </span>
+                  </div>
+                  {lastMessageUpdate && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      Last update: {lastMessageUpdate}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1110,7 +1277,17 @@ export default function DualAgentDebugPage() {
           <p>
             API: {API_BASE_URL} | 
             Users: {users.length} loaded | 
-            Confirmations: {pendingConfirmations.length} pending
+            Confirmations: {pendingConfirmations.length} pending |
+            Hot Reload: <span className={`font-medium ${
+              realtimeStatus === 'connected' ? 'text-green-600' :
+              realtimeStatus === 'connecting' ? 'text-yellow-600' :
+              'text-red-600'
+            }`}>
+              {realtimeStatus}
+            </span>
+            {lastMessageUpdate && (
+              <> | Last sync: {lastMessageUpdate}</>
+            )}
           </p>
         </div>
       </div>

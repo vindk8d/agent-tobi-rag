@@ -11,7 +11,7 @@ import openai
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import tiktoken
 
-from config import get_settings
+from core.config import get_settings
 
 
 @dataclass

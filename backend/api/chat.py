@@ -20,7 +20,7 @@ except ImportError:
         pass
 
 from models.base import APIResponse, ConfirmationStatus
-from database import db_client
+from core.database import db_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

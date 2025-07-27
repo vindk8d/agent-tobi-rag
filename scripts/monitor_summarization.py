@@ -13,8 +13,8 @@ from datetime import datetime, timedelta, timezone
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 # Backend imports (after path setup)
-from database import db_client
-from config import get_settings
+from backend.core.database import db_client
+from backend.core.config import get_settings
 
 
 async def monitor_conversations():

@@ -28,8 +28,9 @@ from langchain_core.embeddings import Embeddings
 from langchain_openai import ChatOpenAI
 from rag.embeddings import OpenAIEmbeddings
 
-from config import get_settings
-from database import db_client
+from core.config import get_settings
+from core.database import db_client
+from core.utils import DateTimeEncoder, convert_datetime_to_iso
 
 logger = logging.getLogger(__name__)
 
@@ -689,28 +690,6 @@ class SimpleDBCursor:
 # LONG-TERM MEMORY STORE (LangGraph Store Implementation)
 # =============================================================================
 
-class DateTimeEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle datetime objects."""
-    
-    def default(self, obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        return super().default(obj)
-
-def convert_datetime_to_iso(obj):
-    """Recursively convert datetime objects to ISO format strings."""
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, dict):
-        return {key: convert_datetime_to_iso(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_datetime_to_iso(item) for item in obj]
-    elif isinstance(obj, tuple):
-        return tuple(convert_datetime_to_iso(item) for item in obj)
-    else:
-        return obj
-
-
 class SupabaseLongTermMemoryStore(BaseStore):
     """
     LangGraph Store implementation for long-term memory using Supabase.
@@ -981,16 +960,8 @@ class SupabaseLongTermMemoryStore(BaseStore):
 
     def _convert_datetime_to_iso(self, obj: Any) -> Any:
         """Recursively convert datetime objects to ISO format strings."""
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        elif isinstance(obj, dict):
-            return {key: convert_datetime_to_iso(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [self._convert_datetime_to_iso(item) for item in obj]
-        elif isinstance(obj, tuple):
-            return tuple(self._convert_datetime_to_iso(item) for item in obj)
-        else:
-            return obj
+        # Use the centralized utility function
+        return convert_datetime_to_iso(obj)
 
 
 # =============================================================================
@@ -1015,12 +986,18 @@ class ConversationConsolidator:
     async def _ensure_settings_loaded(self):
         """Load settings if not already loaded."""
         if self.settings is None:
-            from config import get_settings
+            from core.config import get_settings
             self.settings = await get_settings()
 
-    async def check_and_trigger_summarization(self, conversation_id: str, user_id: str) -> Optional[str]:
+    async def check_and_trigger_summarization(self, conversation_id: str, user_id: str, agent_context_messages: Optional[List] = None) -> Optional[str]:
         """
         Check if a conversation needs summarization and trigger it automatically.
+        
+        Args:
+            conversation_id: The conversation ID
+            user_id: The user ID
+            agent_context_messages: The agent's working context messages (if provided, this count will be used instead of database query)
+            
         Returns the summary if one was generated, None otherwise.
         """
         await self._ensure_settings_loaded()
@@ -1036,10 +1013,20 @@ class ConversationConsolidator:
             return None
 
         try:
-            # Count messages in the conversation
-            print(f"            🔢 Counting messages for conversation {conversation_id[:8]}...")
-            message_count = await self._count_conversation_messages(conversation_id)
-            print(f"            📊 Message count: {message_count}")
+            # Count messages - prioritize agent context over database query
+            if agent_context_messages is not None:
+                # Use agent's working context message count (implements moving context window)
+                message_count = len(agent_context_messages)
+                print(f"            🔢 Counting messages from agent working context...")
+                print(f"            📊 Agent context message count: {message_count}")
+                print(f"            ✅ Using AGENT CONTEXT (moving window) - not database query")
+            else:
+                # Fallback to database query (for backward compatibility)
+                print(f"            🔢 Counting messages from database (fallback)...")
+                message_count = await self._count_conversation_messages(conversation_id)
+                print(f"            📊 Database message count: {message_count}")
+                print(f"            ⚠️  Using DATABASE COUNT (may include trimmed messages)")
+                
             print(f"            🎯 Threshold: {self.settings.memory_summary_interval}")
 
             # Check if we need to summarize
@@ -1112,7 +1099,7 @@ class ConversationConsolidator:
     async def _count_conversation_messages(self, conversation_id: str) -> int:
         """Count the number of messages in a conversation since last summarization."""
         try:
-            from database import db_client
+            from core.database import db_client
 
             def _get_last_summarized_at():
                 return (db_client.client.table("conversations")
@@ -1143,7 +1130,7 @@ class ConversationConsolidator:
     async def _get_conversation_details(self, conversation_id: str) -> Optional[Dict[str, Any]]:
         """Get conversation details by ID."""
         try:
-            from database import db_client
+            from core.database import db_client
 
             def _get_conversation():
                 return (db_client.client.table("conversations")
@@ -1218,7 +1205,7 @@ class ConversationConsolidator:
         try:
             cutoff_date = (datetime.utcnow() - timedelta(days=7)).isoformat()  # 7 days old
 
-            from database import db_client
+            from core.database import db_client
 
             # Get conversations for user older than 7 days using Supabase client
             result = await asyncio.to_thread(
@@ -1262,7 +1249,7 @@ class ConversationConsolidator:
             print(f"            📝 Getting last {limit} messages for conversation {conversation_id[:8]}...")
 
             # Use Supabase client for message retrieval
-            from database import db_client
+            from core.database import db_client
 
             def _get_messages():
                 return (db_client.client.table("messages")
@@ -1289,7 +1276,7 @@ class ConversationConsolidator:
     async def _get_latest_conversation_summary(self, conversation_id: str) -> Optional[Dict[str, Any]]:
         """Get the most recent summary for a conversation to build incremental summaries."""
         try:
-            from database import db_client
+            from core.database import db_client
 
             def _get_latest_summary():
                 return (db_client.client.table("conversation_summaries")
@@ -1321,7 +1308,7 @@ class ConversationConsolidator:
     async def _get_recent_conversation_messages(self, conversation_id: str, previous_summary: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Get only recent messages since the last summary, or last 10 messages if no previous summary."""
         try:
-            from database import db_client
+            from core.database import db_client
 
             def _get_messages_since_summary(last_summary_time):
                 return (db_client.client.table("messages")
@@ -1561,7 +1548,7 @@ class ConversationConsolidator:
                 "summary_embedding": embedding
             }
 
-            from database import db_client
+            from core.database import db_client
 
             db_client.client.table("conversation_summaries").insert(summary_data).execute()
             print(f"            ✅ Summary stored in database (id: {summary_id[:8]}...)")
@@ -1610,13 +1597,14 @@ class ConversationConsolidator:
         """Reset conversation message count after summarization by setting last_summarized_at timestamp."""
         try:
             # Update last_summarized_at to current timestamp using Supabase client
-            from database import db_client
+            from core.database import db_client
             from datetime import datetime
 
             db_client.client.table("conversations").update({
                 "last_summarized_at": datetime.utcnow().isoformat()
             }).eq("id", conversation_id).execute()
             print(f"            ✅ Reset summarization counter for conversation {conversation_id[:8]}...")
+            print(f"            📝 Note: Database messages preserved - only agent working context will be trimmed")
         except Exception as e:
             print(f"            ❌ Error resetting summarization counter: {e}")
             logger.error(f"Error resetting conversation counter for {conversation_id}: {e}")
@@ -1631,7 +1619,7 @@ class ConversationConsolidator:
             print(f"            👤 User: {user_id}")
 
             # Get user context using Supabase RPC call  
-            from database import db_client
+            from core.database import db_client
             
             def _get_user_context():
                 return db_client.client.rpc('get_user_context_from_conversations', {'target_user_id': user_id}).execute()
@@ -1696,7 +1684,7 @@ class ConversationConsolidator:
     async def _get_user_conversation_summaries(self, user_id: str, limit: int = 5) -> List[Dict]:
         """Get recent conversation summaries for a user (limited by count, not time)."""
         try:
-            from database import db_client
+            from core.database import db_client
             # Get recent conversation summaries directly from the table
             result = (db_client.client.table('conversation_summaries')
                 .select('conversation_id, summary_text, message_count, created_at, summary_type')
@@ -1766,7 +1754,7 @@ Format as simple bullet points (one per line, no bullets symbols):
     async def _get_user_conversations(self, user_id: str, limit: int = 5) -> List[Dict]:
         """Get user conversations even if they don't have summaries yet."""
         try:
-            from database import db_client
+            from core.database import db_client
             result = (db_client.client.table('conversations')
                 .select('id, title, created_at, message_count')
                 .eq('user_id', user_id)
@@ -2249,12 +2237,12 @@ class MemoryManager:
 
             # Use Supabase client directly for message storage
             try:
-                from database import db_client
+                from core.database import db_client
             except ImportError:
                 # Handle Docker environment
                 import sys
                 sys.path.append('/app')
-                from database import db_client
+                from core.database import db_client
 
             message_data = {
                 'conversation_id': actual_conversation_id,  # Use the actual conversation ID
@@ -2296,15 +2284,15 @@ class MemoryManager:
         
         try:
             try:
-                from database import db_client
+                from core.database import db_client
             except ImportError:
                 # Handle Docker environment
                 try:
-                    from database import db_client
+                    from core.database import db_client
                 except ImportError:
                     import sys
                     sys.path.append('/app')
-                    from database import db_client
+                    from core.database import db_client
 
             # STEP 1: Check if user already has an existing conversation (prefer reuse)
             existing_conversations = await asyncio.to_thread(
@@ -2617,7 +2605,7 @@ class MemoryScheduler:
             # Get users with conversations in the last 7 days using Supabase client
             cutoff_date = (datetime.utcnow() - timedelta(days=7)).isoformat()
 
-            from database import db_client
+            from core.database import db_client
 
             result = await asyncio.to_thread(
                 lambda: db_client.client.table("conversations")

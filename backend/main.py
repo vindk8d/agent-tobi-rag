@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 # Import models and responses
 from models.base import APIResponse
-from database import db_client
+from core.database import db_client
 from api import api_router
 
 # Configure logging

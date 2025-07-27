@@ -1,5 +1,5 @@
 """
-Utility functions for the backend.
+Serialization utility functions for the backend.
 """
 
 import json

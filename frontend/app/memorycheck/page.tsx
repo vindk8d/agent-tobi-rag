@@ -407,8 +407,12 @@ export default function MemoryCheckPage() {
   const [consolidationStatus, setConsolidationStatus] = useState<string | null>(null);
   const [debugMode, setDebugMode] = useState(false);
   
-  // Summarization countdown state
-  const [summarizationThreshold] = useState(10); // Default threshold from backend config
+  // Memory configuration state (loaded from backend)
+  const [memoryConfig, setMemoryConfig] = useState({
+    memory_summary_interval: 10, // Default fallback value
+    memory_max_messages: 12,
+    memory_auto_summarize: true
+  });
   
   // Individual loading states for hot reloading
   const [loadingStates, setLoadingStates] = useState({
@@ -428,10 +432,30 @@ export default function MemoryCheckPage() {
     messages: null as Date | null
   });
 
-  // Load users on component mount
+  // Load memory configuration from backend
+  const loadMemoryConfig = async () => {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/v1/memory-debug/memory/config`);
+      const result = await response.json();
+      
+      if (result.success && result.data) {
+        setMemoryConfig(result.data);
+        console.log('✅ Memory configuration loaded:', result.data);
+      } else {
+        console.warn('⚠️ Failed to load memory configuration, using defaults');
+      }
+    } catch (error) {
+      console.error('❌ Error loading memory configuration:', error);
+      // Keep using default values on error
+    }
+  };
+
+  // Load users and memory config on component mount
   useEffect(() => {
     if (supabase) {
       loadUsers();
+      loadMemoryConfig();
     }
   }, []);
 
@@ -764,14 +788,14 @@ export default function MemoryCheckPage() {
 
   // Calculate countdown to next summarization
   const getMessagesUntilSummarization = (): number => {
-    if (messages.length === 0) return summarizationThreshold;
+    if (messages.length === 0) return memoryConfig.memory_summary_interval;
     
     // Get the current conversation message count for the selected user
     const currentConversationMessages = messages.length;
     
     // Calculate how many more messages needed until next summarization
-    const messagesInCurrentCycle = currentConversationMessages % summarizationThreshold;
-    const messagesUntilNext = messagesInCurrentCycle === 0 ? 0 : summarizationThreshold - messagesInCurrentCycle;
+    const messagesInCurrentCycle = currentConversationMessages % memoryConfig.memory_summary_interval;
+    const messagesUntilNext = messagesInCurrentCycle === 0 ? 0 : memoryConfig.memory_summary_interval - messagesInCurrentCycle;
     
     return messagesUntilNext;
   };
@@ -1267,7 +1291,7 @@ export default function MemoryCheckPage() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                     <p className="mt-2 text-sm text-gray-600">No conversation summary available yet</p>
-                    <p className="text-xs text-gray-500 mt-1">Conversation summaries are generated automatically after every 10 messages in a conversation</p>
+                    <p className="text-xs text-gray-500 mt-1">Conversation summaries are generated automatically after every {memoryConfig.memory_summary_interval} messages in a conversation</p>
                   </div>
                 )}
               </div>

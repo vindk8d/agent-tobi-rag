@@ -16,7 +16,7 @@ try:
     # Use pathlib to get the .env file path without triggering os.getcwd()
     # Using absolute() instead of resolve() to avoid blocking calls
     CURRENT_DIR = Path(__file__).absolute().parent
-    PROJECT_ROOT = CURRENT_DIR.parent
+    PROJECT_ROOT = CURRENT_DIR.parent.parent  # Go up two levels from core/ to project root
     ENV_FILE_PATH = PROJECT_ROOT / ".env"
 
     # Load .env file manually line by line to avoid any dotenv os.getcwd() calls
@@ -445,4 +445,4 @@ if __name__ == "__main__":
 #     user_agent: str = Field(default="SalespersonCopilot/1.0", env="SCRAPING_USER_AGENT")
 
 #     class Config:
-#         env_prefix = "SCRAPING_"
+#         env_prefix = "SCRAPING_" 

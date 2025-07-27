@@ -3,7 +3,7 @@ Supabase Vector Store operations for RAG system: upsert, similarity search, and 
 """
 
 from typing import List, Dict, Any, Optional
-from database import db_client
+from core.database import db_client
 import logging
 import asyncio
 

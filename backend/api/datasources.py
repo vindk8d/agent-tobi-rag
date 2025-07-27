@@ -16,7 +16,7 @@ from models.datasource import (
     DataSourceType, DataSourceStatus,
     ScrapingFrequency
 )
-from database import db_client
+from core.database import db_client
 from rag.pipeline import DocumentProcessingPipeline
 
 logger = logging.getLogger(__name__)

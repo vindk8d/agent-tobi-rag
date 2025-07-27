@@ -27,8 +27,9 @@ from pydantic.v1 import BaseModel, Field
 from langsmith import traceable
 from sqlalchemy import create_engine, text
 from rag.retriever import SemanticRetriever
-from config import get_settings
+from core.config import get_settings
 from agents.hitl import HITLRequest
+import re
 
 # NOTE: LangGraph interrupt functionality is now handled by the centralized HITL system in hitl.py
 # No direct interrupt handling needed in individual tools - they use HITLRequest format instead
@@ -865,11 +866,15 @@ async def _list_active_customers(limit: int = 50) -> List[dict]:
 
 def _validate_message_content(message_content: str, message_type: str) -> dict:
     """
-    Validate and analyze message content for appropriateness and completeness.
+    Validate message content for basic requirements only.
+    
+    Simplified validation focusing on essential checks:
+    - Empty message prevention
+    - Security checks (email leakage prevention)
     
     Args:
         message_content: The message content to validate
-        message_type: The type of message (follow_up, information, promotional, support)
+        message_type: The type of message (kept for compatibility)
         
     Returns:
         Dict with validation results: {"valid": bool, "errors": list, "warnings": list}
@@ -877,61 +882,18 @@ def _validate_message_content(message_content: str, message_type: str) -> dict:
     errors = []
     warnings = []
     
-    # Basic content checks
+    # Essential check #1: Prevent empty messages
     if not message_content or not message_content.strip():
         errors.append("Message content cannot be empty")
         return {"valid": False, "errors": errors, "warnings": warnings}
     
     content = message_content.strip()
     
-    # Length validation by message type
-    length_limits = {
-        "follow_up": 1500,    # Concise follow-ups
-        "information": 2000,  # More detailed information
-        "promotional": 1200,  # Promotional content should be punchy
-        "support": 2000       # Support may need detailed explanations
-    }
-    
-    max_length = length_limits.get(message_type, 1500)
-    if len(content) > max_length:
-        errors.append(f"Message too long for {message_type} type. Maximum {max_length} characters, got {len(content)}")
-    
-    if len(content) < 20:
-        warnings.append("Message is very short. Consider adding more context for better customer engagement")
-    
-    # Content quality checks
-    if content.isupper():
-        warnings.append("Message is in ALL CAPS - consider using normal capitalization for professional communication")
-    
-    # Check for basic professionalism
-    unprofessional_indicators = ['!!!', '???', 'URGENT!!!', 'ASAP!!!']
-    for indicator in unprofessional_indicators:
-        if indicator in content.upper():
-            warnings.append(f"Consider more professional language instead of '{indicator}'")
-    
-    # Message type specific validation
-    if message_type == "promotional":
-        if "offer" not in content.lower() and "discount" not in content.lower() and "special" not in content.lower():
-            warnings.append("Promotional message might benefit from highlighting special offers or value propositions")
-    
-    elif message_type == "support":
-        if "?" not in content:
-            warnings.append("Support message might benefit from including specific questions or next steps")
-    
-    elif message_type == "follow_up":
-        if "thank" not in content.lower() and "follow" not in content.lower():
-            warnings.append("Follow-up message might benefit from expressing gratitude or referencing previous interaction")
-    
-    # Simple inappropriate content check (basic implementation)
-    inappropriate_words = ['damn', 'hell', 'crap']  # Basic list - could be expanded
-    for word in inappropriate_words:
-        if word.lower() in content.lower():
-            errors.append(f"Please use professional language. Consider replacing '{word}' with more appropriate terms")
-    
-    # Check for contact information leakage prevention
+    # Essential check #2: Security - prevent accidental email leakage
     if "@" in content and "email" not in content.lower():
         warnings.append("Message contains @ symbol - ensure you're not accidentally including internal email addresses")
     
+    # That's it! Keep it simple.
     is_valid = len(errors) == 0
     
     return {
@@ -939,8 +901,7 @@ def _validate_message_content(message_content: str, message_type: str) -> dict:
         "errors": errors,
         "warnings": warnings,
         "character_count": len(content),
-        "word_count": len(content.split()),
-        "max_length": max_length
+        "word_count": len(content.split())
     }
 
 
@@ -1056,14 +1017,16 @@ async def trigger_customer_message(customer_id: str, message_content: str, messa
         if message_type not in valid_types:
             message_type = "follow_up"  # Default fallback
             
-        # Comprehensive message content validation
+        # Simple validation check
         validation_result = _validate_message_content(message_content, message_type)
         if not validation_result["valid"]:
+            # For our simplified validation, failures are usually empty messages
+            # Return a simple error message instead of complex HITL flow
             error_msg = "❌ **Message Validation Failed:**\n"
             for error in validation_result["errors"]:
                 error_msg += f"• {error}\n"
             if validation_result["warnings"]:
-                error_msg += "\n⚠️ **Additional Suggestions:**\n"
+                error_msg += "\n⚠️ **Suggestions:**\n"
                 for warning in validation_result["warnings"]:
                     error_msg += f"• {warning}\n"
             return error_msg.strip()
@@ -1506,7 +1469,7 @@ async def _create_customer_message_record(
         Message ID if successful, None if failed
     """
     try:
-        from database import db_client
+        from core.database import db_client
         import uuid
         
         # Get customer UUID
@@ -1579,7 +1542,7 @@ async def _get_or_create_customer_user(customer_id: str, customer_info: dict) ->
         User ID (UUID) if successful, None otherwise
     """
     try:
-        from database import db_client
+        from core.database import db_client
         
         # Check for existing user
         existing_user = db_client.client.table("users").select("id").eq("customer_id", customer_id).execute()
@@ -1816,7 +1779,7 @@ async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
         Customer info dictionary if found, None otherwise
     """
     try:
-        from database import db_client
+        from core.database import db_client
         
         # Clean and prepare search input
         search_terms = customer_identifier.lower().strip()

@@ -75,7 +75,7 @@ async def reset_all_connections(force: bool = True) -> dict:
 async def reset_supabase_client(force: bool = True) -> bool:
     """Reset the global Supabase client to clear REST API connections."""
     try:
-        from database import db_client
+        from core.database import db_client
         
         # Force reset the client
         if hasattr(db_client, '_client') and db_client._client:
@@ -208,7 +208,7 @@ async def get_connection_status() -> dict:
     
     try:
         # Check Supabase client
-        from database import db_client
+        from core.database import db_client
         status["supabase_client"]["initialized"] = db_client._client is not None
         status["supabase_client"]["status"] = "initialized" if db_client._client else "not_initialized"
         
@@ -253,7 +253,7 @@ async def emergency_connection_reset() -> dict:
         
         # Reset database client
         try:
-            from database import db_client
+            from core.database import db_client
             db_client._client = None
             results["actions_taken"].append("Supabase client nullified")
         except Exception as e:

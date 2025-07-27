@@ -116,4 +116,4 @@ class DBClientProxy:
         return await db_client.async_client()
 
     async def async_health_check(self):
-        return await db_client.async_health_check()
+        return await db_client.async_health_check() 

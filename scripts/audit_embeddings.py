@@ -15,7 +15,7 @@ from typing import List, Dict, Any, Optional, Tuple
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 # Backend imports (after path setup)
-from database import db_client
+from backend.core.database import db_client
 from supabase import Client
 
 

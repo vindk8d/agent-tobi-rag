@@ -23,7 +23,7 @@ from typing import List, Dict, Any
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from database import db_client
+    from core.database import db_client
 except ImportError:
     print("❌ Could not import database. Make sure you're running from the project root.")
     sys.exit(1)

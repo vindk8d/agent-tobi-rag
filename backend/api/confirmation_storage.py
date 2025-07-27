@@ -165,7 +165,7 @@ def get_confirmation_storage() -> RedisConfirmationStorage:
     """Get or create the global Redis confirmation storage instance."""
     global _redis_storage
     if _redis_storage is None:
-        from config import get_settings_sync
+        from core.config import get_settings_sync
         settings = get_settings_sync()
         # Use default Redis URL since we know Redis is running on redis:6379
         _redis_storage = RedisConfirmationStorage(redis_url="redis://redis:6379")

@@ -37,7 +37,7 @@ async def main():
     
     try:
         # Import after setting path
-        from agents.connection_reset import (
+        from infrastructure.connection_reset import (
             quick_reset, 
             emergency_connection_reset, 
             get_connection_status,

@@ -2,7 +2,7 @@
 Daily refresh scheduler for data sources using APScheduler.
 """
 from apscheduler.schedulers.background import BackgroundScheduler
-from database import db_client
+from core.database import db_client
 from rag.pipeline import DocumentProcessingPipeline
 from scrapers.web_scraper import WebScraper
 from models.datasource import DataSourceStatus, ScrapingFrequency
