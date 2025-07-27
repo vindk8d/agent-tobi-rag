@@ -11,10 +11,12 @@ Simplified architecture following the principle of "simple yet effective".
 """
 
 import asyncio
+import contextvars
 import json
 import logging
+import threading
 import tiktoken
-from typing import Dict, List, Optional, Any, Tuple, Union, Callable, Literal
+from typing import Dict, List, Optional, Any, Tuple, Union, Callable, Literal, Set
 from uuid import UUID, uuid4
 from datetime import datetime, timedelta
 
@@ -31,6 +33,245 @@ from database import db_client
 
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# EXECUTION-SCOPED CONNECTION MANAGER
+# =============================================================================
+
+# Context variable to track current execution ID
+current_execution_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    'current_execution_id', default=None
+)
+
+class ExecutionConnectionManager:
+    """
+    Manages database connections per agent execution.
+    
+    Each agent execution gets its own connection tracking, allowing safe cleanup
+    without affecting other concurrent executions.
+    """
+    
+    def __init__(self):
+        self._lock = threading.Lock()
+        # Track connections per execution ID
+        self._execution_connections: Dict[str, Dict[str, any]] = {}
+        # Track active executions
+        self._active_executions: Set[str] = set()
+        
+    def register_execution(self, execution_id: str) -> None:
+        """Register a new agent execution."""
+        with self._lock:
+            self._active_executions.add(execution_id)
+            self._execution_connections[execution_id] = {
+                'sql_engines': [],
+                'sql_databases': [],
+                'custom_connections': []
+            }
+            logger.debug(f"Registered execution {execution_id}")
+    
+    def unregister_execution(self, execution_id: str) -> None:
+        """Unregister an agent execution and clean up its connections."""
+        with self._lock:
+            if execution_id in self._active_executions:
+                self._active_executions.remove(execution_id)
+                
+            # Clean up connections for this execution
+            if execution_id in self._execution_connections:
+                connections = self._execution_connections.pop(execution_id)
+                self._cleanup_execution_connections(execution_id, connections)
+                logger.debug(f"Unregistered and cleaned up execution {execution_id}")
+    
+    def _cleanup_execution_connections(self, execution_id: str, connections: Dict[str, List]) -> None:
+        """Clean up connections for a specific execution."""
+        try:
+            # Dispose SQL engines
+            for engine in connections.get('sql_engines', []):
+                try:
+                    if hasattr(engine, 'dispose'):
+                        engine.dispose()
+                        logger.debug(f"Disposed SQL engine for execution {execution_id}")
+                except Exception as e:
+                    logger.warning(f"Error disposing SQL engine for execution {execution_id}: {e}")
+            
+            # Clean up SQL databases
+            for sql_db in connections.get('sql_databases', []):
+                try:
+                    if hasattr(sql_db, '_engine') and sql_db._engine:
+                        sql_db._engine.dispose()
+                        logger.debug(f"Disposed SQL database for execution {execution_id}")
+                except Exception as e:
+                    logger.warning(f"Error disposing SQL database for execution {execution_id}: {e}")
+            
+            # Clean up custom connections
+            for conn in connections.get('custom_connections', []):
+                try:
+                    if hasattr(conn, 'close'):
+                        conn.close()
+                    elif hasattr(conn, 'dispose'):
+                        conn.dispose()
+                    logger.debug(f"Disposed custom connection for execution {execution_id}")
+                except Exception as e:
+                    logger.warning(f"Error disposing custom connection for execution {execution_id}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error during connection cleanup for execution {execution_id}: {e}")
+    
+    def track_sql_engine(self, execution_id: str, engine) -> None:
+        """Track an SQL engine for cleanup."""
+        with self._lock:
+            if execution_id in self._execution_connections:
+                self._execution_connections[execution_id]['sql_engines'].append(engine)
+    
+    def track_sql_database(self, execution_id: str, sql_db) -> None:
+        """Track an SQL database for cleanup."""
+        with self._lock:
+            if execution_id in self._execution_connections:
+                self._execution_connections[execution_id]['sql_databases'].append(sql_db)
+    
+    def track_custom_connection(self, execution_id: str, connection: any) -> None:
+        """Track a custom connection for cleanup."""
+        with self._lock:
+            if execution_id in self._execution_connections:
+                self._execution_connections[execution_id]['custom_connections'].append(connection)
+    
+    def get_execution_stats(self) -> Dict[str, any]:
+        """Get statistics about active executions and their connections."""
+        with self._lock:
+            stats = {
+                'active_executions': len(self._active_executions),
+                'total_tracked_connections': 0,
+                'executions': {}
+            }
+            
+            for exec_id, connections in self._execution_connections.items():
+                conn_count = (
+                    len(connections.get('sql_engines', [])) +
+                    len(connections.get('sql_databases', [])) +
+                    len(connections.get('custom_connections', []))
+                )
+                stats['total_tracked_connections'] += conn_count
+                stats['executions'][exec_id] = {
+                    'sql_engines': len(connections.get('sql_engines', [])),
+                    'sql_databases': len(connections.get('sql_databases', [])),
+                    'custom_connections': len(connections.get('custom_connections', []))
+                }
+            
+            return stats
+
+# Global connection manager instance
+_connection_manager = ExecutionConnectionManager()
+
+def get_connection_manager() -> ExecutionConnectionManager:
+    """Get the global connection manager instance."""
+    return _connection_manager
+
+class ExecutionScope:
+    """Context manager for tracking an agent execution's connections."""
+    
+    def __init__(self, execution_id: str):
+        self.execution_id = execution_id
+        self.token = None
+    
+    def __enter__(self):
+        # Register the execution
+        _connection_manager.register_execution(self.execution_id)
+        
+        # Set the context variable
+        self.token = current_execution_id.set(self.execution_id)
+        
+        logger.info(f"Started execution scope: {self.execution_id}")
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            # Reset the context variable
+            if self.token:
+                current_execution_id.reset(self.token)
+            
+            # Unregister and cleanup connections
+            _connection_manager.unregister_execution(self.execution_id)
+            
+            logger.info(f"Completed execution scope cleanup: {self.execution_id}")
+            
+        except Exception as e:
+            logger.error(f"Error during execution scope cleanup: {e}")
+
+async def create_execution_scoped_sql_engine():
+    """Create an SQL engine that will be tracked and cleaned up per execution."""
+    execution_id = current_execution_id.get()
+    if not execution_id:
+        logger.warning("No execution ID found, creating untracked SQL engine")
+        return await _create_sql_engine()
+    
+    try:
+        engine = await _create_sql_engine()
+        _connection_manager.track_sql_engine(execution_id, engine)
+        logger.debug(f"Created and tracked SQL engine for execution {execution_id}")
+        return engine
+    except Exception as e:
+        logger.error(f"Failed to create execution-scoped SQL engine: {e}")
+        return None
+
+async def create_execution_scoped_sql_database():
+    """Create an SQL database that will be tracked and cleaned up per execution."""
+    execution_id = current_execution_id.get()
+    if not execution_id:
+        logger.warning("No execution ID found, creating untracked SQL database")
+        return await _create_sql_database()
+    
+    try:
+        engine = await create_execution_scoped_sql_engine()
+        if not engine:
+            return None
+            
+        from langchain_community.utilities import SQLDatabase
+        sql_db = SQLDatabase(engine=engine)
+        _connection_manager.track_sql_database(execution_id, sql_db)
+        logger.debug(f"Created and tracked SQL database for execution {execution_id}")
+        return sql_db
+    except Exception as e:
+        logger.error(f"Failed to create execution-scoped SQL database: {e}")
+        return None
+
+async def _create_sql_engine():
+    """Create a new SQL engine with optimized settings for agent executions."""
+    from sqlalchemy import create_engine
+    settings = await get_settings()
+    database_url = settings.supabase.postgresql_connection_string
+
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+    # Optimized settings for agent executions
+    engine = create_engine(
+        database_url,
+        # Reduced pool settings for per-execution cleanup
+        pool_size=2,          # Smaller pool per execution
+        max_overflow=3,       # Limited overflow
+        pool_timeout=20,      # Shorter timeout
+        pool_recycle=1800,    # Recycle every 30 minutes
+        pool_pre_ping=True,   # Verify connections
+        # Close connections more aggressively
+        pool_reset_on_return='commit',
+    )
+    
+    return engine
+
+async def _create_sql_database():
+    """Create a new SQL database connection."""
+    from langchain_community.utilities import SQLDatabase
+    engine = await _create_sql_engine()
+    return SQLDatabase(engine=engine)
+
+# Utility functions for monitoring
+async def get_connection_statistics() -> Dict[str, any]:
+    """Get current connection statistics for monitoring."""
+    return _connection_manager.get_execution_stats()
+
+async def log_connection_status():
+    """Log current connection status for debugging."""
+    stats = await get_connection_statistics()
+    logger.info(f"Connection Manager Stats: {stats}")
 
 # =============================================================================
 # CONTEXT WINDOW MANAGER (Token Management)
@@ -1002,10 +1243,23 @@ class ConversationConsolidator:
             logger.error(f"Error in _get_consolidation_candidates: {e}")
             return []
 
-    async def _get_conversation_messages(self, conversation_id: str) -> List[Dict[str, Any]]:
-        """Get all messages for a conversation."""
+    async def _get_conversation_messages(self, conversation_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Get recent messages for a conversation, with optional limit for performance optimization.
+        
+        Args:
+            conversation_id: The conversation ID to get messages for
+            limit: Maximum number of recent messages to retrieve. If None, uses settings.memory.max_messages
+            
+        Returns:
+            List of message dictionaries in chronological order (oldest to newest)
+        """
         try:
-            print(f"            📝 Getting messages for conversation {conversation_id[:8]}...")
+            # Use max_messages from settings if no limit provided
+            if limit is None:
+                limit = self.settings.memory.max_messages
+                
+            print(f"            📝 Getting last {limit} messages for conversation {conversation_id[:8]}...")
 
             # Use Supabase client for message retrieval
             from database import db_client
@@ -1014,13 +1268,17 @@ class ConversationConsolidator:
                 return (db_client.client.table("messages")
                     .select("role,content,created_at,user_id")
                     .eq("conversation_id", conversation_id)
-                    .order("created_at")
+                    .order("created_at", desc=True)  # Most recent first for LIMIT
+                    .limit(limit)                    # Apply limit at database level
                     .execute())
 
             result = await asyncio.to_thread(_get_messages)
 
             messages = result.data if result.data else []
-            print(f"            ✅ Retrieved {len(messages)} messages for summarization")
+            # Reverse to get chronological order (oldest to newest) as expected by the rest of the system
+            messages = list(reversed(messages))
+            
+            print(f"            ✅ Retrieved {len(messages)} messages (limited to {limit}) for conversation processing")
             return messages
 
         except Exception as e:
@@ -1537,6 +1795,7 @@ Format as simple bullet points (one per line, no bullets symbols):
             # Get recent messages from conversations
             recent_messages = []
             for conv in conversations[:3]:  # Latest 3 conversations
+                # Get messages with appropriate limit (default uses max_messages from settings)
                 conv_messages = await self._get_conversation_messages(conv['id'])
                 if conv_messages:
                     recent_messages.extend(conv_messages[-10:])  # Last 10 messages per conv
@@ -1837,8 +2096,8 @@ class MemoryManager:
                 logger.info(f"No conversation found for ID: {conversation_id_str}")
                 return None
 
-            # Get conversation messages using consolidator
-            messages = await self.consolidator._get_conversation_messages(conversation_id_str)
+            # Get conversation messages using consolidator (limit to max_messages for performance)
+            messages = await self.consolidator._get_conversation_messages(conversation_id_str, limit=self.settings.memory.max_messages)
 
             # Return state with messages and metadata
             return {
@@ -1984,8 +2243,9 @@ class MemoryManager:
         try:
             await self._ensure_initialized()
 
-            # Ensure conversation exists
-            await self._ensure_conversation_exists(conversation_id, user_id)
+            # Ensure conversation exists and get the actual conversation_id to use
+            # (may be different if reusing existing conversation)
+            actual_conversation_id = await self._ensure_conversation_exists(conversation_id, user_id)
 
             # Use Supabase client directly for message storage
             try:
@@ -1997,7 +2257,7 @@ class MemoryManager:
                 from database import db_client
 
             message_data = {
-                'conversation_id': conversation_id,
+                'conversation_id': actual_conversation_id,  # Use the actual conversation ID
                 'role': role,
                 'content': content,
                 'metadata': metadata or {}
@@ -2010,7 +2270,7 @@ class MemoryManager:
 
             if result.data:
                 message_id = result.data[0]['id']
-                logger.debug(f"Message saved to database: {message_id} (role: {role})")
+                logger.debug(f"Message saved to database: {message_id} (role: {role}) in conversation: {actual_conversation_id}")
                 return message_id
             else:
                 logger.error("Failed to save message to database - no data returned")
@@ -2020,11 +2280,20 @@ class MemoryManager:
             logger.error(f"Error saving message to database: {e}")
             return None
 
-    async def _ensure_conversation_exists(self, conversation_id: str, user_id: str) -> None:
-        """Ensure conversation record exists in the conversations table."""
+    async def _ensure_conversation_exists(self, conversation_id: str, user_id: str) -> str:
+        """
+        Ensure conversation record exists in the conversations table.
+        Returns the actual conversation_id to use (may reuse existing conversation).
+        
+        SINGLE CONVERSATION PER USER APPROACH:
+        - If user has existing conversation, reuse it (ignore provided conversation_id)
+        - Only create new conversation if user has no existing conversations
+        - This maintains conversation continuity across sessions/refreshes
+        """
         print(f"            🔍 _ensure_conversation_exists called:")
         print(f"               - conversation_id: '{conversation_id}' (type: {type(conversation_id)})")
         print(f"               - user_id: '{user_id}' (type: {type(user_id)})")
+        
         try:
             try:
                 from database import db_client
@@ -2037,37 +2306,66 @@ class MemoryManager:
                     sys.path.append('/app')
                     from database import db_client
 
-            # Check if conversation exists
+            # STEP 1: Check if user already has an existing conversation (prefer reuse)
+            existing_conversations = await asyncio.to_thread(
+                lambda: db_client.client.table('conversations')
+                .select('id, title, created_at')
+                .eq('user_id', user_id)
+                .order('updated_at', desc=True)
+                .limit(1)
+                .execute()
+            )
+            
+            if existing_conversations.data:
+                existing_id = existing_conversations.data[0]['id']
+                existing_title = existing_conversations.data[0].get('title', 'Conversation')
+                
+                print(f"               ✅ Reusing existing conversation:")
+                print(f"                  - existing_id: '{existing_id}'")
+                print(f"                  - title: '{existing_title}'")
+                
+                # Update the conversation timestamp to mark as active
+                await asyncio.to_thread(
+                    lambda: db_client.client.table('conversations')
+                    .update({'updated_at': datetime.now().isoformat()})
+                    .eq('id', existing_id)
+                    .execute()
+                )
+                
+                return existing_id
+            
+            # STEP 2: No existing conversation found - create new one
+            print(f"               🆕 No existing conversation found, creating new one")
+            
+            conversation_data = {
+                'id': conversation_id,
+                'user_id': user_id,
+                'title': 'Ongoing Conversation',  # Better title than "New Conversation"
+                'metadata': {
+                    'created_by': 'memory_manager',
+                    'conversation_type': 'single_persistent'
+                }
+            }
+
+            print(f"               🔄 Creating conversation with data:")
+            print(f"                  - id: '{conversation_data['id']}'")
+            print(f"                  - user_id: '{conversation_data['user_id']}'")
+            print(f"                  - title: '{conversation_data['title']}'")
+
             result = await asyncio.to_thread(
-                lambda: db_client.client.table('conversations').select('id').eq('id', conversation_id).execute()
+                lambda: db_client.client.table('conversations').insert(conversation_data).execute()
             )
 
-            if not result.data:
-                # Create conversation record
-                conversation_data = {
-                    'id': conversation_id,
-                    'user_id': user_id,
-                    'title': 'New Conversation',
-                    'metadata': {'created_by': 'memory_manager'}
-                }
-
-                print(f"               🔄 Creating conversation with data:")
-                print(f"                  - id: '{conversation_data['id']}'")
-                print(f"                  - user_id: '{conversation_data['user_id']}'")
-                print(f"                  - title: '{conversation_data['title']}'")
-
-                # Wrap synchronous database call in asyncio.to_thread
-                result = await asyncio.to_thread(
-                    lambda: db_client.client.table('conversations').insert(conversation_data).execute()
-                )
-
-                if result.data:
-                    logger.debug(f"Created conversation record: {conversation_id}")
-                else:
-                    logger.error(f"Failed to create conversation record: {conversation_id}")
+            if result.data:
+                logger.debug(f"Created new conversation record: {conversation_id}")
+                return conversation_id
+            else:
+                logger.error(f"Failed to create conversation record: {conversation_id}")
+                return conversation_id  # Return original ID as fallback
 
         except Exception as e:
             logger.error(f"Error ensuring conversation exists: {e}")
+            return conversation_id  # Return original ID as fallback
 
     def _extract_conversation_id_from_config(self, config: Dict[str, Any]) -> Optional[str]:
         """Extract conversation ID from LangGraph config."""

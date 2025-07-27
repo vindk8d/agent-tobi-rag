@@ -4,6 +4,7 @@ Memory Debug API endpoints for debugging and monitoring memory system
 
 import logging
 import json
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -11,6 +12,14 @@ from pydantic import BaseModel
 
 from database import db_client
 from models.base import APIResponse
+from agents.memory import get_connection_statistics, log_connection_status
+from agents.connection_reset import (
+    reset_all_connections, 
+    emergency_connection_reset, 
+    get_connection_status as get_comprehensive_connection_status,
+    quick_reset,
+    status_check
+)
 
 logger = logging.getLogger(__name__)
 
@@ -353,23 +362,25 @@ async def get_user_messages(user_id: str, limit: int = Query(50, ge=1, le=200), 
                 'conversation_id', conversation_id
             ).order('created_at', asc=True).limit(limit).execute()
         else:
-            # Get messages from all conversations for this user (original behavior)
-            conversations_result = db_client.client.table('conversations').select('id').eq(
+            # SINGLE CONVERSATION PER USER APPROACH:
+            # Get the user's single ongoing conversation (most recently updated)
+            conversations_result = db_client.client.table('conversations').select('id, title, created_at').eq(
                 'user_id', user_id
-            ).order('created_at', desc=True).limit(5).execute()
+            ).order('updated_at', desc=True).limit(1).execute()
 
             if not conversations_result.data:
                 return APIResponse(
                     success=True,
-                    message="No conversations found for user",
+                    message="No conversation found for user",
                     data=[]
                 )
 
-            conversation_ids = [conv['id'] for conv in conversations_result.data]
-
-            messages_result = db_client.client.table('messages').select('*').in_(
-                'conversation_id', conversation_ids
-            ).order('created_at', desc=True).limit(limit).execute()
+            # Get all messages from the user's single conversation
+            user_conversation = conversations_result.data[0]
+            conversation_id = user_conversation['id']
+            messages_result = db_client.client.table('messages').select('*').eq(
+                'conversation_id', conversation_id
+            ).order('created_at').limit(limit).execute()
 
         messages = []
         for message in messages_result.data or []:
@@ -622,9 +633,198 @@ async def close_db_connections():
         
         return APIResponse(
             success=True,
-            message="Database connections closed successfully",
+            message="Database connections closed successfully (deprecated - use ExecutionScope)",
             data={"connections_closed": True}
         )
     except Exception as e:
         logger.error(f"Error closing database connections: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to close connections: {str(e)}")
+
+
+@router.get("/connections/status")
+async def get_connection_status():
+    """
+    Get current database connection status and statistics.
+    
+    This endpoint monitors the execution-scoped connection manager
+    to help debug connection limit issues.
+    """
+    try:
+        # Get connection statistics
+        stats = await get_connection_statistics()
+        
+        # Log current status for debugging
+        await log_connection_status()
+        
+        return APIResponse(
+            success=True,
+            data={
+                "connection_stats": stats,
+                "timestamp": str(datetime.utcnow()),
+                "description": "Current database connection statistics from execution-scoped manager"
+            },
+            message="Connection status retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting connection status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving connection status: {str(e)}")
+
+
+@router.post("/connections/cleanup")
+async def manual_connection_cleanup():
+    """
+    Manual endpoint to trigger connection cleanup logging.
+    
+    This is for debugging purposes - normal cleanup happens automatically
+    via ExecutionScope context manager.
+    """
+    try:
+        # Log current connection status
+        await log_connection_status()
+        
+        # Get current stats
+        stats = await get_connection_statistics()
+        
+        return APIResponse(
+            success=True,
+            data={
+                "connection_stats": stats,
+                "message": "Manual cleanup logging triggered. Automatic cleanup happens via ExecutionScope.",
+                "timestamp": str(datetime.utcnow())
+            },
+            message="Connection cleanup logged successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in manual cleanup: {e}")
+        raise HTTPException(status_code=500, detail=f"Error in manual cleanup: {str(e)}")
+
+
+@router.post("/connections/reset")
+async def comprehensive_connection_reset():
+    """
+    Comprehensive connection reset to clear all database connections.
+    
+    This resets:
+    - Supabase client connections
+    - SQL connection pools
+    - Execution connection manager
+    - Memory manager connections
+    
+    Use this when experiencing "Max client connections reached" errors.
+    """
+    try:
+        logger.info("🔄 Starting comprehensive connection reset via API...")
+        
+        # Perform comprehensive reset
+        results = await reset_all_connections(force=True)
+        
+        # Get status after reset
+        status = await get_comprehensive_connection_status()
+        
+        return APIResponse(
+            success=True,
+            data={
+                "reset_results": results,
+                "connection_status_after_reset": status,
+                "timestamp": str(datetime.utcnow()),
+                "message": "Comprehensive connection reset completed"
+            },
+            message="All database connections have been reset successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in comprehensive connection reset: {e}")
+        raise HTTPException(status_code=500, detail=f"Error during connection reset: {str(e)}")
+
+
+@router.post("/connections/emergency-reset")
+async def emergency_reset():
+    """
+    EMERGENCY connection reset - nuclear option for when everything is stuck.
+    
+    ⚠️ WARNING: This aggressively closes ALL connections and resets ALL state.
+    Use only when normal reset doesn't work.
+    """
+    try:
+        logger.warning("🚨 Starting EMERGENCY connection reset via API...")
+        
+        # Perform emergency reset
+        results = await emergency_connection_reset()
+        
+        # Get status after emergency reset
+        status = await get_comprehensive_connection_status()
+        
+        return APIResponse(
+            success=True,
+            data={
+                "emergency_reset_results": results,
+                "connection_status_after_reset": status,
+                "timestamp": str(datetime.utcnow()),
+                "warning": "Emergency reset completed - all connections forcibly closed"
+            },
+            message="Emergency connection reset completed successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in emergency connection reset: {e}")
+        raise HTTPException(status_code=500, detail=f"Error during emergency reset: {str(e)}")
+
+
+@router.get("/connections/comprehensive-status")
+async def get_comprehensive_status():
+    """
+    Get comprehensive status of all database connections.
+    
+    This provides detailed information about:
+    - Supabase client status
+    - Execution connection manager
+    - Memory manager components
+    """
+    try:
+        # Get comprehensive connection status
+        status = await get_comprehensive_connection_status()
+        
+        return APIResponse(
+            success=True,
+            data={
+                "comprehensive_status": status,
+                "timestamp": str(datetime.utcnow()),
+                "description": "Comprehensive database connection status"
+            },
+            message="Connection status retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting comprehensive connection status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving connection status: {str(e)}")
+
+
+@router.post("/connections/quick-reset")
+async def quick_connection_reset():
+    """
+    Quick connection reset for common connection issues.
+    
+    This is a faster alternative to the comprehensive reset,
+    suitable for most connection limit issues.
+    """
+    try:
+        logger.info("⚡ Starting quick connection reset via API...")
+        
+        # Perform quick reset
+        results = await quick_reset()
+        
+        return APIResponse(
+            success=True,
+            data={
+                "quick_reset_results": results,
+                "timestamp": str(datetime.utcnow()),
+                "message": "Quick connection reset completed"
+            },
+            message="Quick connection reset completed successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in quick connection reset: {e}")
+        raise HTTPException(status_code=500, detail=f"Error during quick reset: {str(e)}")

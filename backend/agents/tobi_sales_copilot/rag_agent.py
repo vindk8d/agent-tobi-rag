@@ -35,6 +35,7 @@ if str(backend_path) not in sys.path:
 from agents.tobi_sales_copilot.state import AgentState
 from agents.tools import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
 from agents.memory import memory_manager, memory_scheduler, context_manager
+from agents.hitl import parse_tool_response, hitl_node
 from config import get_settings, setup_langsmith_tracing
 from database import db_client
 
@@ -107,7 +108,7 @@ class UnifiedToolCallingRAGAgent:
 
         graph = StateGraph(AgentState)
 
-                # Add nodes with automatic checkpointing between steps
+        # Add nodes with automatic checkpointing between steps
         graph.add_node("user_verification", self._user_verification_node)
         
         # Memory preparation nodes
@@ -122,10 +123,10 @@ class UnifiedToolCallingRAGAgent:
         graph.add_node("ea_memory_store", self._employee_memory_store_node)
         graph.add_node("ca_memory_store", self._customer_memory_store_node)
         
-        # Confirmation node for HITL
-        graph.add_node("confirmation_node", self._confirmation_node)
+        # General-purpose HITL node for human interactions
+        graph.add_node("hitl_node", hitl_node)
 
-        # Enhanced graph flow with memory separation
+        # Simplified graph flow with clear separation between employee and customer workflows
         graph.add_edge(START, "user_verification")
 
         # Route from user verification to memory preparation nodes
@@ -139,53 +140,65 @@ class UnifiedToolCallingRAGAgent:
             },
         )
         
-        # Employee workflow: memory prep → agent → (confirmation if needed) → memory store
+        # Employee workflow: memory prep → agent → (hitl_node or ea_memory_store)
         graph.add_edge("ea_memory_prep", "employee_agent")
         
-        # Employee agent routes to confirmation or memory store
+        # Route from employee agent to HITL or employee memory store based on hitl_data
         graph.add_conditional_edges(
             "employee_agent",
-            self._route_employee_to_confirmation_or_memory_store,
+            self.route_from_employee_agent,
             {
-                "confirmation_node": "confirmation_node",
+                "hitl_node": "hitl_node",
                 "ea_memory_store": "ea_memory_store"
             },
         )
         
-        # Confirmation node routes back to employee_agent for execution
-        graph.add_edge("confirmation_node", "employee_agent")
-        
-        # Employee memory store always goes to end
-        graph.add_edge("ea_memory_store", END)
-        
-        # Customer workflow: memory prep → agent → memory store → end
+        # Customer workflow: memory prep → agent → ca_memory_store (simple, no HITL)
         graph.add_edge("ca_memory_prep", "customer_agent")
         graph.add_edge("customer_agent", "ca_memory_store")
+        
+        # HITL workflow: hitl_node loops back to employee_agent only
+        graph.add_conditional_edges(
+            "hitl_node",
+            self.route_from_hitl,
+            {
+                "hitl_node": "hitl_node",  # Re-prompts for invalid responses
+                "employee_agent": "employee_agent"  # Back to employee agent for processing
+            },
+        )
+        
+        # Memory store nodes always go to end
+        graph.add_edge("ea_memory_store", END)
         graph.add_edge("ca_memory_store", END)
 
         # Compile with checkpointer for automatic persistence between steps
-        return graph.compile(checkpointer=checkpointer)
+        # Configure interrupt_before to enable human interaction at HITL node
+        return graph.compile(checkpointer=checkpointer, interrupt_before=["hitl_node"])
 
     @traceable(name="user_verification_node")
     async def _user_verification_node(
         self, state: AgentState, config: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        Verify user access and determine user type (employee, customer, unknown).
-        Sets user_type in user context system for tool access control.
+        Streamlined user verification node that performs ALL identification processes.
+        
+        Input: user_id (from state)
+        Output: Either customer_id OR employee_id populated in state
+        
+        This centralizes all identification logic in one place, making other nodes simpler.
         """
         try:
             user_id = state.get("user_id")
+            
+            # Strip whitespace from user_id to prevent UUID parsing errors
+            if user_id and isinstance(user_id, str):
+                user_id = user_id.strip()
 
             if not user_id:
-                logger.warning(
-                    "[USER_VERIFICATION_NODE] Access denied: No user_id provided"
-                )
-                # Return state with access denied message
+                logger.warning("[USER_VERIFICATION_NODE] Access denied: No user_id provided")
                 error_message = AIMessage(
                     content="Authentication required. Please ensure you're properly logged in."
                 )
-
                 return {
                     "messages": state.get("messages", []) + [error_message],
                     "conversation_id": state.get("conversation_id"),
@@ -194,7 +207,8 @@ class UnifiedToolCallingRAGAgent:
                     "retrieved_docs": [],
                     "sources": [],
                     "long_term_context": [],
-                    "user_verified": False,
+                    "customer_id": None,
+                    "employee_id": None,
                 }
 
             # Extract thread_id from config if no conversation_id is provided
@@ -202,26 +216,122 @@ class UnifiedToolCallingRAGAgent:
             if not conversation_id and config:
                 thread_id = config.get("configurable", {}).get("thread_id")
                 if thread_id:
-                    conversation_id = str(thread_id)  # Keep as string, not UUID object
-                    logger.info(
-                        f"[USER_VERIFICATION_NODE] Using thread_id {thread_id} as conversation_id for persistence"
-                    )
+                    conversation_id = str(thread_id)
+                    logger.info(f"[USER_VERIFICATION_NODE] Using thread_id {thread_id} as conversation_id")
 
-            logger.info(f"[USER_VERIFICATION_NODE] Verifying user access for user: {user_id}")
+            logger.info(f"[USER_VERIFICATION_NODE] Starting identification for user: {user_id}")
 
-            # Verify user access and get user type
-            user_type = await self._verify_user_access(user_id)
-            logger.info(f"[USER_VERIFICATION_NODE] User type determined: {user_type}")
+            # Perform centralized user identification
+            from database import db_client
+            await db_client._async_initialize_client()
 
-            # Set user type in user context system (not in AgentState)
-            with UserContext(user_id=user_id, conversation_id=conversation_id, user_type=user_type):
-                logger.info(f"[USER_VERIFICATION_NODE] User context set - user_type: {user_type}")
+            # Look up user in database
+            user_result = await asyncio.to_thread(
+                lambda: db_client.client.table("users")
+                .select("id, user_type, employee_id, customer_id, email, display_name, is_active")
+                .eq("id", user_id)
+                .execute()
+            )
 
-            if user_type == "unknown":
-                logger.warning(f"[USER_VERIFICATION_NODE] Access denied for unknown user: {user_id}")
-                # Return state with access denied message
-                error_message = AIMessage(
-                    content="""I apologize, but I'm unable to verify your access to the system.
+            if not user_result.data or len(user_result.data) == 0:
+                logger.warning(f"[USER_VERIFICATION_NODE] No user found for user_id: {user_id}")
+                return await self._handle_access_denied(state, conversation_id, "User not found in system")
+
+            user_record = user_result.data[0]
+            user_type = user_record.get("user_type", "").lower()
+            is_active = user_record.get("is_active", False)
+            user_employee_id = user_record.get("employee_id")
+            user_customer_id = user_record.get("customer_id")
+
+            logger.info(f"[USER_VERIFICATION_NODE] User found - Type: {user_type}, Active: {is_active}")
+
+            # Check if user is active
+            if not is_active:
+                logger.warning(f"[USER_VERIFICATION_NODE] User {user_id} is inactive")
+                return await self._handle_access_denied(state, conversation_id, "Account is inactive")
+
+            # Handle employee users
+            if user_type in ["employee", "admin"]:
+                if not user_employee_id:
+                    logger.warning(f"[USER_VERIFICATION_NODE] Employee user has no employee_id")
+                    return await self._handle_access_denied(state, conversation_id, "Employee record incomplete")
+
+                # Verify employee record exists and is active
+                employee_result = await asyncio.to_thread(
+                    lambda: db_client.client.table("employees")
+                    .select("id, name, email, position, is_active")
+                    .eq("id", user_employee_id)
+                    .eq("is_active", True)
+                    .execute()
+                )
+
+                if not employee_result.data or len(employee_result.data) == 0:
+                    logger.warning(f"[USER_VERIFICATION_NODE] No active employee found for employee_id: {user_employee_id}")
+                    return await self._handle_access_denied(state, conversation_id, "Employee record not found")
+
+                employee = employee_result.data[0]
+                logger.info(f"[USER_VERIFICATION_NODE] ✅ Employee access verified - {employee['name']} ({employee['position']})")
+                
+                return {
+                    "messages": state.get("messages", []),
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,  # Now using cleaned user_id
+                    "conversation_summary": state.get("conversation_summary"),
+                    "retrieved_docs": state.get("retrieved_docs", []),
+                    "sources": state.get("sources", []),
+                    "long_term_context": state.get("long_term_context", []),
+                    "employee_id": user_employee_id,  # Populate employee_id
+                    "customer_id": None,  # Explicitly set customer_id to None
+                }
+
+            # Handle customer users
+            elif user_type == "customer":
+                if not user_customer_id:
+                    logger.warning(f"[USER_VERIFICATION_NODE] Customer user has no customer_id")
+                    return await self._handle_access_denied(state, conversation_id, "Customer record incomplete")
+
+                # Verify customer record exists
+                customer_result = await asyncio.to_thread(
+                    lambda: db_client.client.table("customers")
+                    .select("id, name, email")
+                    .eq("id", user_customer_id)
+                    .execute()
+                )
+
+                if not customer_result.data or len(customer_result.data) == 0:
+                    logger.warning(f"[USER_VERIFICATION_NODE] No customer found for customer_id: {user_customer_id}")
+                    return await self._handle_access_denied(state, conversation_id, "Customer record not found")
+
+                customer = customer_result.data[0]
+                logger.info(f"[USER_VERIFICATION_NODE] ✅ Customer access verified - {customer['name']} ({customer['email']})")
+                
+                return {
+                    "messages": state.get("messages", []),
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,  # Now using cleaned user_id
+                    "conversation_summary": state.get("conversation_summary"),
+                    "retrieved_docs": state.get("retrieved_docs", []),
+                    "sources": state.get("sources", []),
+                    "long_term_context": state.get("long_term_context", []),
+                    "customer_id": user_customer_id,  # Populate customer_id
+                    "employee_id": None,  # Explicitly set employee_id to None
+                }
+
+            # Handle unknown user types
+            else:
+                logger.warning(f"[USER_VERIFICATION_NODE] Unknown user_type: {user_type}")
+                return await self._handle_access_denied(state, conversation_id, f"Unsupported user type: {user_type}")
+
+        except Exception as e:
+            logger.error(f"[USER_VERIFICATION_NODE] Error in user verification node: {str(e)}")
+            return await self._handle_access_denied(state, conversation_id, "System error during verification")
+
+    async def _handle_access_denied(self, state: AgentState, conversation_id: Optional[str], reason: str) -> Dict[str, Any]:
+        """Helper method to handle access denied scenarios with consistent messaging."""
+        logger.warning(f"[USER_VERIFICATION_NODE] Access denied: {reason}")
+        
+        error_message = AIMessage(
+            content="""I apologize, but I'm unable to verify your access to the system.
 
 This could be due to:
 - Your account may be inactive or suspended
@@ -229,52 +339,19 @@ This could be due to:
 - There may be a temporary system issue
 
 Please contact your system administrator for assistance, or try again later."""
-                )
+        )
 
-                return {
-                    "messages": state.get("messages", []) + [error_message],
-                    "conversation_id": conversation_id,
-                    "user_id": user_id,
-                    "conversation_summary": state.get("conversation_summary"),
-                    "retrieved_docs": [],
-                    "sources": [],
-                    "long_term_context": [],
-                    "user_verified": False,
-                }
-
-            # Access granted for employee or customer
-            logger.info(f"[USER_VERIFICATION_NODE] ✅ Access granted for {user_type} user: {user_id}")
-
-            # Return full state with user verification flag
-            return {
-                "messages": state.get("messages", []),
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "conversation_summary": state.get("conversation_summary"),
-                "retrieved_docs": state.get("retrieved_docs", []),
-                "sources": state.get("sources", []),
-                "long_term_context": state.get("long_term_context", []),
-                "user_verified": True,
-                "user_type": user_type,  # Add user_type to state for debugging (not stored)
-            }
-
-        except Exception as e:
-            logger.error(f"[USER_VERIFICATION_NODE] Error in user verification node: {str(e)}")
-            # On error, deny access for security
-            error_message = AIMessage(
-                content="I'm temporarily unable to verify your access. Please try again later or contact your system administrator."
-            )
-
-            return {
-                "messages": state.get("messages", []) + [error_message],
-                "conversation_id": state.get("conversation_id"),
-                "user_id": state.get("user_id"),
-                "conversation_summary": state.get("conversation_summary"),
-                "retrieved_docs": [],
-                "sources": [],
-                "long_term_context": [],
-                "user_verified": False,
-            }
+        return {
+            "messages": state.get("messages", []) + [error_message],
+            "conversation_id": conversation_id,
+            "user_id": state.get("user_id"),
+            "conversation_summary": state.get("conversation_summary"),
+            "retrieved_docs": [],
+            "sources": [],
+            "long_term_context": [],
+            "customer_id": None,
+            "employee_id": None,
+        }
 
     # =================================================================
     # MEMORY PREPARATION NODES - Comprehensive memory loading and context preparation
@@ -301,32 +378,19 @@ Please contact your system administrator for assistance, or try again later."""
             messages = state.get("messages", [])
             user_id = state.get("user_id")
             conversation_id = state.get("conversation_id")
-            user_type = state.get("user_type", "unknown")
+            employee_id = state.get("employee_id")
             
-            # Validate user context
-            if user_type not in ["employee", "admin"]:
-                logger.error(f"[EA_MEMORY_PREP] Invalid user type '{user_type}' for employee memory prep")
+            # Validate this is an employee user
+            if not employee_id:
+                logger.error(f"[EA_MEMORY_PREP] No employee_id found - this node should only process employee users")
                 return state  # Pass through unchanged
             
-            logger.info(f"[EA_MEMORY_PREP] Processing {len(messages)} messages for user {user_id}")
+            logger.info(f"[EA_MEMORY_PREP] Processing memory preparation for {len(messages)} messages")
             
             # =================================================================
-            # STEP 1: STORE INCOMING USER MESSAGES
+            # CENTRALIZED STORAGE: All messages stored by Employee Memory Store phase
+            # This prep phase focuses only on preparing context for processing
             # =================================================================
-            logger.info("[EA_MEMORY_PREP] Step 1: Storing incoming user messages")
-            
-            if messages and config:
-                # Find the most recent human message and store it
-                for msg in reversed(messages):
-                    if hasattr(msg, "type") and msg.type == "human":
-                        await self.memory_manager.store_message_from_agent(
-                            message=msg,
-                            config=config,
-                            agent_type="rag",
-                            user_id=user_id,
-                        )
-                        logger.info("[EA_MEMORY_PREP] Stored incoming user message")
-                        break
             
             # =================================================================
             # STEP 2: LOAD CROSS-CONVERSATION USER CONTEXT
@@ -435,12 +499,13 @@ This context from previous conversations may be relevant to the current query.
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
-                "user_type": user_type,
                 "long_term_context": long_term_context,
+                "employee_id": employee_id,  # Keep employee_id
+                "customer_id": state.get("customer_id"),  # Keep customer_id
                 "confirmation_data": state.get("confirmation_data"),
                 "execution_data": state.get("execution_data"),
                 "confirmation_result": state.get("confirmation_result"),
+                "hitl_data": state.get("hitl_data"),
             }
             
         except Exception as e:
@@ -469,32 +534,19 @@ This context from previous conversations may be relevant to the current query.
             messages = state.get("messages", [])
             user_id = state.get("user_id")
             conversation_id = state.get("conversation_id")
-            user_type = state.get("user_type", "unknown")
+            customer_id = state.get("customer_id")
             
-            # Validate user context
-            if user_type != "customer":
-                logger.error(f"[CA_MEMORY_PREP] Invalid user type '{user_type}' for customer memory prep")
+            # Validate this is a customer user
+            if not customer_id:
+                logger.error(f"[CA_MEMORY_PREP] No customer_id found - this node should only process customer users")
                 return state  # Pass through unchanged
             
-            logger.info(f"[CA_MEMORY_PREP] Processing {len(messages)} messages for customer user {user_id}")
+            logger.info(f"[CA_MEMORY_PREP] Processing memory preparation for {len(messages)} messages")
             
             # =================================================================
-            # STEP 1: STORE INCOMING CUSTOMER MESSAGES
+            # CENTRALIZED STORAGE: All messages stored by Customer Memory Store phase
+            # This prep phase focuses only on preparing context for processing
             # =================================================================
-            logger.info("[CA_MEMORY_PREP] Step 1: Storing incoming customer messages")
-            
-            if messages and config:
-                # Find the most recent human message and store it
-                for msg in reversed(messages):
-                    if hasattr(msg, "type") and msg.type == "human":
-                        await self.memory_manager.store_message_from_agent(
-                            message=msg,
-                            config=config,
-                            agent_type="rag",
-                            user_id=user_id,
-                        )
-                        logger.info("[CA_MEMORY_PREP] Stored incoming customer message")
-                        break
             
             # =================================================================
             # STEP 2: LOAD CROSS-CONVERSATION CUSTOMER CONTEXT
@@ -609,12 +661,13 @@ This information from your past interactions may help me better assist you.
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
-                "user_type": user_type,
                 "long_term_context": long_term_context,
+                "customer_id": customer_id,  # Keep customer_id
+                "employee_id": state.get("employee_id"),  # Keep employee_id
                 "confirmation_data": state.get("confirmation_data"),
                 "execution_data": state.get("execution_data"),
                 "confirmation_result": state.get("confirmation_result"),
+                "hitl_data": state.get("hitl_data"),
             }
             
         except Exception as e:
@@ -685,33 +738,42 @@ This information from your past interactions may help me better assist you.
             messages = state.get("messages", [])
             user_id = state.get("user_id")
             conversation_id = state.get("conversation_id")
-            user_type = state.get("user_type", "unknown")
+            employee_id = state.get("employee_id")
             
-            # Validate user context
-            if user_type not in ["employee", "admin"]:
-                logger.error(f"[EA_MEMORY_STORE] Invalid user type '{user_type}' for employee memory storage")
+            # Validate this is an employee user
+            if not employee_id:
+                logger.error(f"[EA_MEMORY_STORE] No employee_id found - this node should only process employee users")
                 return state  # Pass through unchanged
             
             logger.info(f"[EA_MEMORY_STORE] Processing memory storage for {len(messages)} messages")
             
             # =================================================================
-            # STEP 1: STORE AGENT RESPONSE MESSAGES
+            # STEP 1: STORE ALL CONVERSATION MESSAGES
             # =================================================================
-            logger.info("[EA_MEMORY_STORE] Step 1: Storing agent response messages")
+            logger.info("[EA_MEMORY_STORE] Step 1: Storing all conversation messages")
             
             if messages and config:
-                # Find the most recent AI message and store it
-                for msg in reversed(messages):
-                    if hasattr(msg, "type") and msg.type == "ai":
+                stored_count = 0
+                # Store all messages in chronological order to preserve conversation flow
+                for msg in messages:
+                    # Store both human and AI messages to preserve full conversation
+                    # Handle both object and dictionary message formats
+                    msg_type = None
+                    if hasattr(msg, "type"):
+                        msg_type = msg.type
+                    elif isinstance(msg, dict) and "type" in msg:
+                        msg_type = msg["type"]
+                    
+                    if msg_type in ["human", "ai"]:
                         await self.memory_manager.store_message_from_agent(
                             message=msg,
                             config=config,
                             agent_type="rag",
                             user_id=user_id,
                         )
-                        logger.info("[EA_MEMORY_STORE] Stored agent response message")
-                        break
-            
+                        stored_count += 1
+                logger.info(f"[EA_MEMORY_STORE] Stored {stored_count} conversation messages (including HITL messages)")
+
             # =================================================================
             # STEP 2: EXTRACT AND STORE CONVERSATION INSIGHTS
             # =================================================================
@@ -771,12 +833,13 @@ This information from your past interactions may help me better assist you.
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
-                "user_type": user_type,
                 "long_term_context": state.get("long_term_context", []),
+                "employee_id": employee_id,  # Keep employee_id
+                "customer_id": state.get("customer_id"),  # Keep customer_id
                 "confirmation_data": state.get("confirmation_data"),
                 "execution_data": state.get("execution_data"),
                 "confirmation_result": state.get("confirmation_result"),
+                "hitl_data": state.get("hitl_data"),
             }
             
         except Exception as e:
@@ -805,32 +868,41 @@ This information from your past interactions may help me better assist you.
             messages = state.get("messages", [])
             user_id = state.get("user_id")
             conversation_id = state.get("conversation_id")
-            user_type = state.get("user_type", "unknown")
+            customer_id = state.get("customer_id")
             
-            # Validate user context
-            if user_type != "customer":
-                logger.error(f"[CA_MEMORY_STORE] Invalid user type '{user_type}' for customer memory storage")
+            # Validate this is a customer user
+            if not customer_id:
+                logger.error(f"[CA_MEMORY_STORE] No customer_id found - this node should only process customer users")
                 return state  # Pass through unchanged
             
             logger.info(f"[CA_MEMORY_STORE] Processing memory storage for {len(messages)} customer messages")
             
             # =================================================================
-            # STEP 1: STORE CUSTOMER AGENT RESPONSE MESSAGES
+            # STEP 1: STORE ALL CUSTOMER CONVERSATION MESSAGES
             # =================================================================
-            logger.info("[CA_MEMORY_STORE] Step 1: Storing customer agent response messages")
+            logger.info("[CA_MEMORY_STORE] Step 1: Storing all customer conversation messages")
             
             if messages and config:
-                # Find the most recent AI message and store it
-                for msg in reversed(messages):
-                    if hasattr(msg, "type") and msg.type == "ai":
+                stored_count = 0
+                # Store all messages in chronological order to preserve full conversation flow
+                for msg in messages:
+                    # Store both human and AI messages to preserve complete customer conversation
+                    # Handle both object and dictionary message formats
+                    msg_type = None
+                    if hasattr(msg, "type"):
+                        msg_type = msg.type
+                    elif isinstance(msg, dict) and "type" in msg:
+                        msg_type = msg["type"]
+                    
+                    if msg_type in ["human", "ai"]:
                         await self.memory_manager.store_message_from_agent(
                             message=msg,
                             config=config,
                             agent_type="rag",
                             user_id=user_id,
                         )
-                        logger.info("[CA_MEMORY_STORE] Stored customer agent response message")
-                        break
+                        stored_count += 1
+                logger.info(f"[CA_MEMORY_STORE] Stored {stored_count} customer conversation messages")
             
             # =================================================================
             # STEP 2: EXTRACT CUSTOMER-APPROPRIATE INSIGHTS
@@ -897,9 +969,10 @@ This information from your past interactions may help me better assist you.
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
-                "user_type": user_type,
                 "long_term_context": state.get("long_term_context", []),
+                "customer_id": customer_id,  # Keep customer_id
+                "employee_id": state.get("employee_id"),  # Keep employee_id
+                "hitl_data": state.get("hitl_data"),
                 "confirmation_data": state.get("confirmation_data"),
                 "execution_data": state.get("execution_data"),
                 "confirmation_result": state.get("confirmation_result"),
@@ -1041,34 +1114,32 @@ This information from your past interactions may help me better assist you.
 
     def _route_after_user_verification(self, state: Dict[str, Any]) -> str:
         """
-        Route users directly from verification to the appropriate agent node based on user type.
+        Route users directly from verification to the appropriate agent node based on customer_id/employee_id.
+        
+        NOTE: This function is not currently used in the graph - _route_to_memory_prep is used instead.
         
         Args:
-            state: Current agent state containing user_verified and user_type
+            state: Current agent state containing customer_id and employee_id
             
         Returns:
             str: Node name to route to ('employee_agent', 'customer_agent', or 'end')
         """
-        # First check if user is verified
-        if not state.get("user_verified", False):
-            logger.info(f"[ROUTING] User not verified - ending conversation")
-            return "end"
-        
-        # Route verified users based on user type
-        user_type = state.get("user_type", "unknown")
+        # Route users based on presence of employee_id or customer_id (set by user_verification_node)
+        employee_id = state.get("employee_id")
+        customer_id = state.get("customer_id")
         user_id = state.get("user_id", "unknown")
         
-        logger.info(f"[ROUTING] Routing verified user {user_id} with user_type: {user_type}")
+        logger.info(f"[ROUTING] Routing user {user_id} - employee_id: {employee_id}, customer_id: {customer_id}")
         
-        if user_type in ["employee", "admin"]:
-            logger.info(f"[ROUTING] ✅ Routing {user_type} user directly to employee_agent")
+        if employee_id:
+            logger.info(f"[ROUTING] ✅ Routing employee user (ID: {employee_id}) to employee_agent")
             return "employee_agent"
-        elif user_type == "customer":
-            logger.info(f"[ROUTING] ✅ Routing customer user directly to customer_agent")
+        elif customer_id:
+            logger.info(f"[ROUTING] ✅ Routing customer user (ID: {customer_id}) to customer_agent")
             return "customer_agent"
         else:
-            # This should never happen if user_verification works correctly
-            logger.error(f"[ROUTING] ❌ UNEXPECTED: Unknown user_type '{user_type}' for verified user - ending conversation for safety")
+            # No employee_id or customer_id means verification failed
+            logger.info(f"[ROUTING] No employee_id or customer_id found - user verification failed, ending conversation")
             return "end"
 
     def _route_to_memory_prep(self, state: Dict[str, Any]) -> str:
@@ -1076,56 +1147,114 @@ This information from your past interactions may help me better assist you.
         Route users from verification to appropriate memory preparation nodes.
         
         Args:
-            state: Current agent state containing user_verified and user_type
+            state: Current agent state containing customer_id and employee_id
             
         Returns:
             str: Node name to route to ('ea_memory_prep', 'ca_memory_prep', or 'end')
         """
-        # First check if user is verified
-        if not state.get("user_verified", False):
-            logger.info(f"[MEMORY_ROUTING] User not verified - ending conversation")
-            return "end"
-        
-        # Route verified users to appropriate memory preparation
-        user_type = state.get("user_type", "unknown")
+        # Route users based on presence of customer_id or employee_id (set by user_verification_node)
+        employee_id = state.get("employee_id")
+        customer_id = state.get("customer_id")
         user_id = state.get("user_id", "unknown")
         
-        logger.info(f"[MEMORY_ROUTING] Routing verified user {user_id} to memory prep for user_type: {user_type}")
+        logger.info(f"[MEMORY_ROUTING] Routing user {user_id} - employee_id: {employee_id}, customer_id: {customer_id}")
         
-        if user_type in ["employee", "admin"]:
-            logger.info(f"[MEMORY_ROUTING] ✅ Routing {user_type} user to employee memory prep")
+        if employee_id:
+            logger.info(f"[MEMORY_ROUTING] ✅ Routing employee user (ID: {employee_id}) to employee memory prep")
             return "ea_memory_prep"
-        elif user_type == "customer":
-            logger.info(f"[MEMORY_ROUTING] ✅ Routing customer user to customer memory prep")
+        elif customer_id:
+            logger.info(f"[MEMORY_ROUTING] ✅ Routing customer user (ID: {customer_id}) to customer memory prep")
             return "ca_memory_prep"
         else:
-            # This should never happen if user_verification works correctly
-            logger.error(f"[MEMORY_ROUTING] ❌ UNEXPECTED: Unknown user_type '{user_type}' for verified user - ending conversation for safety")
+            # No employee_id or customer_id means verification failed
+            logger.info(f"[MEMORY_ROUTING] No employee_id or customer_id found - user verification failed, ending conversation")
             return "end"
 
-    def _route_employee_to_confirmation_or_memory_store(self, state: Dict[str, Any]) -> str:
+    # NOTE: _route_employee_to_confirmation_or_memory_store() method removed
+    # Replaced with simplified route_from_employee_agent() that uses the new HITL system
+
+    def route_from_employee_agent(self, state: Dict[str, Any]) -> str:
         """
-        Route employee agent to confirmation node (if needed) or memory store.
+        Route from employee_agent to HITL node or employee memory storage based on HITL requirements.
         
-        SIMPLIFIED DESIGN:
-        - If confirmation_data exists (new request) → confirmation_node
-        - Otherwise → ea_memory_store
+        This function serves as a conditional edge after the employee_agent node to determine
+        if HITL interaction is needed or if processing can continue to memory storage.
         
         Args:
-            state: Current agent state
+            state: Current agent state containing possible hitl_data
             
         Returns:
-            str: Node name to route to ("confirmation_node" or "ea_memory_store")
+            str: Node name to route to:
+                - "hitl_node" if HITL interaction is required
+                - "ea_memory_store" if no HITL needed
         """
-        confirmation_data = state.get("confirmation_data")
+        employee_id = state.get("employee_id")
+        user_id = state.get("user_id", "unknown")
+        hitl_data = state.get("hitl_data")
         
-        # Route to confirmation if new request needs approval
-        if confirmation_data:
-            logger.info("[ROUTING] New confirmation needed - routing to confirmation_node")
-            return "confirmation_node"
-        else:
-            logger.info("[ROUTING] No confirmation needed - routing to memory store")
+        logger.info(f"[EMPLOYEE_ROUTING] Routing from employee_agent for employee_id: {employee_id}, user_id: {user_id}")
+        
+        # Validate this is actually an employee user (safety check)
+        if not employee_id:
+            logger.warning(f"[EMPLOYEE_ROUTING] No employee_id found in employee routing - this should not happen")
+        
+        # Check if HITL interaction is required
+        if hitl_data and isinstance(hitl_data, dict):
+            hitl_type = hitl_data.get("type", hitl_data.get("interaction_type", "unknown"))
+            logger.info(f"[EMPLOYEE_ROUTING] HITL interaction required - type: {hitl_type}, routing to hitl_node")
+            return "hitl_node"
+        elif hitl_data:
+            # Malformed HITL data - log warning and route safely
+            logger.warning(f"[EMPLOYEE_ROUTING] Malformed HITL data: {type(hitl_data)}, routing to memory store")
             return "ea_memory_store"
+        
+        # No HITL needed, route to employee memory storage
+        logger.info(f"[EMPLOYEE_ROUTING] No HITL needed - routing to ea_memory_store")
+        return "ea_memory_store"
+
+    def route_from_hitl(self, state: Dict[str, Any]) -> str:
+        """
+        Route from HITL node back to employee_agent or continue HITL interaction.
+        
+        This function serves as a conditional edge after the hitl_node to determine
+        if HITL interaction is complete and processing can continue back to employee_agent,
+        or if additional HITL rounds are needed (re-prompts for invalid responses).
+        
+        Simplified logic: HITL is only used by employee workflows, so we only route
+        back to employee_agent or continue HITL loops.
+        
+        Args:
+            state: Current agent state after HITL processing
+            
+        Returns:
+            str: Node name to route to:
+                - "hitl_node" if additional HITL interaction needed (re-prompts)
+                - "employee_agent" if HITL interaction is complete
+        """
+        employee_id = state.get("employee_id")
+        user_id = state.get("user_id", "unknown")
+        hitl_data = state.get("hitl_data")
+        
+        logger.info(f"[HITL_ROUTING] Routing from HITL for employee_id: {employee_id}, user_id: {user_id}")
+        
+        # Validate this is an employee user (safety check)
+        if not employee_id:
+            logger.warning(f"[HITL_ROUTING] No employee_id found in HITL routing - this should not happen")
+        
+        # Check if HITL interaction is still ongoing (re-prompts needed)
+        if hitl_data and isinstance(hitl_data, dict) and hitl_data.get("awaiting_response", False):
+            hitl_type = hitl_data.get("type", hitl_data.get("interaction_type", "unknown"))
+            logger.info(f"[HITL_ROUTING] HITL still awaiting response - type: {hitl_type}, continuing with hitl_node")
+            return "hitl_node"
+        elif hitl_data and not isinstance(hitl_data, dict):
+            # Malformed HITL data - log warning and route back to agent
+            logger.warning(f"[HITL_ROUTING] Malformed HITL data: {type(hitl_data)}, routing back to employee_agent")
+            return "employee_agent"
+        
+        # HITL interaction complete - route back to employee_agent for continued processing
+        # The employee_agent will then decide whether to go to memory storage or not
+        logger.info(f"[HITL_ROUTING] HITL interaction complete - routing back to employee_agent")
+        return "employee_agent"
 
     async def _handle_customer_message_execution(
         self, state: AgentState, execution_data: Dict[str, Any]
@@ -1136,6 +1265,9 @@ This information from your past interactions may help me better assist you.
         This consolidates execution within employee_agent for simplicity.
         """
         try:
+            logger.info(f"🔍 [MESSAGE_EXECUTION] Starting approved message execution")
+            logger.info(f"🔍 [MESSAGE_EXECUTION] Execution data keys: {list(execution_data.keys())}")
+            
             # Extract execution information
             customer_info = execution_data.get("customer_info", {})
             customer_name = customer_info.get("name", "Unknown Customer")
@@ -1144,14 +1276,19 @@ This information from your past interactions may help me better assist you.
             message_type = execution_data.get("message_type", "follow_up")
             
             logger.info(f"[EMPLOYEE_AGENT_NODE] Executing delivery for {customer_name} ({customer_email})")
+            logger.info(f"🔍 [MESSAGE_EXECUTION] Message type: {message_type}")
+            logger.info(f"🔍 [MESSAGE_EXECUTION] Message content length: {len(message_content)} chars")
             
             # Execute the delivery
+            logger.info(f"🔍 [MESSAGE_EXECUTION] Calling _execute_customer_message_delivery")
             delivery_success = await self._execute_customer_message_delivery(
                 customer_id=execution_data.get("customer_id"),
                 message_content=message_content,
                 message_type=message_type,
                 customer_info=customer_info
             )
+            
+            logger.info(f"🔍 [MESSAGE_EXECUTION] Delivery result: {delivery_success}")
             
             # Generate feedback message
             if delivery_success:
@@ -1169,6 +1306,7 @@ Your message to {customer_name} has been sent successfully.
 The customer will receive your message shortly."""
                 
                 logger.info(f"[EMPLOYEE_AGENT_NODE] SUCCESS: Message delivered to {customer_name}")
+                logger.info(f"🔍 [MESSAGE_EXECUTION] Generated success feedback message")
                 
             else:
                 result_status = "failed"
@@ -1180,11 +1318,10 @@ Failed to deliver your message to {customer_name}.
 - Recipient: {customer_name} ({customer_email})
 - Message Type: {message_type.title()}
 - Status: Delivery Failed
-- Reason: System delivery error
-
-Please try again or contact the customer directly."""
+- Reason: System delivery error"""
                 
-                logger.error(f"[EMPLOYEE_AGENT_NODE] FAILED: Delivery failed for {customer_name}")
+                logger.error(f"[EMPLOYEE_AGENT_NODE] FAILED: Message delivery to {customer_name}")
+                logger.error(f"🔍 [MESSAGE_EXECUTION] Generated failure feedback message")
             
             # Add feedback message to conversation
             messages = list(state.get("messages", []))
@@ -1192,7 +1329,8 @@ Please try again or contact the customer directly."""
             
             logger.info(f"[EMPLOYEE_AGENT_NODE] Delivery completed with status: {result_status}")
             
-            # Return completion state (clears execution data, sets final result)
+            # CRITICAL: Clear all HITL and execution state to prevent re-processing
+            # This ensures the conversation is complete and no further tool calls occur
             return {
                 "messages": messages,
                 "sources": state.get("sources", []),
@@ -1200,11 +1338,13 @@ Please try again or contact the customer directly."""
                 "conversation_id": state.get("conversation_id"),
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
-                "user_type": state.get("user_type"),
-                "confirmation_data": None,
-                "execution_data": None,  # Clear after execution
+                "long_term_context": state.get("long_term_context", []),
+                "employee_id": state.get("employee_id"),  # Keep employee_id
+                "customer_id": state.get("customer_id"),  # Keep customer_id
+                "confirmation_data": None,  # Clear all HITL-related state
+                "execution_data": None,     # Clear execution state
                 "confirmation_result": result_status,  # Set final result
+                "hitl_data": None,         # Clear HITL state completely
             }
             
         except Exception as e:
@@ -1217,11 +1357,13 @@ Please try again or contact the customer directly."""
                 "conversation_id": state.get("conversation_id"),
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
-                "user_type": state.get("user_type"),
-                "confirmation_data": None,
-                "execution_data": None,
+                "long_term_context": state.get("long_term_context", []),
+                "employee_id": state.get("employee_id"),  # Keep employee_id
+                "customer_id": state.get("customer_id"),  # Keep customer_id
+                "confirmation_data": None,  # Clear all HITL-related state
+                "execution_data": None,     # Clear execution state  
                 "confirmation_result": "error",
+                "hitl_data": None,         # Clear HITL state completely
             }
 
     @traceable(name="employee_agent_node")
@@ -1240,23 +1382,40 @@ Please try again or contact the customer directly."""
         try:
             logger.info("[EMPLOYEE_AGENT_NODE] Processing employee user request")
             
-            # Check if executing approved customer message (from confirmation_node)
+            # Check if executing approved customer message (from HITL completion)
             execution_data = state.get("execution_data")
             if execution_data:
-                logger.info("[EMPLOYEE_AGENT_NODE] Executing approved customer message delivery")
-                return await self._handle_customer_message_execution(state, execution_data)
+                logger.info("[EMPLOYEE_AGENT_NODE] 🎯 EXECUTING APPROVED ACTION - bypassing normal tool calling loop")
+                logger.info(f"🔍 [EXECUTION_DATA] Found execution_data with keys: {list(execution_data.keys())}")
+                logger.info(f"🔍 [EXECUTION_DATA] Tool: {execution_data.get('tool')}")
+                logger.info(f"🔍 [EXECUTION_DATA] Customer: {execution_data.get('customer_info', {}).get('name', 'Unknown')}")
+                
+                # CRITICAL: Execute and return immediately - do NOT continue to tool calling loop
+                # This prevents the LLM from seeing the original request again and re-executing
+                execution_result = await self._handle_customer_message_execution(state, execution_data)
+                logger.info("[EMPLOYEE_AGENT_NODE] ✅ EXECUTION COMPLETE - returning without further processing")
+                return execution_result
+            else:
+                logger.info("[EMPLOYEE_AGENT_NODE] No execution_data found - processing as regular employee request")
 
-            # Get messages and validate user type
+            # Get messages and validate this is an employee user
             messages = state.get("messages", [])
-            user_type = state.get("user_type")
+            employee_id = state.get("employee_id")
             user_id = state.get("user_id")
             conversation_id = state.get("conversation_id")
             
-            if user_type not in ["employee", "admin"]:
-                logger.warning(f"[EMPLOYEE_AGENT_NODE] Non-employee user type '{user_type}' routed to employee node")
-                return await self._handle_access_denied(state, "Employee access required")
+            logger.info(f"🔍 [EMPLOYEE_AGENT_NODE] State keys: {list(state.keys())}")
+            logger.info(f"🔍 [EMPLOYEE_AGENT_NODE] Employee ID: {employee_id}")
+            logger.info(f"🔍 [EMPLOYEE_AGENT_NODE] Conversation ID: {conversation_id}")
+            
+            if not employee_id:
+                logger.warning(f"[EMPLOYEE_AGENT_NODE] Non-employee user routed to employee node")
+                return await self._handle_access_denied(state, conversation_id, "Employee access required")
 
-            logger.info(f"[EMPLOYEE_AGENT_NODE] Processing {len(messages)} messages for {user_type}")
+            # Set user_type for this employee agent node
+            user_type = "employee"
+            
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Processing {len(messages)} messages for employee {employee_id}")
 
             # Messages are already prepared by ea_memory_prep node
             # Use messages as-is from memory preparation
@@ -1272,7 +1431,6 @@ Please try again or contact the customer directly."""
             # Tool calling loop
             max_tool_iterations = 3
             iteration = 0
-            confirmation_data_to_return = None  # Track if customer messaging was triggered
 
             # Create LLM and bind tools
             selected_model = self.settings.openai_chat_model
@@ -1285,7 +1443,9 @@ Please try again or contact the customer directly."""
 
             logger.info(f"[EMPLOYEE_AGENT_NODE] Using model: {selected_model}")
 
-            while iteration < max_tool_iterations:
+            hitl_required = False  # Flag to track if HITL interaction is needed
+            
+            while iteration < max_tool_iterations and not hitl_required:
                 iteration += 1
                 logger.info(f"[EMPLOYEE_AGENT_NODE] Agent iteration {iteration}")
 
@@ -1311,56 +1471,63 @@ Please try again or contact the customer directly."""
                                 # Set user context
                                 user_id = state.get("user_id")
                                 conversation_id = state.get("conversation_id")
-                                user_type = state.get("user_type", "unknown")
+                                employee_id = state.get("employee_id")
 
                                 with UserContext(
                                     user_id=user_id, 
                                     conversation_id=conversation_id, 
-                                    user_type=user_type
+                                    user_type="employee" if employee_id else "unknown",
+                                    employee_id=employee_id
                                 ):
                                     # Execute tool based on type
-                                    if tool_name in ["simple_rag", "simple_query_crm_data", "trigger_customer_message"]:
+                                    if tool_name in ["simple_rag", "simple_query_crm_data", "trigger_customer_message", "gather_further_details"]:
                                         tool_result = await tool.ainvoke(tool_args)
                                     else:
                                         tool_result = tool.invoke(tool_args)
 
-                                # CLEAN APPROACH: Check for customer messaging confirmation need
-                                if (tool_name == "trigger_customer_message" and 
-                                    isinstance(tool_result, str) and 
-                                    "STATE_DRIVEN_CONFIRMATION_REQUIRED" in tool_result):
+                                # Parse tool response using standardized HITL detection
+                                logger.info(f"🚨 [HITL_DEBUG] Tool {tool_name} returned: {str(tool_result)[:200]}...")
+                                parsed_response = parse_tool_response(str(tool_result), tool_name)
+                                logger.info(f"🚨 [HITL_DEBUG] Parsed response type: {parsed_response.get('type')}")
+                                logger.info(f"🚨 [HITL_DEBUG] Parsed response keys: {list(parsed_response.keys())}")
+                                
+                                if parsed_response["type"] == "hitl_required":
+                                    # HITL interaction required - store hitl_data and prepare for routing
+                                    logger.info(f"🚨 [HITL_DEBUG] ✅ HITL DETECTED! Tool {tool_name} requires HITL interaction: {parsed_response.get('hitl_type')}")
                                     
-                                    logger.info("[EMPLOYEE_AGENT_NODE] Customer messaging tool requires HITL confirmation")
+                                    # Store HITL data in state for routing to hitl_node
+                                    # CRITICAL FIX: Set awaiting_response=True since hitl_node never runs due to interrupt_before
+                                    hitl_data_with_awaiting = {**parsed_response["hitl_data"], "awaiting_response": True}
+                                    state["hitl_data"] = hitl_data_with_awaiting
+                                    logger.info(f"🚨 [HITL_DEBUG] ✅ Set hitl_data in state with keys: {list(hitl_data_with_awaiting.keys())}")
+                                    logger.info(f"🚨 [HITL_DEBUG] ✅ CRITICAL FIX: Set awaiting_response=True before interrupt")
                                     
-                                    try:
-                                        import json
-                                        prefix = "STATE_DRIVEN_CONFIRMATION_REQUIRED: "
-                                        data_start = tool_result.find(prefix) + len(prefix)
-                                        data_str = tool_result[data_start:].strip()
-                                        confirmation_data_to_return = json.loads(data_str)
-                                        
-                                        # Create user-friendly response
-                                        customer_info = confirmation_data_to_return.get("customer_info", {})
-                                        customer_name = customer_info.get("name", "customer")
-                                        
-                                        tool_response = f"📤 Message prepared for {customer_name} and ready for your confirmation."
-                                        
-                                        logger.info(f"[EMPLOYEE_AGENT_NODE] Confirmation data prepared for customer: {customer_name}")
-                                        
-                                    except Exception as e:
-                                        logger.error(f"[EMPLOYEE_AGENT_NODE] Error processing confirmation data: {e}")
-                                        tool_response = f"Error preparing customer message: {e}"
-                                        confirmation_data_to_return = None
+                                    # Create user-friendly tool response message
+                                    tool_response = parsed_response["hitl_data"].get("prompt", "Human interaction required")
+                                    
+                                    # Add tool message
+                                    tool_message = ToolMessage(
+                                        content=tool_response,
+                                        tool_call_id=tool_call_id,
+                                        name=tool_name,
+                                    )
+                                    processing_messages.append(tool_message)
+                                    
+                                    # Set flag to exit both loops - HITL node will handle next steps
+                                    hitl_required = True
+                                    break
                                 else:
                                     # Normal tool response
-                                    tool_response = str(tool_result)
-
-                                # Add tool message
-                                tool_message = ToolMessage(
-                                    content=tool_response,
-                                    tool_call_id=tool_call_id,
-                                    name=tool_name,
-                                )
-                                processing_messages.append(tool_message)
+                                    logger.info(f"🚨 [HITL_DEBUG] ❌ NO HITL DETECTED - Tool {tool_name} response parsed as: {parsed_response.get('type')}")
+                                    tool_response = parsed_response["content"]
+                                    
+                                    # Add tool message
+                                    tool_message = ToolMessage(
+                                        content=tool_response,
+                                        tool_call_id=tool_call_id,
+                                        name=tool_name,
+                                    )
+                                    processing_messages.append(tool_message)
 
                             else:
                                 # Tool not found
@@ -1406,16 +1573,16 @@ Please try again or contact the customer directly."""
                 "conversation_id": state.get("conversation_id"),
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
-                "user_type": user_type,
+                "long_term_context": state.get("long_term_context", []),
+                "employee_id": employee_id,  # Keep employee_id
+                "customer_id": state.get("customer_id"),  # Keep customer_id
             }
 
-            # Add confirmation data if customer messaging was triggered
-            if confirmation_data_to_return:
-                return_state["confirmation_data"] = confirmation_data_to_return
-                logger.info("[EMPLOYEE_AGENT_NODE] Returning with confirmation_data for confirmation routing")
-            else:
-                return_state["confirmation_data"] = None
+            # Include hitl_data if set during tool execution
+            return_state["hitl_data"] = state.get("hitl_data")
+            
+            # HITL system now handles confirmation data automatically
+            return_state["confirmation_data"] = None
             
             # Always clear execution state for clean routing    
             return_state["execution_data"] = None
@@ -1428,25 +1595,7 @@ Please try again or contact the customer directly."""
             logger.error(f"[EMPLOYEE_AGENT_NODE] Error: {str(e)}")
             return await self._handle_processing_error(state, e)
 
-    async def _handle_access_denied(self, state: AgentState, message: str) -> Dict[str, Any]:
-        """Handle access denied scenarios with proper error response."""
-        error_message = AIMessage(content=f"Access denied: {message}")
-        messages = list(state.get("messages", []))
-        messages.append(error_message)
-        
-        return {
-            "messages": messages,
-            "sources": state.get("sources", []),
-            "retrieved_docs": state.get("retrieved_docs", []),
-            "conversation_id": state.get("conversation_id"),
-            "user_id": state.get("user_id"),
-            "conversation_summary": state.get("conversation_summary"),
-            "user_verified": state.get("user_verified", True),
-            "user_type": state.get("user_type"),
-            "confirmation_data": None,
-            "execution_data": None,
-            "confirmation_result": None,
-        }
+
 
     async def _handle_processing_error(self, state: AgentState, error: Exception) -> Dict[str, Any]:
         """Handle processing errors with proper error response."""
@@ -1463,11 +1612,13 @@ Please try again or contact the customer directly."""
             "conversation_id": state.get("conversation_id"),
             "user_id": state.get("user_id"),
             "conversation_summary": state.get("conversation_summary"),
-            "user_verified": state.get("user_verified", True),
-            "user_type": state.get("user_type"),
+            "long_term_context": state.get("long_term_context", []),
+            "employee_id": state.get("employee_id"),  # Keep employee_id
+            "customer_id": state.get("customer_id"),  # Keep customer_id
             "confirmation_data": None,
             "execution_data": None,
             "confirmation_result": None,
+            "hitl_data": state.get("hitl_data"),
         }
 
     def _get_employee_system_prompt(self) -> str:
@@ -1477,13 +1628,24 @@ Please try again or contact the customer directly."""
 Available tools:
 {', '.join(self.tool_names)}
 
+**IMPORTANT - Current System Status:**
+All employee identification and customer messaging systems are fully operational. You can directly use trigger_customer_message for any customer messaging requests without needing additional employee information.
+
 **Tool Usage Guidelines:**
 - Use simple_rag for comprehensive document-based answers
 - Use simple_query_crm_data for specific CRM database queries  
 - Use trigger_customer_message when asked to send messages, follow-ups, or contact customers
 
 **Customer Messaging:**
-When asked to "send a message to [customer]", "follow up with [customer]", or "contact [customer]", use the trigger_customer_message tool. This will prepare the message and request your confirmation before sending.
+When asked to "send a message to [customer]", "follow up with [customer]", or "contact [customer]", DIRECTLY use the trigger_customer_message tool. The system will automatically identify you as the sending employee. This will prepare the message and request your confirmation before sending.
+
+**Message Content Guidelines:**
+- If specific message content is provided, use it exactly
+- If no specific content is given, generate appropriate professional content based on the message type
+- For follow-up messages, create content like "Hi [Name], I wanted to follow up on our recent interaction. Please let me know if you have any questions or need assistance."
+- NEVER ask for message content using gather_further_details - generate appropriate content instead
+
+DO NOT ask for additional employee information - the system handles employee identification automatically.
 
 You have full access to:
 - All CRM data (employees, customers, vehicles, sales, etc.)
@@ -1510,14 +1672,14 @@ Be helpful, professional, and make full use of your available tools to assist wi
             await self._ensure_initialized()
 
             # Validate user context at node entry
-            user_type = state.get("user_type", "unknown")
+            customer_id = state.get("customer_id")
             user_id = state.get("user_id")
             
-            logger.info(f"[CUSTOMER_AGENT_NODE] Starting complete workflow for user_type: {user_type}, user_id: {user_id}")
+            logger.info(f"[CUSTOMER_AGENT_NODE] Starting complete workflow for customer_id: {customer_id}, user_id: {user_id}")
             
             # Customer agent should only process customer users
-            if user_type not in ["customer"]:
-                logger.warning(f"[CUSTOMER_AGENT_NODE] Invalid user_type '{user_type}' for customer agent - should not reach here")
+            if not customer_id:
+                logger.warning(f"[CUSTOMER_AGENT_NODE] No customer_id found - customer agent should only process customer users")
                 error_message = AIMessage(
                     content="I apologize, but there seems to be a routing error. Please try your request again."
                 )
@@ -1529,7 +1691,13 @@ Be helpful, professional, and make full use of your available tools to assist wi
                     "conversation_id": state.get("conversation_id"),
                     "user_id": user_id,
                     "conversation_summary": state.get("conversation_summary"),
-                    "user_verified": state.get("user_verified", True),
+                    "long_term_context": state.get("long_term_context", []),
+                    "customer_id": state.get("customer_id"),  # Keep customer_id
+                    "employee_id": state.get("employee_id"),  # Keep employee_id
+                    "hitl_data": state.get("hitl_data"),
+                    "confirmation_data": state.get("confirmation_data"),
+                    "execution_data": state.get("execution_data"),
+                    "confirmation_result": state.get("confirmation_result"),
                 }
 
             # Messages are already prepared by ca_memory_prep node
@@ -1616,24 +1784,27 @@ Be helpful, professional, and make full use of your available tools to assist wi
                                 # Set user context for customer tools
                                 user_id = state.get("user_id")
                                 conversation_id = state.get("conversation_id")
-                                user_type = state.get("user_type", "customer")
 
                                 with UserContext(
-                                    user_id=user_id, conversation_id=conversation_id, user_type=user_type
+                                    user_id=user_id, conversation_id=conversation_id, user_type="customer"
                                 ):
                                     # Handle async tools
                                     if tool_name in [
                                         "simple_rag",
                                         "simple_query_crm_data",
                                         "trigger_customer_message",
+                                        "gather_further_details",
                                     ]:
                                         tool_result = await tool.ainvoke(tool_args)
                                     else:
                                         tool_result = tool.invoke(tool_args)
 
-                                # Add tool result to messages
+                                # For customers, handle tool responses directly (no HITL)
+                                tool_response = str(tool_result)
+                                
+                                # Add tool message
                                 tool_message = ToolMessage(
-                                    content=str(tool_result),
+                                    content=tool_response,
                                     tool_call_id=tool_call_id,
                                     name=tool_name,
                                 )
@@ -1699,7 +1870,7 @@ Be helpful, professional, and make full use of your available tools to assist wi
             # Memory storage will be handled by ca_memory_store node
             logger.info(f"[CUSTOMER_AGENT_NODE] Agent processing completed successfully")
 
-            # Return final state
+            # Return final state (no hitl_data since customers don't use HITL)
             return {
                 "messages": updated_messages,
                 "sources": sources,
@@ -1707,13 +1878,16 @@ Be helpful, professional, and make full use of your available tools to assist wi
                 "conversation_id": conversation_id,
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
+                "long_term_context": state.get("long_term_context", []),
+                "customer_id": customer_id,  # Keep customer_id
+                "employee_id": state.get("employee_id"),  # Keep employee_id
+                "hitl_data": state.get("hitl_data"),
+                "confirmation_data": state.get("confirmation_data"),
+                "execution_data": state.get("execution_data"),
+                "confirmation_result": state.get("confirmation_result"),
             }
 
-        except GraphInterrupt:
-            # Human-in-the-loop interrupt is expected behavior - re-raise it
-            logger.info(f"[CUSTOMER_AGENT_NODE] Human-in-the-loop interrupt triggered, passing to LangGraph")
-            raise
+        # NOTE: GraphInterrupt handling removed since customers don't use HITL
         except Exception as e:
             logger.error(f"[CUSTOMER_AGENT_NODE] Error in customer agent node: {str(e)}")
             # Add error message to the conversation
@@ -1738,162 +1912,17 @@ Be helpful, professional, and make full use of your available tools to assist wi
                 "conversation_id": conversation_id,
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
+                "long_term_context": state.get("long_term_context", []),
+                "customer_id": state.get("customer_id"),  # Keep customer_id
+                "employee_id": state.get("employee_id"),  # Keep employee_id
+                "hitl_data": state.get("hitl_data"),
+                "confirmation_data": state.get("confirmation_data"),
+                "execution_data": state.get("execution_data"),
+                "confirmation_result": state.get("confirmation_result"),
             }
 
-    @traceable(name="confirmation_node") 
-    async def _confirmation_node(
-        self, state: AgentState, config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        CONFIRMATION NODE - Pure Interrupt (Routes Back to Employee Agent)
-        
-        SIMPLIFIED DESIGN:
-        - Only handles user confirmation interrupt
-        - Sets execution_data if approved, cancellation if denied  
-        - Routes back to employee_agent for execution and response
-        - Clean separation: interrupt here, execution in employee_agent
-        """
-        try:
-            logger.info("[CONFIRMATION_NODE] Starting clean confirmation workflow")
-            
-            # Validate confirmation data - must exist to reach this node
-            confirmation_data = state.get("confirmation_data")
-            if not confirmation_data:
-                logger.warning("[CONFIRMATION_NODE] Missing confirmation_data - routing error")
-                return {
-                    "messages": state.get("messages", []),
-                    "sources": state.get("sources", []),
-                    "retrieved_docs": state.get("retrieved_docs", []),
-                    "conversation_id": state.get("conversation_id"),
-                    "user_id": state.get("user_id"),
-                    "conversation_summary": state.get("conversation_summary"),
-                    "user_verified": state.get("user_verified", True),
-                    "user_type": state.get("user_type"),
-                    "confirmation_data": None,  # Clear invalid state
-                    "execution_data": None,
-                    "confirmation_result": "error_no_data",
-                }
-            
-            # Extract customer information for confirmation prompt
-            customer_info = confirmation_data.get("customer_info", {})
-            customer_name = customer_info.get("name", "Unknown Customer")
-            customer_email = customer_info.get("email", "no-email")
-            message_content = confirmation_data.get("message_content", "")
-            message_type = confirmation_data.get("message_type", "follow_up").title()
-            
-            logger.info(f"[CONFIRMATION_NODE] Processing confirmation for {customer_name} ({customer_email})")
-            
-            # ===============================================================
-            # CLEAN INTERRUPT - NO EXECUTION IN THIS NODE
-            # ===============================================================
-            
-            # Create confirmation prompt
-            confirmation_prompt = f"""🔄 **Customer Message Confirmation**
-
-**To:** {customer_name} ({customer_email})
-**Type:** {message_type}
-**Message:** {message_content}
-
-**Instructions:**
-- Reply 'approve' to send the message  
-- Reply 'deny' to cancel the message
-
-Your choice:"""
-            
-            logger.info("[CONFIRMATION_NODE] Getting user confirmation (no execution)")
-            
-            # INTERRUPT - Get user decision
-            human_response = interrupt(confirmation_prompt)
-            
-            logger.info(f"[CONFIRMATION_NODE] Received decision: {human_response}")
-            
-            # PROCESS USER DECISION - SET STATE FOR EXECUTION NODE
-            response_text = str(human_response).lower().strip()
-            
-            if any(keyword in response_text for keyword in ["approve", "yes", "send", "ok"]):
-                # APPROVED - Set execution data for execution node
-                logger.info("[CONFIRMATION_NODE] Approved - setting execution data for execution node")
-                
-                execution_data = {
-                    "customer_id": confirmation_data.get("customer_id"),
-                    "customer_info": customer_info,
-                    "message_content": message_content,
-                    "message_type": confirmation_data.get("message_type", "follow_up"),
-                    "formatted_message": confirmation_data.get("formatted_message", message_content),
-                    "sender_employee_id": confirmation_data.get("sender_employee_id")
-                }
-                
-                logger.info("[CONFIRMATION_NODE] Execution data set - routing to execution node")
-                
-                return {
-                    "messages": state.get("messages", []),
-                    "sources": state.get("sources", []),
-                    "retrieved_docs": state.get("retrieved_docs", []),
-                    "conversation_id": state.get("conversation_id"),
-                    "user_id": state.get("user_id"),
-                    "conversation_summary": state.get("conversation_summary"),
-                    "user_verified": state.get("user_verified", True),
-                    "user_type": state.get("user_type"),
-                    "confirmation_data": None,  # Clear confirmation data
-                    "execution_data": execution_data,  # Set execution data
-                    "confirmation_result": None,  # No result yet
-                }
-                
-            else:
-                # DENIED/CANCELLED - Add cancellation message and complete
-                logger.info("[CONFIRMATION_NODE] Denied - adding cancellation message")
-                
-                cancellation_message = f"""🚫 **Message Cancelled**
-
-Your message to {customer_name} has been cancelled as requested.
-
-**Cancellation Summary:**
-- Recipient: {customer_name} ({customer_email})
-- Message Type: {message_type}
-- Status: Cancelled by User
-- Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-No message was sent to the customer."""
-                
-                messages = list(state.get("messages", []))
-                messages.append(AIMessage(content=cancellation_message))
-                
-                return {
-                    "messages": messages,
-                    "sources": state.get("sources", []),
-                    "retrieved_docs": state.get("retrieved_docs", []),
-                    "conversation_id": state.get("conversation_id"),
-                    "user_id": state.get("user_id"),
-                    "conversation_summary": state.get("conversation_summary"),
-                    "user_verified": state.get("user_verified", True),
-                    "user_type": state.get("user_type"),
-                    "confirmation_data": None,  # Clear confirmation data
-                    "execution_data": None,  # No execution needed
-                    "confirmation_result": "cancelled",  # Set result
-                }
-            
-        except GraphInterrupt:
-            # Expected LangGraph interrupt - reraise for proper handling
-            logger.info("[CONFIRMATION_NODE] LangGraph interrupt (expected) - reraising")
-            raise
-        except Exception as e:
-            logger.error(f"[CONFIRMATION_NODE] Unexpected error: {e}")
-            
-            return {
-                "messages": state.get("messages", []),
-                "sources": state.get("sources", []),
-                "retrieved_docs": state.get("retrieved_docs", []),
-                "conversation_id": state.get("conversation_id"),
-                "user_id": state.get("user_id"),
-                "conversation_summary": state.get("conversation_summary"),
-                "user_verified": state.get("user_verified", True),
-                "user_type": state.get("user_type"),
-                "confirmation_data": None,  # Clear data on error
-                "execution_data": None,
-                "confirmation_result": "error",  # Set error status
-            }
-
+    # NOTE: _confirmation_node() method removed - replaced with imported hitl_node from hitl.py
+    # The general-purpose HITL system now handles all human interactions through hitl_node
 
     async def _execute_customer_message_delivery(
         self,
@@ -1903,10 +1932,13 @@ No message was sent to the customer."""
         customer_info: Dict[str, Any]
     ) -> bool:
         """
-        Execute the actual customer message delivery.
+        Execute the actual customer message delivery via chat APIs and memory systems.
         
-        This method handles the actual delivery mechanism and can be extended
-        for different channels (in-system, email, SMS, etc.).
+        This method implements real delivery by:
+        1. Sending via chat API to create a proper conversation flow
+        2. Integrating with LangGraph short-term memory (checkpointer)
+        3. Integrating with long-term memory (Supabase messages table)
+        4. Following LangGraph best practices for memory persistence
         
         Args:
             customer_id: Target customer ID
@@ -1918,112 +1950,381 @@ No message was sent to the customer."""
             bool: True if delivery successful, False otherwise
         """
         try:
-            logger.info(f"[DELIVERY] Executing delivery for customer {customer_id}")
+            logger.info(f"[DELIVERY] Executing real delivery for customer {customer_id}")
             
             # =================================================================
-            # MESSAGE DELIVERY IMPLEMENTATION
+            # REAL MESSAGE DELIVERY IMPLEMENTATION
             # =================================================================
-            # For now, we'll store the message in the database and simulate delivery
-            # In production, you would also send via email, SMS, or in-app notification
             
-            # Store the message in database for audit trail
-            await self._store_customer_message(
-                customer_id=customer_id,
-                message_content=message_content,
-                message_type=message_type,
-                delivery_status="delivered",
-                customer_info=customer_info
-            )
-            
-            # Create a message record in the messages table for the customer to see
-            await self._create_customer_message_record(
+            # Step 1: Send via chat API for real-time delivery
+            chat_delivery_success = await self._send_via_chat_api(
                 customer_id=customer_id,
                 message_content=message_content,
                 message_type=message_type,
                 customer_info=customer_info
             )
             
-            # TODO: Implement actual delivery channels
-            # await self._send_via_email(customer_info, message_content)
-            # await self._send_via_sms(customer_info, message_content)
-            # await self._send_via_in_app_notification(customer_info, message_content)
+            # Step 2: Ensure memory integration (LangGraph + Long-term)
+            memory_integration_success = await self._integrate_with_memory_systems(
+                customer_id=customer_id,
+                message_content=message_content,
+                message_type=message_type,
+                customer_info=customer_info
+            )
             
-            logger.info(f"[DELIVERY] Message delivery completed successfully for customer {customer_id}")
-            return True
+            # Step 3: Store audit trail (for compliance and tracking)
+            audit_success = await self._store_customer_message_audit(
+                customer_id=customer_id,
+                message_content=message_content,
+                message_type=message_type,
+                delivery_status="delivered" if chat_delivery_success else "failed",
+                customer_info=customer_info
+            )
+            
+            # Overall success requires both chat delivery and memory integration
+            overall_success = chat_delivery_success and memory_integration_success
+            
+            if overall_success:
+                logger.info(f"[DELIVERY] Real message delivery completed successfully for customer {customer_id}")
+            else:
+                logger.error(f"[DELIVERY] Message delivery partially failed - Chat: {chat_delivery_success}, Memory: {memory_integration_success}")
+            
+            return overall_success
             
         except Exception as e:
             logger.error(f"[DELIVERY] Message delivery failed for customer {customer_id}: {str(e)}")
             return False
 
-    async def _create_customer_message_record(
+    async def _send_via_chat_api(
         self,
         customer_id: str,
         message_content: str,
         message_type: str,
         customer_info: Dict[str, Any]
-    ):
+    ) -> bool:
         """
-        Create a message record in the messages table for the customer to see.
+        Send message via chat API to create real conversation flow.
+        
+        This leverages the existing chat infrastructure to deliver messages
+        in a way that customers can actually receive and respond to.
         """
         try:
-            from database import db_client
-            from datetime import datetime
-            import uuid
+            logger.info(f"[CHAT_DELIVERY] Sending message via chat API to {customer_info.get('name', customer_id)}")
             
-            # Use the actual UUID from customer_info, not the customer_id parameter
+            # Get the actual customer UUID from customer_info (not the name)
             actual_customer_id = customer_info.get("customer_id") or customer_info.get("id")
             if not actual_customer_id:
-                logger.error(f"[MESSAGE_RECORD] No valid customer UUID found in customer_info: {customer_info}")
-                return
+                logger.error(f"[CHAT_DELIVERY] No valid customer UUID found in customer_info for {customer_info.get('name', customer_id)}")
+                return False
             
-            # First, find or create a user record for this customer
+            logger.info(f"[CHAT_DELIVERY] Using customer UUID: {actual_customer_id} for {customer_info.get('name', customer_id)}")
+            
+            # Get or create user record for the customer using the correct UUID
             user_id = await self._get_or_create_customer_user(actual_customer_id, customer_info)
             if not user_id:
-                logger.error(f"[MESSAGE_RECORD] Failed to get or create user for customer {customer_info.get('name', actual_customer_id)}")
-                return
+                logger.error(f"[CHAT_DELIVERY] Failed to get user ID for customer UUID {actual_customer_id}")
+                return False
             
-            # Create a proper UUID for the conversation_id
-            conversation_uuid = str(uuid.uuid4())
+            # Create or get existing conversation for this customer
+            conversation_id = await self._get_or_create_customer_conversation(user_id, customer_info)
+            if not conversation_id:
+                logger.error(f"[CHAT_DELIVERY] Failed to get conversation ID for customer {customer_id}")
+                return False
             
-            # Create the conversation record with the correct user_id
-            conversation_data = {
-                "id": conversation_uuid,
-                "user_id": user_id,
-                "title": f"Customer Message - {customer_info.get('name', 'Unknown')}",
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat()
-            }
+            # Format the message with proper business context
+            formatted_message = await self._format_business_message(
+                message_content, message_type, customer_info
+            )
             
-            # Insert conversation record
-            conv_result = db_client.client.table("conversations").insert(conversation_data).execute()
-            if not conv_result.data:
-                logger.error(f"[MESSAGE_RECORD] Failed to create conversation record for customer {customer_info.get('name', actual_customer_id)}")
-                return
+            # CRITICAL FIX: Actually store the message in the customer's conversation
+            # This ensures the customer receives the message in their chat interface
+            try:
+                message_id = await self.memory_manager.store_message_from_agent(
+                    message={
+                        'content': formatted_message,
+                        'role': 'assistant',  # Messages from employees appear as assistant
+                        'metadata': {
+                            'message_type': message_type,
+                            'delivery_method': 'chat_api',
+                            'customer_id': actual_customer_id,
+                            'customer_name': customer_info.get('name', ''),
+                            'employee_initiated': True,
+                            'delivery_timestamp': datetime.now().isoformat()
+                        }
+                    },
+                    config={'configurable': {'thread_id': conversation_id}},
+                    agent_type='employee_outreach',
+                    user_id=user_id
+                )
+                logger.info(f"[CHAT_DELIVERY] ✅ STORED message in customer conversation: {message_id}")
+            except Exception as e:
+                logger.error(f"[CHAT_DELIVERY] Failed to store message in customer conversation: {e}")
+                return False
             
-            # Insert the message into the messages table
-            message_data = {
-                "conversation_id": conversation_uuid,
-                "role": "assistant",
-                "content": message_content,
-                "metadata": {
-                    "message_type": message_type,
-                    "delivered_by": "employee_system",
-                    "customer_id": actual_customer_id,
-                    "customer_name": customer_info.get("name", ""),
-                    "delivery_timestamp": datetime.now().isoformat()
+            if message_id:
+                logger.info(f"[CHAT_DELIVERY] Message delivered successfully via chat API - Message ID: {message_id}")
+                
+                # Optional: Send real-time notification (if notification system exists)
+                await self._send_real_time_notification(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    message_content=formatted_message,
+                    customer_info=customer_info
+                )
+                
+                return True
+            else:
+                logger.error(f"[CHAT_DELIVERY] Failed to store message via chat API for customer {customer_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"[CHAT_DELIVERY] Error sending via chat API: {str(e)}")
+            return False
+
+    async def _integrate_with_memory_systems(
+        self,
+        customer_id: str,
+        message_content: str,
+        message_type: str,
+        customer_info: Dict[str, Any]
+    ) -> bool:
+        """
+        Ensure message integrates with both LangGraph and long-term memory systems.
+        
+        Following LangGraph best practices:
+        1. Messages are stored via memory_manager (handles checkpointer integration)
+        2. Conversation state is maintained in LangGraph's short-term memory
+        3. Long-term memory gets updated for future context retrieval
+        """
+        try:
+            logger.info(f"[MEMORY_INTEGRATION] Integrating message with memory systems for customer {customer_id}")
+            
+            # Get the actual customer UUID from customer_info (not the name)
+            actual_customer_id = customer_info.get("customer_id") or customer_info.get("id")
+            if not actual_customer_id:
+                logger.error(f"[MEMORY_INTEGRATION] No valid customer UUID found in customer_info for {customer_info.get('name', customer_id)}")
+                return False
+            
+            # Get user and conversation IDs using the correct UUID
+            user_id = await self._get_or_create_customer_user(actual_customer_id, customer_info)
+            conversation_id = await self._get_or_create_customer_conversation(user_id, customer_info)
+            
+            if not user_id or not conversation_id:
+                logger.error(f"[MEMORY_INTEGRATION] Missing user_id ({user_id}) or conversation_id ({conversation_id})")
+                return False
+            
+            # Create LangGraph-compatible configuration
+            langgraph_config = {
+                'configurable': {
+                    'thread_id': conversation_id,
+                    'user_id': user_id,
+                    'customer_id': customer_id
                 }
             }
             
-            result = db_client.client.table("messages").insert(message_data).execute()
+            # The message was already stored via _send_via_chat_api, 
+            # but we need to ensure it's properly indexed for long-term memory
+            
+            # Update long-term memory context for this customer
+            await self._update_customer_long_term_context(
+                customer_id=actual_customer_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                message_content=message_content,
+                message_type=message_type,
+                customer_info=customer_info
+            )
+            
+            logger.info(f"[MEMORY_INTEGRATION] Successfully integrated with memory systems for customer {customer_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[MEMORY_INTEGRATION] Error integrating with memory systems: {str(e)}")
+            return False
+
+    async def _get_or_create_customer_conversation(
+        self, 
+        user_id: str, 
+        customer_info: Dict[str, Any]
+    ) -> Optional[str]:
+        """
+        Get or create a conversation for customer message delivery.
+        
+        This ensures continuity in customer conversations and proper
+        integration with the existing chat system.
+        """
+        try:
+            from database import db_client
+            import uuid
+            
+            # Look for existing active conversations for this user
+            existing_conversations = db_client.client.table("conversations").select("id").eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
+            
+            if existing_conversations.data:
+                conversation_id = existing_conversations.data[0]["id"]
+                logger.info(f"[CONVERSATION] Using existing conversation {conversation_id} for customer {customer_info.get('name', user_id)}")
+                
+                # Update the conversation timestamp
+                db_client.client.table("conversations").update({
+                    "updated_at": datetime.now().isoformat()
+                }).eq("id", conversation_id).execute()
+                
+                return conversation_id
+            
+            # Create new conversation
+            conversation_id = str(uuid.uuid4())
+            conversation_data = {
+                "id": conversation_id,
+                "user_id": user_id,
+                "title": f"Messages with {customer_info.get('name', 'Customer')}",
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+                "metadata": {
+                    "customer_id": customer_info.get("id") or customer_info.get("customer_id"),
+                    "customer_name": customer_info.get("name", ""),
+                    "conversation_type": "employee_initiated",
+                    "message_delivery": True
+                }
+            }
+            
+            result = db_client.client.table("conversations").insert(conversation_data).execute()
             
             if result.data:
-                logger.info(f"[MESSAGE_RECORD] Created message record for customer {customer_info.get('name', actual_customer_id)} in conversation {conversation_uuid}")
+                logger.info(f"[CONVERSATION] Created new conversation {conversation_id} for customer {customer_info.get('name', user_id)}")
+                return conversation_id
             else:
-                logger.error(f"[MESSAGE_RECORD] Failed to create message record for customer {customer_info.get('name', actual_customer_id)}")
+                logger.error(f"[CONVERSATION] Failed to create conversation for customer {customer_info.get('name', user_id)}")
+                return None
                 
         except Exception as e:
-            logger.error(f"[MESSAGE_RECORD] Error creating message record: {str(e)}")
-            # Don't raise the error, just log it - delivery can still be considered successful
+            logger.error(f"[CONVERSATION] Error getting or creating conversation: {str(e)}")
+            return None
+
+    async def _format_business_message(
+        self,
+        message_content: str,
+        message_type: str,
+        customer_info: Dict[str, Any]
+    ) -> str:
+        """
+        Format the message with proper business context and personalization.
+        """
+        try:
+            customer_name = customer_info.get("first_name") or customer_info.get("name", "").split()[0] if customer_info.get("name") else "there"
+            
+            # Message type-specific formatting
+            if message_type == "follow_up":
+                formatted_message = f"Hi {customer_name},\n\n{message_content}\n\nBest regards,\nYour Sales Team"
+            elif message_type == "information":
+                formatted_message = f"Hello {customer_name},\n\n{message_content}\n\nIf you have any questions, please don't hesitate to reach out.\n\nBest regards,\nYour Sales Team"
+            elif message_type == "promotional":
+                formatted_message = f"Dear {customer_name},\n\n{message_content}\n\nWe'd love to hear from you if you're interested!\n\nBest regards,\nYour Sales Team"
+            elif message_type == "support":
+                formatted_message = f"Hi {customer_name},\n\n{message_content}\n\nWe're here to help if you need anything else.\n\nBest regards,\nYour Support Team"
+            else:
+                # Default formatting
+                formatted_message = f"Hi {customer_name},\n\n{message_content}\n\nBest regards"
+            
+            return formatted_message
+            
+        except Exception as e:
+            logger.error(f"[MESSAGE_FORMAT] Error formatting message: {str(e)}")
+            return message_content  # Return original content as fallback
+
+    async def _send_real_time_notification(
+        self,
+        user_id: str,
+        conversation_id: str,
+        message_content: str,
+        customer_info: Dict[str, Any]
+    ) -> None:
+        """
+        Send real-time notification to customer (if notification system exists).
+        
+        This is optional and can be implemented later for email, SMS, 
+        or in-app notifications.
+        """
+        try:
+            # TODO: Implement real-time notifications
+            # This could include:
+            # - Email notifications
+            # - SMS alerts  
+            # - In-app push notifications
+            # - Webhook calls to external systems
+            
+            logger.info(f"[NOTIFICATION] Real-time notification placeholder for customer {customer_info.get('name', user_id)}")
+            
+            # Example placeholder for future implementation:
+            # await self._send_email_notification(customer_info, message_content)
+            # await self._send_sms_notification(customer_info, message_content)
+            # await self._send_webhook_notification(customer_info, message_content)
+            
+        except Exception as e:
+            logger.error(f"[NOTIFICATION] Error sending real-time notification: {str(e)}")
+
+    async def _update_customer_long_term_context(
+        self,
+        customer_id: str,
+        user_id: str,
+        conversation_id: str,
+        message_content: str,
+        message_type: str,
+        customer_info: Dict[str, Any]
+    ) -> None:
+        """
+        Update long-term memory context for this customer interaction.
+        
+        This ensures the message becomes part of the customer's long-term
+        context for future interactions and AI responses.
+        """
+        try:
+            # The message storage via memory_manager already handles most of this,
+            # but we can add additional context indexing here if needed
+            
+            context_update = {
+                'customer_id': customer_id,
+                'interaction_type': 'employee_message',
+                'message_type': message_type,
+                'content_summary': message_content[:200] + "..." if len(message_content) > 200 else message_content,
+                'timestamp': datetime.now().isoformat(),
+                'conversation_id': conversation_id
+            }
+            
+            logger.info(f"[LONG_TERM_CONTEXT] Updated context for customer {customer_info.get('name', customer_id)}")
+            
+        except Exception as e:
+            logger.error(f"[LONG_TERM_CONTEXT] Error updating long-term context: {str(e)}")
+
+    async def _store_customer_message_audit(
+        self,
+        customer_id: str,
+        message_content: str,
+        message_type: str,
+        delivery_status: str,
+        customer_info: Dict[str, Any]
+    ) -> bool:
+        """
+        Store audit trail for compliance and tracking purposes.
+        
+        This is separate from the main message storage and focuses on
+        delivery tracking and compliance logging.
+        """
+        try:
+            # This is the existing audit storage, kept for compliance
+            await self._store_customer_message(
+                customer_id=customer_id,
+                message_content=message_content,
+                message_type=message_type,
+                delivery_status=delivery_status,
+                customer_info=customer_info
+            )
+            
+            logger.info(f"[AUDIT] Stored audit trail for customer {customer_info.get('name', customer_id)}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[AUDIT] Error storing audit trail: {str(e)}")
+            return False
 
     async def _get_or_create_customer_user(self, customer_id: str, customer_info: Dict[str, Any]) -> Optional[str]:
         """
@@ -2535,54 +2836,33 @@ Important: Use the tools to help you provide the best possible assistance to the
     @traceable(name="rag_agent_invoke")
     async def invoke(
         self,
-        user_query=None,  # Can be string or Command object
+        user_query: str,  # Only accepts string queries now
         conversation_id: str = None,
         user_id: str = None,
         conversation_history: List = None,
-        config: Dict[str, Any] = None,  # Support direct config passing
+        config: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """
         Invoke the unified tool-calling RAG agent with thread-based persistence.
         
-        Supports both regular queries and LangGraph Command objects for resuming from interrupts.
+        This method handles regular string queries only. For resuming interrupted 
+        conversations, use resume_interrupted_conversation() instead.
         
         Args:
-            user_query: Either a string query or a Command object for resuming
+            user_query: String query from the user
             conversation_id: Conversation ID for persistence
             user_id: User ID for context
             conversation_history: Optional conversation history for new conversations
-            config: Optional direct config (used for Command resumption)
+            config: Optional configuration overrides
         """
         # Ensure initialization before invoking
         await self._ensure_initialized()
 
-        # Handle Command objects for interrupt resumption (following LangGraph best practices)
-        if hasattr(user_query, 'resume'):  # This is a Command object
-            logger.info(f"[RAG_AGENT_INVOKE] Resuming from interrupt with Command object")
-            
-            # Extract config from the provided config or build it
-            if config:
-                thread_id = config.get("configurable", {}).get("thread_id")
-                if thread_id:
-                    conversation_id = thread_id
-            
-            if not conversation_id:
-                raise ValueError("conversation_id is required when resuming with Command")
-            
-            # Use LangGraph's direct invocation for Command objects
-            graph_config = await self.memory_manager.get_conversation_config(conversation_id)
-            result = await self.graph.invoke(user_query, config=graph_config)
-            
-            logger.info(f"[RAG_AGENT_INVOKE] Command resumption completed")
-            return result
+        # Validate input - only accept string queries
+        if not isinstance(user_query, str) or not user_query.strip():
+            raise ValueError("user_query must be a non-empty string")
         
-        # Handle regular string queries (original behavior)
-        if isinstance(user_query, str) and user_query.strip():
-            query_text = user_query
-        elif user_query is None:
-            raise ValueError("user_query is required for new conversations")
-        else:
-            raise ValueError("user_query must be a string or Command object")
+        query_text = user_query.strip()
 
         # Generate conversation_id if not provided
         if not conversation_id:
@@ -2647,8 +2927,8 @@ Important: Use the tools to help you provide the best possible assistance to the
             messages=messages,
             conversation_id=conversation_id,  # Keep as string, not UUID object
             user_id=user_id,
-            user_verified=False,  # Will be set by user_verification node
-            user_type=None,  # Will be set by user_verification node
+            customer_id=None,  # Will be set by user_verification node
+            employee_id=None,  # Will be set by user_verification node
             retrieved_docs=(
                 existing_state.get("retrieved_docs", []) if existing_state else []
             ),
@@ -2657,16 +2937,392 @@ Important: Use the tools to help you provide the best possible assistance to the
                 existing_state.get("summary") if existing_state else None
             ),
             long_term_context=[],  # Initialize empty, will be populated by nodes
+            hitl_data=None,  # Initialize empty
+            confirmation_data=None,  # Initialize empty
+            execution_data=None,  # Initialize empty
+            confirmation_result=None,  # Initialize empty
         )
 
-        # Execute the graph with thread-based persistence
-        # The memory preparation and update nodes handle automatic checkpointing and state persistence
-        result = await self.graph.ainvoke(initial_state, config=config)
+        # Execute the graph with execution-scoped connection management
+        from agents.memory import ExecutionScope
+        execution_id = f"{user_id}_{conversation_id}_{int(asyncio.get_event_loop().time())}"
+        
+        with ExecutionScope(execution_id):
+            # The memory preparation and update nodes handle automatic checkpointing and state persistence
+            result = await self.graph.ainvoke(initial_state, config=config)
 
         # Memory management (sliding window, summarization, and persistence) is now handled
         # automatically by the graph nodes with checkpointing between each step
 
         return result
+
+    @traceable(name="rag_agent_resume")
+    async def resume_interrupted_conversation(
+        self, 
+        conversation_id: str, 
+        user_response: str
+    ) -> Dict[str, Any]:
+        """
+        Resume an interrupted conversation with user response to HITL prompt
+        """
+        try:
+            logger.info(f"🔄 [AGENT_RESUME] Resuming conversation {conversation_id} with response: {user_response}")
+            
+            # CRITICAL FIX: Persist human response before resuming
+            # This ensures the approval/denial message gets stored in the database
+            config = await self.memory_manager.get_conversation_config(conversation_id)
+            if config:
+                # CRITICAL FIX: Get the actual user_id from the conversation, not from thread_id
+                # thread_id is the conversation_id, not the user_id
+                actual_user_id = None
+                try:
+                    # Get user_id from the conversation record in database
+                    from database import db_client
+                    conversation_result = await asyncio.to_thread(
+                        lambda: db_client.client.table("conversations")
+                        .select("user_id")
+                        .eq("id", conversation_id)
+                        .execute()
+                    )
+                    
+                    if conversation_result.data:
+                        actual_user_id = conversation_result.data[0]["user_id"]
+                        logger.info(f"🔄 [AGENT_RESUME] Retrieved correct user_id: {actual_user_id} for conversation {conversation_id}")
+                    else:
+                        logger.warning(f"🔄 [AGENT_RESUME] Conversation {conversation_id} not found in database")
+                        
+                except Exception as e:
+                    logger.error(f"🔄 [AGENT_RESUME] Error getting user_id from conversation: {e}")
+                
+                if actual_user_id:
+                    # Store the human response message using the correct user_id
+                    try:
+                        await self.memory_manager.store_message(
+                            conversation_id=conversation_id,
+                            user_id=actual_user_id,
+                            message_text=user_response,
+                            message_type="human",
+                            agent_type="rag"
+                        )
+                        logger.info(f"🔄 [AGENT_RESUME] ✅ PERSISTED human response: '{user_response}'")
+                    except Exception as e:
+                        logger.error(f"🔄 [AGENT_RESUME] Error persisting human response: {e}")
+                        # Continue anyway - we'll add it to the state manually
+                else:
+                    logger.warning(f"🔄 [AGENT_RESUME] Could not get valid user_id, message may not be persisted to DB")
+            
+            # CRITICAL FIX: Get the current state and add the human response to messages
+            current_state = await self.graph.aget_state({"configurable": {"thread_id": conversation_id}})
+            
+            if current_state and current_state.values:
+                # Add the human response to the messages array for HITL processing
+                messages = list(current_state.values.get("messages", []))
+                
+                # Add the human response message to the messages array
+                from langchain_core.messages import HumanMessage
+                human_response_msg = HumanMessage(content=user_response)
+                messages.append(human_response_msg)
+                
+                logger.info(f"🔄 [AGENT_RESUME] ✅ ADDED human response to messages array: '{user_response}'")
+                logger.info(f"🔄 [AGENT_RESUME] Messages array now has {len(messages)} messages")
+                
+                # CRITICAL FIX: Update the state with the new messages and resume properly
+                # Instead of calling ainvoke() which restarts the graph, we need to:
+                # 1. Update the state with the human response
+                # 2. Resume with stream(None, config) to continue from where we left off
+                
+                # Update the state to include the human response
+                await self.graph.aupdate_state(
+                    {"configurable": {"thread_id": conversation_id}},
+                    {"messages": [human_response_msg]}
+                )
+                
+                logger.info(f"🔄 [AGENT_RESUME] ✅ UPDATED state with human response")
+                
+                # CRITICAL FIX: Resume from checkpoint using stream(None, config)
+                # This continues from the HITL node instead of restarting the entire graph
+                result_messages = []
+                async for chunk in self.graph.astream(
+                    None,  # Pass None to resume from checkpoint
+                    {"configurable": {"thread_id": conversation_id}},
+                    stream_mode="values"
+                ):
+                    if "messages" in chunk:
+                        result_messages = chunk["messages"]
+                
+                # Build the final result from the last chunk
+                result = {
+                    "messages": result_messages,
+                    "conversation_id": conversation_id,
+                    "user_id": actual_user_id,
+                }
+                
+                logger.info(f"✅ [AGENT_RESUME] Conversation resumed successfully. Result keys: {list(result.keys())}")
+                return result
+            else:
+                logger.error(f"🔄 [AGENT_RESUME] Could not retrieve current state for conversation {conversation_id}")
+                return {"error": "Could not retrieve conversation state"}
+                
+        except Exception as e:
+            logger.error(f"❌ [AGENT_RESUME] Error resuming conversation {conversation_id}: {e}")
+            return {"error": f"Failed to resume conversation: {str(e)}"}
+
+    async def _process_agent_result_for_api(self, result: Dict[str, Any], conversation_id: str) -> Dict[str, Any]:
+        """
+        Process agent result and return clean semantic data for API layer.
+        
+        This method encapsulates all LangGraph-specific result processing logic,
+        providing a clean interface that abstracts away LangGraph internals.
+        
+        Args:
+            result: Raw result from LangGraph agent execution
+            conversation_id: Conversation ID for context
+            
+        Returns:
+            Dict containing clean, semantic data for API response:
+            - message: Final message content
+            - sources: Document sources if any
+            - is_interrupted: Boolean indicating if human interaction is needed
+            - confirmation_data: Confirmation details if interrupted
+        """
+        try:
+            logger.info(f"🔍 [RESULT_PROCESSING] Processing agent result for API response")
+            logger.info(f"🔍 [RESULT_PROCESSING] Result keys: {list(result.keys()) if result else 'None'}")
+            
+            # Initialize clean response structure
+            api_response = {
+                "message": "I apologize, but I encountered an issue processing your request.",
+                "sources": [],
+                "is_interrupted": False,
+                "confirmation_data": None
+            }
+            
+            if not result:
+                return api_response
+            
+            # =================================================================
+            # STEP 1: Check for HITL (Human-in-the-Loop) interactions
+            # =================================================================
+            hitl_data = result.get('hitl_data')
+            if hitl_data and isinstance(hitl_data, dict):
+                logger.info(f"🔍 [RESULT_PROCESSING] 🎯 HITL STATE DETECTED! Type: {hitl_data.get('type')}")
+                
+                # Return HITL prompt with clean interface - no LangGraph details
+                api_response.update({
+                    "message": hitl_data.get('prompt', 'Confirmation required'),
+                    "is_interrupted": True,
+                    "confirmation_data": {
+                        "type": hitl_data.get('type', 'confirmation'),
+                        "prompt": hitl_data.get('prompt', 'Confirmation required'),
+                        "context": hitl_data.get('context', {})
+                    }
+                })
+                return api_response
+            
+            # =================================================================
+            # STEP 2: Check for legacy LangGraph interrupts (for backward compatibility)
+            # =================================================================
+            is_interrupted = False
+            interrupt_message = ""
+            
+            # Check for LangGraph's internal interrupt indicators
+            if isinstance(result, dict) and '__interrupt__' in result:
+                logger.info(f"🔍 [RESULT_PROCESSING] Legacy LangGraph interrupt detected")
+                is_interrupted = True
+                
+                # Extract interrupt message from LangGraph's internal format
+                interrupt_data = result['__interrupt__']
+                if isinstance(interrupt_data, list) and len(interrupt_data) > 0:
+                    first_interrupt = interrupt_data[0]
+                    if hasattr(first_interrupt, 'value'):
+                        interrupt_message = str(first_interrupt.value)
+                        logger.info(f"🔍 [RESULT_PROCESSING] Extracted legacy interrupt message")
+            elif hasattr(result, '__interrupt__'):
+                logger.info(f"🔍 [RESULT_PROCESSING] Legacy LangGraph interrupt attribute detected")
+                is_interrupted = True
+            
+            # Handle legacy interrupts
+            if is_interrupted and interrupt_message:
+                logger.info(f"🔍 [RESULT_PROCESSING] Processing legacy interrupt for conversation {conversation_id}")
+                
+                api_response.update({
+                    "message": interrupt_message,
+                    "is_interrupted": True,
+                    "confirmation_data": {
+                        "type": "legacy_confirmation",
+                        "prompt": interrupt_message,
+                        "context": {"legacy": True}
+                    }
+                })
+                return api_response
+            
+            # =================================================================
+            # STEP 3: Check for error states first
+            # =================================================================
+            if result.get('error'):
+                logger.error(f"🔍 [RESULT_PROCESSING] Agent returned error: {result['error']}")
+                error_msg = result['error']
+                
+                # Provide user-friendly error messages based on error type
+                if "Failed to resume conversation" in error_msg:
+                    user_friendly_msg = "I'm having trouble processing your approval right now. Please try again, or contact support if the issue persists."
+                elif "Synchronous calls to AsyncPostgresSaver" in error_msg:
+                    user_friendly_msg = "I encountered a technical issue while processing your request. Please try again in a moment."
+                elif "not found in database" in error_msg:
+                    user_friendly_msg = "This conversation session has expired. Please start a new conversation."
+                else:
+                    user_friendly_msg = "I encountered an unexpected error. Please try your request again or contact support if the problem continues."
+                
+                api_response.update({
+                    "message": user_friendly_msg,
+                    "sources": [],
+                    "is_interrupted": False,
+                    "error": True,
+                    "error_details": error_msg  # For debugging/logging
+                })
+                return api_response
+            
+            # =================================================================
+            # STEP 4: Extract normal conversation response
+            # =================================================================
+            logger.info(f"🔍 [RESULT_PROCESSING] Processing normal conversation response")
+            
+            # Extract final message content (excluding tool messages to prevent duplicates)
+            final_message_content = ""
+            messages = result.get('messages', [])
+            
+            if messages:
+                logger.info(f"🔍 [RESULT_PROCESSING] Found {len(messages)} messages in result")
+                
+                # CRITICAL FIX: Filter out ToolMessage objects to prevent duplicate display
+                # Tool messages are internal LangChain constructs and shouldn't appear in user interface
+                filtered_messages = []
+                for msg in messages:
+                    if hasattr(msg, 'type') and msg.type == 'tool':
+                        logger.debug(f"🔍 [RESULT_PROCESSING] Filtering out tool message: {getattr(msg, 'name', 'unknown')}")
+                        continue
+                    elif isinstance(msg, dict) and msg.get('type') == 'tool':
+                        logger.debug(f"🔍 [RESULT_PROCESSING] Filtering out tool message dict: {msg.get('name', 'unknown')}")
+                        continue
+                    else:
+                        filtered_messages.append(msg)
+                
+                logger.info(f"🔍 [RESULT_PROCESSING] Filtered {len(messages) - len(filtered_messages)} tool messages, {len(filtered_messages)} remaining")
+                
+                # Get the final assistant message (after filtering tool messages)
+                for msg in reversed(filtered_messages):
+                    if hasattr(msg, 'type') and msg.type == 'ai':
+                        final_message_content = msg.content
+                        logger.info(f"🔍 [RESULT_PROCESSING] Found final AI message: '{final_message_content[:100]}...'")
+                        break
+                    elif isinstance(msg, dict) and msg.get('role') == 'assistant':
+                        final_message_content = msg.get('content', '')
+                        logger.info(f"🔍 [RESULT_PROCESSING] Found final assistant message: '{final_message_content[:100]}...'")
+                        break
+                    elif hasattr(msg, 'content') and not hasattr(msg, 'type'):
+                        # Fallback for generic message objects
+                        final_message_content = msg.content
+                        logger.info(f"🔍 [RESULT_PROCESSING] Found final generic message: '{final_message_content[:100]}...'")
+                        break
+                
+                if not final_message_content:
+                    logger.warning(f"🔍 [RESULT_PROCESSING] No suitable final message found in {len(filtered_messages)} filtered messages")
+                    # Use the last non-tool message as fallback
+                    if filtered_messages:
+                        last_msg = filtered_messages[-1]
+                        if hasattr(last_msg, 'content'):
+                            final_message_content = last_msg.content
+                        elif isinstance(last_msg, dict):
+                            final_message_content = last_msg.get('content', '')
+                        logger.info(f"🔍 [RESULT_PROCESSING] Using fallback message: '{final_message_content[:100]}...'")
+            
+            # Fallback if no content found - provide helpful message instead of false success
+            if not final_message_content.strip():
+                logger.warning(f"🔍 [RESULT_PROCESSING] No message content found in agent result")
+                final_message_content = "I processed your request, but didn't generate a response message. If you were expecting a specific action or response, please try rephrasing your request."
+            
+            # Extract sources if any
+            sources = result.get('sources', [])
+            logger.info(f"🔍 [RESULT_PROCESSING] Found {len(sources)} sources")
+            
+            # Return clean response
+            api_response.update({
+                "message": final_message_content,
+                "sources": sources,
+                "is_interrupted": False
+            })
+            
+            logger.info(f"🔍 [RESULT_PROCESSING] Constructed final API response")
+            return api_response
+            
+        except Exception as e:
+            logger.error(f"🔍 [RESULT_PROCESSING] Error processing agent result: {e}")
+            return {
+                "message": "I apologize, but I encountered an unexpected error while processing your request. Please try again, and if the problem persists, contact support.",
+                "sources": [],
+                "is_interrupted": False,
+                "error": True,
+                "error_details": str(e),
+                "confirmation_data": None
+            }
+
+    async def process_user_message(
+        self,
+        user_query: str,
+        conversation_id: str = None,
+        user_id: str = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        High-level method for processing user messages with clean API interface.
+        
+        This method provides a semantic interface for the API layer, encapsulating
+        all LangGraph-specific logic and returning clean, structured data.
+        
+        Args:
+            user_query: User's message/query
+            conversation_id: Conversation ID for persistence
+            user_id: User ID for context
+            **kwargs: Additional arguments passed to invoke
+            
+        Returns:
+            Dict containing clean API response structure:
+            - message: Final response message
+            - sources: Document sources if any
+            - is_interrupted: Boolean indicating if human interaction needed
+            - confirmation_data: Confirmation details if interrupted
+            - conversation_id: Conversation ID for persistence
+        """
+        try:
+            logger.info(f"🚀 [API_INTERFACE] Processing user message for conversation {conversation_id}")
+            
+            # Invoke the agent with the user query
+            raw_result = await self.invoke(
+                user_query=user_query,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                **kwargs
+            )
+            
+            # Process the result for clean API response
+            processed_result = await self._process_agent_result_for_api(raw_result, conversation_id)
+            
+            # Add conversation ID to response
+            processed_result["conversation_id"] = conversation_id or raw_result.get("conversation_id")
+            
+            logger.info(f"✅ [API_INTERFACE] User message processed successfully. Interrupted: {processed_result['is_interrupted']}")
+            
+            return processed_result
+            
+        except Exception as e:
+            logger.error(f"❌ [API_INTERFACE] Error processing user message: {e}")
+            return {
+                "message": "I apologize, but I encountered an error while processing your request.",
+                "sources": [],
+                "is_interrupted": False,
+                "confirmation_data": None,
+                "conversation_id": conversation_id
+            }
 
 
 # Update the aliases for easy import

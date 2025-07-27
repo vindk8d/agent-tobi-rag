@@ -77,6 +77,7 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
     if (!selectedUserId) return;
 
     try {
+      // SINGLE CONVERSATION PER USER: Load messages from the user's single ongoing conversation
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${apiUrl}/api/v1/chat/recent-messages/${selectedUserId}`);
       
@@ -94,12 +95,12 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
           
           setChatMessages(loadedMessages);
           
-          // Set conversation ID from the most recent message
+          // Set conversation ID from messages (single conversation per user)
           if (result.data.length > 0) {
             setCurrentConversationId(result.data[result.data.length - 1].conversation_id);
           }
         } else {
-          // Show welcome message for user
+          // Show welcome message for user with no conversation history
           setChatMessages([
             {
               id: `welcome-user-${Date.now()}`,
@@ -226,11 +227,12 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
   };
 
   const handleDeleteConversation = async () => {
-    if (!currentConversationId || isDeleting) return;
+    if (!currentConversationId || isDeleting || !selectedUserId) return;
 
     try {
       setIsDeleting(true);
       
+      // SINGLE CONVERSATION PER USER: Delete the user's single conversation
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${apiUrl}/api/v1/chat/conversations/${currentConversationId}`, {
         method: 'DELETE',
@@ -243,11 +245,11 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      // Reset chat state by reloading recent messages
+      // Reset chat state - user will start fresh with a new conversation
       setCurrentConversationId(null);
       await loadRecentMessages();
       
-      console.log('Conversation deleted successfully');
+      console.log('User conversation cleared successfully');
     } catch (error) {
       console.error('Error deleting conversation:', error);
       // You could add a toast notification here if desired

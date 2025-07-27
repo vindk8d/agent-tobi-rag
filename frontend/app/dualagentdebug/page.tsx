@@ -99,6 +99,7 @@ export default function DualAgentDebugPage() {
 
   // Confirmation state
   const [pendingConfirmations, setPendingConfirmations] = useState<ConfirmationRequest[]>([]);
+  const [shouldPollConfirmations, setShouldPollConfirmations] = useState(true);
 
   // Debug state
   const [debugMode, setDebugMode] = useState(false);
@@ -222,13 +223,13 @@ export default function DualAgentDebugPage() {
   // Polling for pending confirmations
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (employeeChat.conversationId || customerChat.conversationId) {
+    if ((employeeChat.conversationId || customerChat.conversationId) && shouldPollConfirmations) {
       interval = setInterval(() => {
         checkPendingConfirmations();
       }, 2000);
     }
     return () => clearInterval(interval);
-  }, [employeeChat.conversationId, customerChat.conversationId]);
+  }, [employeeChat.conversationId, customerChat.conversationId, shouldPollConfirmations]);
 
   async function loadUsers() {
     try {
@@ -281,12 +282,9 @@ export default function DualAgentDebugPage() {
     try {
       setCustomerChat(prev => ({ ...prev, isLoading: true, error: null }));
 
-      // If we have a conversation ID, load messages only for that conversation
-      // If no conversation ID, load the most recent conversation's messages
-      const currentConversationId = customerChat.conversationId;
-      const url = currentConversationId 
-        ? `${API_BASE_URL}/api/v1/memory-debug/users/${selectedCustomerUser.id}/messages?conversation_id=${currentConversationId}`
-        : `${API_BASE_URL}/api/v1/memory-debug/users/${selectedCustomerUser.id}/messages`;
+      // SINGLE CONVERSATION PER USER: Always load the user's single conversation
+      // No need to track conversation IDs since each user has exactly one conversation
+      const url = `${API_BASE_URL}/api/v1/memory-debug/users/${selectedCustomerUser.id}/messages`;
       
       const response = await fetch(url);
       
@@ -316,8 +314,8 @@ export default function DualAgentDebugPage() {
             };
           }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-          // Find the conversation ID from the first message (if not already set)
-          const conversationId = currentConversationId || (result.data.length > 0 ? result.data[0].conversation_id : null);
+          // Get conversation ID from messages (single conversation per user)
+          const conversationId = result.data.length > 0 ? result.data[0].conversation_id : null;
 
           setCustomerChat(prev => ({
             ...prev,
@@ -358,12 +356,9 @@ export default function DualAgentDebugPage() {
     try {
       setEmployeeChat(prev => ({ ...prev, isLoading: true, error: null }));
 
-      // If we have a conversation ID, load messages only for that conversation
-      // If no conversation ID, load the most recent conversation's messages
-      const currentConversationId = employeeChat.conversationId;
-      const url = currentConversationId 
-        ? `${API_BASE_URL}/api/v1/memory-debug/users/${selectedEmployeeUser.id}/messages?conversation_id=${currentConversationId}`
-        : `${API_BASE_URL}/api/v1/memory-debug/users/${selectedEmployeeUser.id}/messages`;
+      // SINGLE CONVERSATION PER USER: Always load the user's single conversation
+      // No need to track conversation IDs since each user has exactly one conversation
+      const url = `${API_BASE_URL}/api/v1/memory-debug/users/${selectedEmployeeUser.id}/messages`;
       
       const response = await fetch(url);
       
@@ -393,8 +388,8 @@ export default function DualAgentDebugPage() {
             };
           }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-          // Find the conversation ID from the first message (if not already set)
-          const conversationId = currentConversationId || (result.data.length > 0 ? result.data[0].conversation_id : null);
+          // Get conversation ID from messages (single conversation per user)
+          const conversationId = result.data.length > 0 ? result.data[0].conversation_id : null;
 
           setEmployeeChat(prev => ({
             ...prev,
@@ -438,9 +433,6 @@ export default function DualAgentDebugPage() {
       return;
     }
 
-    // Store the conversation ID before clearing local state
-    const conversationIdToDelete = chat.conversationId;
-
     try {
       // Clear local state immediately for better UX
       if (userType === 'employee') {
@@ -459,8 +451,8 @@ export default function DualAgentDebugPage() {
         });
       }
 
-      // Always delete ALL conversations for the user via backend API
-      console.log(`Deleting ALL conversations for ${userType} user ${user.id} via API`);
+      // SINGLE CONVERSATION PER USER: Clear the user's single conversation
+      console.log(`Clearing conversation for ${userType} user ${user.id} via API`);
       
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/chat/user/${user.id}/all-conversations`, {
@@ -472,14 +464,14 @@ export default function DualAgentDebugPage() {
 
         if (response.ok) {
           const result = await response.json();
-          console.log(`Successfully cleared ALL ${userType} conversations:`, result.message);
+          console.log(`Successfully cleared ${userType} conversation:`, result.message);
         } else {
           const errorData = await response.json();
-          console.error(`Failed to clear ${userType} conversations:`, errorData.detail || 'Unknown error');
+          console.error(`Failed to clear ${userType} conversation:`, errorData.detail || 'Unknown error');
           // Don't throw - local state is already cleared
         }
       } catch (apiError) {
-        console.error(`API error clearing ${userType} conversations:`, apiError);
+        console.error(`API error clearing ${userType} conversation:`, apiError);
         // Don't throw - local state is already cleared
       }
 
@@ -492,6 +484,9 @@ export default function DualAgentDebugPage() {
 
   async function sendMessage(message: string, userType: 'employee' | 'customer') {
     console.log('🚀 sendMessage called with:', { message, userType });
+    
+    // Restart polling when sending a new message (may create confirmations)
+    setShouldPollConfirmations(true);
     
     const isEmployee = userType === 'employee';
     const user = isEmployee ? selectedEmployeeUser : selectedCustomerUser;
@@ -650,6 +645,9 @@ export default function DualAgentDebugPage() {
   async function checkPendingConfirmations() {
     const conversationIds = [employeeChat.conversationId, customerChat.conversationId].filter(Boolean);
     
+    // Track if we found any confirmations across all conversations
+    let foundAnyConfirmations = false;
+    
     for (const conversationId of conversationIds) {
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/chat/confirmation/pending/${conversationId}`);
@@ -659,6 +657,7 @@ export default function DualAgentDebugPage() {
           const rawConfirmations = result.confirmations || result.data || [];
           
           if (rawConfirmations.length > 0) {
+            foundAnyConfirmations = true;
             const parsedConfirmations = rawConfirmations.map((conf: any) => 
               parseConfirmationMessage(conf.message, conf.confirmation_id, conversationId)
             );
@@ -675,10 +674,31 @@ export default function DualAgentDebugPage() {
         console.error('Error checking confirmations:', error);
       }
     }
+    
+    // CRITICAL FIX: If no confirmations found anywhere, clear stale frontend state
+    if (!foundAnyConfirmations && conversationIds.length > 0) {
+      setPendingConfirmations(prev => {
+        if (prev.length > 0) {
+          console.log('🧹 Clearing stale confirmation state - backend has no pending confirmations');
+        }
+        
+        // Stop polling if we had no confirmations and are clearing empty state
+        // This means the conversation is complete
+        if (prev.length === 0) {
+          console.log('⏹️ Stopping confirmation polling - no confirmations found, conversation complete');
+          setTimeout(() => setShouldPollConfirmations(false), 100);
+        }
+        
+        return [];
+      });
+    }
   }
 
   async function respondToConfirmation(confirmationId: string, action: 'approved' | 'cancelled', modifiedMessage?: string) {
     try {
+      // CRITICAL FIX: Find the confirmation BEFORE removing it from state
+      const confirmation = pendingConfirmations.find(c => c.confirmation_id === confirmationId);
+      
       const response = await fetch(`${API_BASE_URL}/api/v1/chat/confirmation/${confirmationId}/respond`, {
         method: 'POST',
         headers: {
@@ -695,19 +715,7 @@ export default function DualAgentDebugPage() {
           prev.filter(conf => conf.confirmation_id !== confirmationId)
         );
         
-        // Send the approval/denial as a chat message to resume the conversation
-        const confirmationResponse = action === 'approved' ? 'approve' : 'deny';
-        
-        // Find which conversation this confirmation belongs to and send the response
-        const confirmation = pendingConfirmations.find(c => c.confirmation_id === confirmationId);
-        if (confirmation) {
-          // Determine which chat to use based on the conversation_id
-          if (confirmation.conversation_id === employeeChat.conversationId) {
-            await sendMessage(confirmationResponse, 'employee');
-          } else if (confirmation.conversation_id === customerChat.conversationId) {
-            await sendMessage(confirmationResponse, 'customer');
-          }
-        }
+        console.log(`✅ Confirmation ${confirmationId} processed successfully - backend will resume conversation automatically`);
       } else {
         console.error('Failed to respond to confirmation:', await response.text());
       }
@@ -800,7 +808,12 @@ export default function DualAgentDebugPage() {
               </div>
               {chat.conversationId && (
                 <div className="text-xs text-gray-500">
-                  Conversation: {chat.conversationId.substring(0, 8)}...
+                  Ongoing Conversation: {chat.conversationId.substring(0, 8)}...
+                </div>
+              )}
+              {!chat.conversationId && chat.messages.length === 0 && (
+                <div className="text-xs text-green-600">
+                  Ready to start conversation
                 </div>
               )}
             </div>
@@ -808,8 +821,9 @@ export default function DualAgentDebugPage() {
               <button
                 onClick={() => clearChat(userType)}
                 className="text-red-600 hover:text-red-800 text-sm"
+                title="Clear this user's conversation history"
               >
-                Clear Chat
+                Clear Conversation
               </button>
             </div>
           </div>

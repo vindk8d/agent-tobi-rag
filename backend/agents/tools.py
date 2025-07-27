@@ -28,23 +28,39 @@ from langsmith import traceable
 from sqlalchemy import create_engine, text
 from rag.retriever import SemanticRetriever
 from config import get_settings
+from agents.hitl import HITLRequest
 
-# LangGraph interrupt functionality for customer messaging confirmation
-try:
-    from langgraph.types import interrupt
-    from langgraph.errors import GraphInterrupt
-except ImportError:
-    # Fallback for development/testing - create a mock interrupt function and exception
-    def interrupt(message: str):
-        return f"[MOCK_INTERRUPT] {message}"
-    
-    class GraphInterrupt(Exception):
-        """Mock GraphInterrupt for development/testing"""
-        pass
+# NOTE: LangGraph interrupt functionality is now handled by the centralized HITL system in hitl.py
+# No direct interrupt handling needed in individual tools - they use HITLRequest format instead
 
 
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# DATABASE CONNECTION UTILITIES
+# =============================================================================
+
+async def _get_sql_engine():
+    """Create a SQL engine for database operations in tools."""
+    settings = await get_settings()
+    database_url = settings.supabase.postgresql_connection_string
+
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+    # Settings optimized for tool execution
+    engine = create_engine(
+        database_url,
+        pool_size=2,
+        max_overflow=3,
+        pool_timeout=20,
+        pool_recycle=1800,
+        pool_pre_ping=True,
+        pool_reset_on_return='commit',
+    )
+    
+    return engine
 
 # =============================================================================
 # MODEL SELECTION AND QUERY COMPLEXITY
@@ -108,19 +124,23 @@ class ModelSelector:
 current_user_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_user_id', default=None)
 current_conversation_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_conversation_id', default=None)
 current_user_type: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_user_type', default=None)
+# Add context variable for state-based employee ID  
+current_employee_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_employee_id', default=None)
 
 
 class UserContext:
     """Context manager for setting user context during tool execution"""
 
 
-    def __init__(self, user_id: Optional[str] = None, conversation_id: Optional[str] = None, user_type: Optional[str] = None):
+    def __init__(self, user_id: Optional[str] = None, conversation_id: Optional[str] = None, user_type: Optional[str] = None, employee_id: Optional[str] = None):
         self.user_id = user_id
         self.conversation_id = conversation_id
         self.user_type = user_type
+        self.employee_id = employee_id
         self.user_id_token = None
         self.conversation_id_token = None
         self.user_type_token = None
+        self.employee_id_token = None
 
 
     def __enter__(self):
@@ -136,6 +156,10 @@ class UserContext:
         if self.user_type:
             self.user_type_token = current_user_type.set(self.user_type)
             logger.debug(f"Set user context: user_type={self.user_type}")
+
+        if self.employee_id:
+            self.employee_id_token = current_employee_id.set(self.employee_id)
+            logger.debug(f"Set user context: employee_id={self.employee_id}")
 
         return self
 
@@ -154,6 +178,10 @@ class UserContext:
             current_user_type.reset(self.user_type_token)
             logger.debug("Reset user_type context")
 
+        if self.employee_id_token:
+            current_employee_id.reset(self.employee_id_token)
+            logger.debug("Reset employee_id context")
+
 
 def get_current_user_id() -> Optional[str]:
     """Get the current user ID from context"""
@@ -170,39 +198,30 @@ def get_current_user_type() -> Optional[str]:
     return current_user_type.get()
 
 
+def get_current_employee_id_from_context() -> Optional[str]:
+    """Get the current employee ID directly from context (set by agent state)"""
+    return current_employee_id.get()
+
+
 async def get_current_employee_id() -> Optional[str]:
     """
-    Get the current employee ID by resolving user_id to employee_id.
-
-    IMPORTANT: This function handles the mapping from users table (user_id) to employees table (employee_id)
-    which is needed for CRM queries that reference employee relationships.
+    Get the current employee ID - streamlined to use state-based approach.
+    
+    This function now primarily uses the employee_id set by user_verification_node in the agent state.
+    The agent state is passed through UserContext, making this much more reliable.
 
     Returns:
         Optional[str]: Employee ID if user is an employee, None otherwise
     """
-    user_id = get_current_user_id()
-    if not user_id:
-        return None
-
-    try:
-        engine = await _get_sql_engine()
-
-        with engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT employee_id FROM users WHERE id = :user_id"),
-                {"user_id": user_id}
-            )
-            row = result.fetchone()
-            if row and row[0]:
-                logger.debug(f"Resolved user_id {user_id} to employee_id {row[0]}")
-                return str(row[0])
-            else:
-                logger.debug(f"User {user_id} is not an employee or employee_id is null")
-                return None
-
-    except Exception as e:
-        logger.error(f"Error resolving user_id to employee_id: {e}")
-        return None
+    # Get employee_id directly from context (set by agent state via UserContext)
+    employee_id = get_current_employee_id_from_context()
+    if employee_id:
+        logger.debug(f"Found employee_id from state context: {employee_id}")
+        return str(employee_id)
+    
+    # If not available from context, user is likely not an employee or context not set
+    logger.debug("No employee_id available from context - user may not be an employee")
+    return None
 
 
 def get_user_context() -> dict:
@@ -262,95 +281,40 @@ async def _get_sql_llm(question: str = None) -> ChatOpenAI:
     )
 
 # =============================================================================
-# DATABASE CONNECTION MANAGEMENT
+# DATABASE CONNECTION MANAGEMENT (EXECUTION-SCOPED)
 # =============================================================================
 
-_sql_engine = None
-_sql_db = None
-
-async def _get_sql_engine():
-    """Get a reusable SQLAlchemy engine with proper connection pooling."""
-    global _sql_engine
-    if _sql_engine is not None:
-        return _sql_engine
-
-    try:
-        settings = await get_settings()
-        database_url = settings.supabase.postgresql_connection_string
-
-        if database_url.startswith("postgres://"):
-            database_url = database_url.replace("postgres://", "postgresql://", 1)
-
-        # Create engine with connection pooling to prevent connection exhaustion
-        _sql_engine = create_engine(
-            database_url,
-            # Connection pool settings to prevent "Max client connections reached"
-            pool_size=5,          # Number of connections to keep open
-            max_overflow=10,      # Additional connections allowed beyond pool_size
-            pool_timeout=30,      # Seconds to wait for connection from pool
-            pool_recycle=3600,    # Recycle connections every hour
-            pool_pre_ping=True,   # Verify connections before use
-        )
-        logger.info("SQLAlchemy engine created with connection pooling")
-        return _sql_engine
-
-    except Exception as e:
-        logger.error(f"Failed to create SQL engine: {e}")
-        raise
-
+# Import the execution-scoped connection manager
+from .memory import (
+    create_execution_scoped_sql_database,
+    get_connection_statistics,
+    log_connection_status
+)
 
 async def _get_sql_database() -> Optional[SQLDatabase]:
-    """Get SQL database connection using LangChain's built-in SQLDatabase."""
-    global _sql_db
-    if _sql_db is not None:
-        return _sql_db
-
+    """Get SQL database connection using execution-scoped management."""
     try:
-        # Use the centralized engine which already has connection pooling configured
-        engine = await _get_sql_engine()
-        
-        # Create SQLDatabase using the pooled engine
-        _sql_db = SQLDatabase(engine=engine)
-        logger.info("LangChain SQLDatabase created using pooled engine")
-        return _sql_db
-
+        # Use execution-scoped database that will be automatically cleaned up
+        sql_db = await create_execution_scoped_sql_database()
+        if sql_db:
+            logger.debug("Created execution-scoped SQL database connection")
+        return sql_db
     except Exception as e:
-        logger.error(f"Failed to connect to database: {e}")
+        logger.error(f"Failed to create execution-scoped SQL database: {e}")
         return None
 
-
+# Legacy compatibility functions (deprecated)
 async def close_database_connections():
-    """Close all database connections to free up connection pool."""
-    global _sql_engine, _sql_db
-    
-    try:
-        if _sql_engine:
-            _sql_engine.dispose()
-            logger.info("SQLAlchemy engine disposed")
-            _sql_engine = None
-            
-        if _sql_db:
-            if hasattr(_sql_db, '_engine') and _sql_db._engine:
-                _sql_db._engine.dispose()
-            logger.info("LangChain SQLDatabase engine disposed")
-            _sql_db = None
-            
-    except Exception as e:
-        logger.error(f"Error closing database connections: {e}")
-
+    """
+    DEPRECATED: This function is kept for backward compatibility but does nothing.
+    Connection cleanup is now handled automatically by ExecutionScope.
+    """
+    logger.warning("close_database_connections() is deprecated. Use ExecutionScope for automatic cleanup.")
 
 async def get_connection_pool_status():
     """Get current connection pool status for monitoring."""
     try:
-        engine = await _get_sql_engine()
-        pool = engine.pool
-        return {
-            "size": pool.size(),
-            "checked_in": pool.checkedin(),
-            "checked_out": pool.checkedout(),
-            "overflow": pool.overflow(),
-            "invalid": pool.invalid()
-        }
+        return await get_connection_statistics()
     except Exception as e:
         logger.error(f"Error getting connection pool status: {e}")
         return None
@@ -792,267 +756,57 @@ async def _get_rag_llm():
 # CUSTOMER MESSAGING TOOL (Employee Only)
 # =============================================================================
 
-async def _deliver_message_via_chat(customer_info: dict, formatted_message: str, message_type: str, sender_employee_id: str) -> dict:
+# =============================================================================
+# LEGACY FUNCTIONS - DEPRECATED (Replaced by new HITL system)
+# =============================================================================
+# The following functions were part of the old confirmation system and have been
+# replaced by the new HITLRequest-based system with _handle_confirmation_approved(),
+# _handle_confirmation_denied(), and _deliver_customer_message().
+# 
+# These functions are kept temporarily for test compatibility but should not be
+# used in new code. They will be removed in a future cleanup.
+# =============================================================================
+
+# DEPRECATED: Use _deliver_customer_message() instead
+# async def _deliver_message_via_chat(customer_info: dict, formatted_message: str, message_type: str, sender_employee_id: str) -> dict:
+#     """DEPRECATED: Legacy message delivery function. Use _deliver_customer_message() instead."""
+
+# DEPRECATED: Tracking is now handled within _deliver_customer_message()
+# async def _track_message_delivery(customer_info: dict, delivery_result: dict, message_type: str, sender_employee_id: str) -> dict:
+#     """DEPRECATED: Legacy message tracking function. Tracking is now built into _deliver_customer_message()."""
+
+
+def _format_customer_data(customer_data: dict) -> dict:
     """
-    Deliver a message to a customer via chat by creating a new conversation or adding to existing one.
+    Format customer data consistently across all lookup functions.
     
     Args:
-        customer_info: Customer information dictionary
-        formatted_message: The formatted message content to deliver
-        message_type: Type of message (follow_up, information, promotional, support)
-        sender_employee_id: ID of the employee sending the message
+        customer_data: Raw customer data from database
         
     Returns:
-        Dict with delivery status: {"success": bool, "conversation_id": str, "error": str or None}
+        Formatted customer dictionary
     """
-    try:
-        engine = await _get_sql_engine()
-        customer_id = customer_info.get("customer_id")
-        customer_name = customer_info.get("name", "Customer")
-        
-        # Look up the customer's user_id from the users table
-        with engine.connect() as conn:
-            user_result = conn.execute(
-                text("""
-                    SELECT id FROM users 
-                    WHERE customer_id = :customer_id AND user_type = 'customer' AND is_active = true
-                    LIMIT 1
-                """),
-                {"customer_id": customer_id}
-            )
-            user_row = user_result.fetchone()
-            
-            if not user_row:
-                logger.warning(f"No active user account found for customer {customer_id}")
-                return {
-                    "success": False,
-                    "conversation_id": None,
-                    "error": f"Customer {customer_name} does not have an active chat account"
-                }
-            
-            customer_user_id = str(user_row[0])
-            
-            # Check for existing conversation with this customer (most recent)
-            conv_result = conn.execute(
-                text("""
-                    SELECT id FROM conversations 
-                    WHERE user_id = :user_id 
-                    ORDER BY updated_at DESC 
-                    LIMIT 1
-                """),
-                {"user_id": customer_user_id}
-            )
-            conv_row = conv_result.fetchone()
-            
-            if conv_row:
-                # Use existing conversation
-                conversation_id = str(conv_row[0])
-                logger.info(f"Using existing conversation {conversation_id} for customer {customer_name}")
-            else:
-                # Create new conversation
-                import uuid
-                conversation_id = str(uuid.uuid4())
-                conn.execute(
-                    text("""
-                        INSERT INTO conversations (id, user_id, title, created_at, updated_at, metadata)
-                        VALUES (:id, :user_id, :title, NOW(), NOW(), :metadata)
-                    """),
-                    {
-                        "id": conversation_id,
-                        "user_id": customer_user_id,
-                        "title": f"Message from Employee - {message_type.title()}",
-                        "metadata": f'{{"message_type": "{message_type}", "sender_employee_id": "{sender_employee_id}"}}'
-                    }
-                )
-                logger.info(f"Created new conversation {conversation_id} for customer {customer_name}")
-            
-            # Insert the message as an AI message (from the agent/employee)
-            message_id = str(uuid.uuid4())
-            conn.execute(
-                text("""
-                    INSERT INTO messages (id, conversation_id, role, content, created_at, metadata)
-                    VALUES (:id, :conversation_id, :role, :content, NOW(), :metadata)
-                """),
-                {
-                    "id": message_id,
-                    "conversation_id": conversation_id,
-                    "role": "ai",  # Message from assistant/employee
-                    "content": formatted_message,
-                    "metadata": f'{{"message_type": "{message_type}", "sender_employee_id": "{sender_employee_id}", "customer_outreach": true}}'
-                }
-            )
-            
-            # Update conversation timestamp
-            conn.execute(
-                text("UPDATE conversations SET updated_at = NOW() WHERE id = :id"),
-                {"id": conversation_id}
-            )
-            
-            logger.info(f"Successfully delivered message to customer {customer_name} via chat (conversation: {conversation_id})")
-            
-            return {
-                "success": True,
-                "conversation_id": conversation_id,
-                "message_id": message_id,
-                "error": None
-            }
-            
-    except Exception as e:
-        logger.error(f"Error delivering message via chat to customer {customer_info.get('name', 'Unknown')}: {e}")
-        return {
-            "success": False,
-            "conversation_id": None,
-            "error": str(e)
-        }
-
-
-async def _track_message_delivery(customer_info: dict, delivery_result: dict, message_type: str, sender_employee_id: str) -> dict:
-    """
-    Track message delivery status for monitoring and feedback.
+    # Split name into first and last name for backward compatibility
+    full_name = (customer_data.get("name") or "").strip()
+    name_parts = full_name.split(maxsplit=1) if full_name else ["", ""]
+    first_name = name_parts[0] if len(name_parts) > 0 else ""
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
     
-    Args:
-        customer_info: Customer information dictionary
-        delivery_result: Result from _deliver_message_via_chat
-        message_type: Type of message delivered
-        sender_employee_id: ID of the employee who sent the message
-        
-    Returns:
-        Dict with tracking status and details
-    """
-    try:
-        engine = await _get_sql_engine()
-        
-        with engine.connect() as conn:
-            # Store delivery tracking in a simple log table (we'll use query_logs for now)
-            tracking_id = str(uuid.uuid4())
-            tracking_data = {
-                "delivery_id": tracking_id,
-                "customer_id": customer_info.get("customer_id"),
-                "customer_name": customer_info.get("name", "Unknown"),
-                "message_type": message_type,
-                "sender_employee_id": sender_employee_id,
-                "success": delivery_result.get("success", False),
-                "conversation_id": delivery_result.get("conversation_id"),
-                "error": delivery_result.get("error"),
-                "delivered_at": datetime.now().isoformat()
-            }
-            
-            conn.execute(
-                text("""
-                    INSERT INTO query_logs (id, conversation_id, query, response, created_at, metadata)
-                    VALUES (:id, :conversation_id, :query, :response, NOW(), :metadata)
-                """),
-                {
-                    "id": tracking_id,
-                    "conversation_id": delivery_result.get("conversation_id"),
-                    "query": f"CUSTOMER_MESSAGE_DELIVERY: {message_type}",
-                    "response": "SUCCESS" if delivery_result.get("success") else f"FAILED: {delivery_result.get('error')}",
-                    "metadata": f'{json.dumps(tracking_data, cls=DateTimeEncoder)}'
-                }
-            )
-            
-            logger.info(f"Tracked message delivery: {tracking_id} - Success: {delivery_result.get('success')}")
-            
-            return {
-                "tracking_id": tracking_id,
-                "tracked": True,
-                "delivery_status": "success" if delivery_result.get("success") else "failed"
-            }
-            
-    except Exception as e:
-        logger.error(f"Error tracking message delivery: {e}")
-        return {
-            "tracking_id": None,
-            "tracked": False,
-            "error": str(e)
-        }
+    return {
+        "customer_id": str(customer_data["id"]),
+        "id": str(customer_data["id"]),
+        "name": full_name,
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": customer_data.get("email") or "",
+        "phone": customer_data.get("phone") or customer_data.get("mobile_number") or "",
+        "mobile_number": customer_data.get("mobile_number") or "",
+        "company": customer_data.get("company") or "",
+        "is_for_business": customer_data.get("is_for_business") or False,
+        "created_at": customer_data.get("created_at"),
+        "updated_at": customer_data.get("updated_at")
+    }
 
-
-async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
-    """
-    Look up customer information by customer identifier (UUID, name, or email).
-    
-    Args:
-        customer_identifier: The customer UUID, name, or email address to look up
-        
-    Returns:
-        Dict with customer information if found, None otherwise
-    """
-    try:
-        engine = await _get_sql_engine()
-
-        with engine.connect() as conn:
-            # Determine lookup strategy based on identifier format
-            if "@" in customer_identifier and "." in customer_identifier:
-                # Email lookup
-                logger.debug(f"Looking up customer by email: {customer_identifier}")
-                result = conn.execute(
-                    text("""
-                        SELECT id, name, email, phone, mobile_number, company, 
-                               is_for_business, created_at, updated_at
-                        FROM customers 
-                        WHERE email = :identifier
-                    """),
-                    {"identifier": customer_identifier}
-                )
-            elif len(customer_identifier.replace("-", "")) == 32 and customer_identifier.count("-") == 4:
-                # UUID lookup
-                logger.debug(f"Looking up customer by UUID: {customer_identifier}")
-                result = conn.execute(
-                    text("""
-                        SELECT id, name, email, phone, mobile_number, company, 
-                               is_for_business, created_at, updated_at
-                        FROM customers 
-                        WHERE id = :identifier
-                    """),
-                    {"identifier": customer_identifier}
-                )
-            else:
-                # Name lookup (case-insensitive)
-                logger.debug(f"Looking up customer by name: {customer_identifier}")
-                result = conn.execute(
-                    text("""
-                        SELECT id, name, email, phone, mobile_number, company, 
-                               is_for_business, created_at, updated_at
-                        FROM customers 
-                        WHERE name ILIKE :identifier
-                    """),
-                    {"identifier": customer_identifier}
-                )
-            
-            row = result.fetchone()
-            
-            if row:
-                # Split name into first and last name for backward compatibility
-                full_name = (row[1] or "").strip()
-                name_parts = full_name.split(maxsplit=1) if full_name else ["", ""]
-                first_name = name_parts[0] if len(name_parts) > 0 else ""
-                last_name = name_parts[1] if len(name_parts) > 1 else ""
-                
-                customer_info = {
-                    "customer_id": str(row[0]),
-                    "id": str(row[0]),  # Include both for compatibility
-                    "name": full_name,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "email": row[2] or "",
-                    "phone": row[3] or row[4] or "",  # Use phone or mobile_number, whichever is available
-                    "mobile_number": row[4] or "",
-                    "company": row[5] or "",
-                    "is_for_business": row[6] or False,
-                    "created_at": row[7],
-                    "updated_at": row[8]
-                }
-                
-                logger.debug(f"Found customer: {customer_info['customer_id']} - {customer_info['name']}")
-                return customer_info
-            else:
-                logger.warning(f"Customer {customer_identifier} not found")
-                return None
-
-    except Exception as e:
-        logger.error(f"Error looking up customer {customer_identifier}: {e}")
-        return None
 
 
 async def _list_active_customers(limit: int = 50) -> List[dict]:
@@ -1287,16 +1041,11 @@ async def trigger_customer_message(customer_id: str, message_content: str, messa
         Confirmation request data with CONFIRMATION_REQUIRED indicator for state-driven routing
     """
     try:
-        # Check user type - only employees can use this tool
-        user_type = get_current_user_type()
-        if user_type not in ["employee", "admin"]:
-            logger.warning(f"[CUSTOMER_MESSAGE] Non-employee user ({user_type}) attempted to use customer messaging tool")
-            return "I apologize, but customer messaging is only available to employees. Please contact your administrator if you need assistance."
-        
-        # Get current employee ID for tracking
+        # Check if user is an employee by verifying employee_id is available
         sender_employee_id = await get_current_employee_id()
         if not sender_employee_id:
-            return "Error: Unable to identify your employee account. Please ensure you're logged in as an employee."
+            logger.warning("[CUSTOMER_MESSAGE] Non-employee user attempted to use customer messaging tool")
+            return "I apologize, but customer messaging is only available to employees. Please contact your administrator if you need assistance."
         
         # Validate inputs
         if not customer_id or not customer_id.strip():
@@ -1323,18 +1072,73 @@ async def trigger_customer_message(customer_id: str, message_content: str, messa
         
         # Validate customer exists and get customer information
         customer_info = await _lookup_customer(customer_id)
+            
         if not customer_info:
-            return f"Error: Customer '{customer_id}' not found. Please verify the customer identifier (name, email, or UUID) and try again."
+            # Customer not found - use HITL input request for clarification
+            not_found_prompt = f"""❓ **Customer Not Found**
+
+I couldn't find a customer matching "{customer_id}".
+
+Could you provide any additional information to help me locate the right customer? 
+
+For example:
+- A different spelling of their name
+- Their email address or phone number
+- Company name (for business customers)
+- Or any other details you remember
+
+Just share whatever comes to mind - any detail could help me find them."""
+            
+            # Context for handling the input response
+            context_data = {
+                "tool": "trigger_customer_message", 
+                "action": "customer_lookup_retry",
+                "original_customer_id": customer_id,
+                "message_content": message_content,
+                "message_type": message_type,
+                "sender_employee_id": sender_employee_id,
+                "requested_by": get_current_user_id(),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            logger.info(f"[CUSTOMER_MESSAGE] Customer '{customer_id}' not found - requesting additional information via HITL")
+            
+            # Use HITLRequest.input_request() for customer lookup clarification
+            return HITLRequest.input_request(
+                prompt=not_found_prompt,
+                input_type="customer_identifier", 
+                context=context_data,
+                validation_hints=[
+                    "Any additional detail helps - even partial information is useful",
+                    "Don't worry if you only remember some details",
+                    "I'll search based on whatever you can provide"
+                ]
+            )
         
         logger.info(f"[CUSTOMER_MESSAGE] Validated customer: {customer_info.get('name', 'Unknown')} ({customer_info.get('email', 'no-email')})")
         
         # Format the message with professional templates
         formatted_message = _format_message_by_type(message_content, message_type, customer_info)
         
-        # Prepare confirmation data for state-driven HITL approach
-        confirmation_data = {
-            "requires_human_confirmation": True,
-            "confirmation_type": "customer_message",
+        # Create confirmation prompt for the user
+        customer_name = customer_info.get('name', 'Unknown Customer')
+        customer_email = customer_info.get('email', 'no-email')
+        message_type_display = message_type.replace('_', ' ').title()
+        
+        confirmation_prompt = f"""🔄 **Customer Message Confirmation**
+
+**To:** {customer_name} ({customer_email})
+**Type:** {message_type_display}
+**Message:** {message_content}
+
+**Formatted Preview:**
+{formatted_message}
+
+Do you want to send this message to the customer?"""
+        
+        # Prepare context data for post-confirmation processing
+        context_data = {
+            "tool": "trigger_customer_message",
             "customer_info": customer_info,
             "message_content": message_content,
             "formatted_message": formatted_message,
@@ -1346,118 +1150,795 @@ async def trigger_customer_message(customer_id: str, message_content: str, messa
             "timestamp": datetime.now().isoformat()
         }
         
-        logger.info(f"[CUSTOMER_MESSAGE] Message prepared for state-driven HITL confirmation - Customer: {customer_id}")
+        logger.info(f"[CUSTOMER_MESSAGE] Message prepared for HITL confirmation - Customer: {customer_name}")
         
-        # Return confirmation data with state-driven indicator for node to handle
-        # The node will detect this pattern and populate confirmation_data in AgentState
-        try:
-            # Create a custom JSON encoder to handle datetime objects
-            class DateTimeEncoder(json.JSONEncoder):
-                def default(self, obj):
-                    if isinstance(obj, (datetime, date)):
-                        return obj.isoformat()
-                    return super().default(obj)
-            
-            confirmation_json = json.dumps(confirmation_data, cls=DateTimeEncoder)
-            return f"STATE_DRIVEN_CONFIRMATION_REQUIRED: {confirmation_json}"
-        except Exception as e:
-            logger.error(f"Error serializing confirmation data: {e}")
-            return f"Error preparing customer message for confirmation: {str(e)}"
+        # Use HITLRequest.confirmation() for standardized HITL interaction
+        return HITLRequest.confirmation(
+            prompt=confirmation_prompt,
+            context=context_data,
+            approve_text="send",
+            deny_text="cancel"
+        )
 
     except Exception as e:
         logger.error(f"Error in trigger_customer_message: {e}")
         return f"Sorry, I encountered an error while preparing your customer message request. Please try again or contact support if the issue persists."
 
 
-async def _handle_customer_message_confirmation(confirmation_data: dict, human_response: str) -> str:
+class GatherFurtherDetailsParams(BaseModel):
+    """Parameters for gathering additional information from the user."""
+    information_needed: str = Field(..., description="Description of what information is needed from the user")
+    context: str = Field(default="", description="Context about why this information is needed")
+    input_type: str = Field(default="information", description="Type of input being requested (information, details, clarification, etc.)")
+    validation_hints: List[str] = Field(default_factory=list, description="Optional hints to help the user provide the right information")
+
+
+@tool(args_schema=GatherFurtherDetailsParams)
+@traceable(name="gather_further_details")
+async def gather_further_details(
+    information_needed: str, 
+    context: str = "", 
+    input_type: str = "information",
+    validation_hints: List[str] = None
+) -> str:
     """
-    Handle the customer message confirmation response and attempt delivery.
+    Request additional information from the user through a HITL interaction.
+    
+    This tool allows agents to gather specific details, clarifications, or information
+    from users when the current context is insufficient to proceed. It uses the
+    standardized HITL input request format for consistency.
     
     Args:
-        confirmation_data: The confirmation data from trigger_customer_message
-        human_response: The human's response (should contain 'approve' or 'deny')
+        information_needed: Clear description of what information is needed
+        context: Optional context explaining why this information is required
+        input_type: Type of input being requested (information, details, clarification, etc.)
+        validation_hints: Optional list of hints to help the user provide the right information
+        
+    Returns:
+        HITL input request for the user to provide the needed information
+        
+    Examples:
+        - gather_further_details("the customer's preferred contact method", "to send them updates", "contact_preference")
+        - gather_further_details("more details about the issue", "to better assist you", "problem_description") 
+        - gather_further_details("the specific vehicle model you're interested in", "to show you accurate pricing and availability", "vehicle_preference")
+    """
+    try:
+        # Validate required input
+        if not information_needed or not information_needed.strip():
+            return "Error: Please specify what information is needed from the user."
+        
+        # Check user type for appropriate language
+        user_type = get_current_user_type()
+        user_id = get_current_user_id()
+        
+        logger.info(f"[GATHER_FURTHER_DETAILS] Requesting information from {user_type} user: {information_needed}")
+        
+        # Create user-friendly prompt
+        if context:
+            prompt = f"""ℹ️ **Additional Information Needed**
+
+I need {information_needed} {context}.
+
+Please provide this information so I can better assist you."""
+        else:
+            prompt = f"""ℹ️ **Additional Information Needed**
+
+Could you please provide {information_needed}?
+
+This will help me give you the most accurate and helpful response."""
+        
+        # Prepare context data for handling the response
+        context_data = {
+            "tool": "gather_further_details",
+            "information_needed": information_needed,
+            "original_context": context,
+            "input_type": input_type,
+            "requested_by": user_id,
+            "user_type": user_type,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Default validation hints if none provided
+        if validation_hints is None:
+            validation_hints = [
+                "Please be as specific as possible",
+                "Any additional details you can provide will be helpful"
+            ]
+        
+        # Add context-specific hints
+        if user_type == "customer":
+            validation_hints.append("Don't worry if you're not sure about technical details - just describe it in your own words")
+        elif user_type in ["employee", "admin"]:
+            validation_hints.append("Include any relevant IDs, names, or system references if applicable")
+        
+        logger.info(f"[GATHER_FURTHER_DETAILS] Created HITL input request for: {information_needed}")
+        
+        # Use HITLRequest.input_request() for standardized interaction
+        return HITLRequest.input_request(
+            prompt=prompt,
+            input_type=input_type,
+            context=context_data,
+            validation_hints=validation_hints
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in gather_further_details: {e}")
+        return f"Sorry, I encountered an error while requesting additional information. Please try rephrasing your request or contact support if the issue persists."
+
+
+async def _handle_information_gathered(context_data: dict, user_input: str) -> str:
+    """
+    Process information gathered from the user via gather_further_details tool.
+    
+    This function handles the response when users provide additional information
+    through the gather_further_details HITL interaction.
+    
+    Args:
+        context_data: Context data from the original gather_further_details request
+        user_input: The information provided by the user
+        
+    Returns:
+        Confirmation message with the gathered information
+    """
+    try:
+        information_needed = context_data.get("information_needed", "information")
+        original_context = context_data.get("original_context", "")
+        input_type = context_data.get("input_type", "information")
+        user_type = context_data.get("user_type", "unknown")
+        
+        logger.info(f"[HANDLE_INFORMATION_GATHERED] Processing gathered {input_type} from {user_type} user")
+        
+        # Validate input
+        if not user_input or not user_input.strip():
+            return f"""❓ **No Information Provided**
+
+I still need {information_needed} to help you properly.
+
+Please provide this information, or let me know if you'd like to approach this differently."""
+        
+        # Create confirmation response
+        response_message = f"""✅ **Information Received**
+
+Thank you for providing {information_needed}.
+
+**You provided:** {user_input.strip()}
+
+I now have the information I need to better assist you. Let me help you with that."""
+        
+        logger.info(f"[HANDLE_INFORMATION_GATHERED] Successfully processed user input for: {information_needed}")
+        return response_message
+
+    except Exception as e:
+        error_msg = f"Error processing gathered information: {str(e)}"
+        logger.error(f"[HANDLE_INFORMATION_GATHERED] {error_msg}")
+        
+        return f"""✅ **Information Received**
+
+Thank you for providing the additional information. I'll use this to help you better.
+
+If you have any other questions or need further assistance, please let me know."""
+
+
+async def _handle_confirmation_approved(context_data: dict) -> str:
+    """
+    Process approved customer message confirmations from the HITL system.
+    
+    This function is called when the HITL system determines that a confirmation
+    has been approved. It handles the actual message delivery and provides
+    structured feedback to the user.
+    
+    Args:
+        context_data: Context data from the HITLRequest containing all message details
         
     Returns:
         String response with delivery results and feedback
+        
+    Raises:
+        Exception: If message delivery fails
     """
     try:
-        customer_info = confirmation_data.get("customer_info", {})
+        # Extract message details from context
+        customer_info = context_data.get("customer_info", {})
         customer_name = customer_info.get("name", "Unknown Customer")
-        formatted_message = confirmation_data.get("formatted_message", "")
-        message_type = confirmation_data.get("message_type", "general")
-        sender_employee_id = confirmation_data.get("sender_employee_id")
+        customer_email = customer_info.get("email", "no-email")
+        message_content = context_data.get("message_content", "")
+        formatted_message = context_data.get("formatted_message", "")
+        message_type = context_data.get("message_type", "follow_up")
+        sender_employee_id = context_data.get("sender_employee_id")
         
-        # Parse human response
-        if not human_response or "approve" not in human_response.lower():
-            logger.info(f"[CUSTOMER_MESSAGE_CONFIRMATION] Human denied or provided invalid response: {human_response}")
-            return f"❌ **Message Cancelled**\n\nThe message to {customer_name} was not sent as requested."
+        logger.info(f"[HANDLE_CONFIRMATION_APPROVED] Processing approved message for {customer_name}")
         
-        logger.info(f"[CUSTOMER_MESSAGE_CONFIRMATION] Human approved message sending to {customer_name}")
-        
-        # Attempt message delivery via chat
-        delivery_result = await _deliver_message_via_chat(
+        # Attempt message delivery
+        delivery_result = await _deliver_customer_message(
             customer_info=customer_info,
+            message_content=message_content,
             formatted_message=formatted_message,
             message_type=message_type,
             sender_employee_id=sender_employee_id
         )
         
-        # Track the delivery attempt
-        tracking_result = await _track_message_delivery(
+        if delivery_result.get("success"):
+            # Success response with detailed feedback
+            success_message = f"""✅ **Message Delivered Successfully!**
+
+**To:** {customer_name} ({customer_email})
+**Type:** {message_type.replace('_', ' ').title()}
+**Status:** Delivered
+**Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+**Message Sent:**
+{message_content}
+
+The customer will receive your message shortly."""
+            
+            logger.info(f"[HANDLE_CONFIRMATION_APPROVED] Message delivered successfully to {customer_name}")
+            return success_message
+            
+        else:
+            # Delivery failed
+            error_details = delivery_result.get("error", "Unknown delivery error")
+            
+            failure_message = f"""❌ **Message Delivery Failed**
+
+**To:** {customer_name} ({customer_email})
+**Type:** {message_type.replace('_', ' ').title()}
+**Status:** Failed
+**Error:** {error_details}
+
+**Troubleshooting:**
+• Verify customer contact information is correct
+• Check system connectivity
+• Try again in a few moments
+
+Please contact technical support if the issue persists."""
+            
+            logger.error(f"[HANDLE_CONFIRMATION_APPROVED] Message delivery failed for {customer_name}: {error_details}")
+            return failure_message
+    
+    except Exception as e:
+        error_msg = f"Error processing approved customer message: {str(e)}"
+        logger.error(f"[HANDLE_CONFIRMATION_APPROVED] {error_msg}")
+        
+        # Return user-friendly error message
+        return f"""❌ **Processing Error**
+
+An error occurred while processing your approved message request.
+
+**Error Details:** {str(e)}
+
+Please try your request again or contact technical support if the issue continues."""
+
+
+async def _deliver_customer_message(
+    customer_info: dict,
+    message_content: str,
+    formatted_message: str,
+    message_type: str,
+    sender_employee_id: str
+) -> dict:
+    """
+    Deliver a customer message through the appropriate channels.
+    
+    This function handles the actual delivery mechanism and can be extended
+    for different channels (in-system, email, SMS, etc.).
+    
+    Args:
+        customer_info: Customer information dictionary
+        message_content: Original message content
+        formatted_message: Professionally formatted message
+        message_type: Type of message (follow_up, information, etc.)
+        sender_employee_id: ID of the employee sending the message
+        
+    Returns:
+        Dictionary with delivery results:
+        - success: bool - Whether delivery was successful
+        - method: str - Delivery method used
+        - message_id: str - Unique message identifier (if successful)
+        - error: str - Error message (if failed)
+    """
+    try:
+        customer_name = customer_info.get("name", "Unknown")
+        customer_id = customer_info.get("id") or customer_info.get("customer_id")
+        
+        logger.info(f"[DELIVER_CUSTOMER_MESSAGE] Attempting delivery to {customer_name} (ID: {customer_id})")
+        
+        # Create message record for tracking and customer viewing
+        message_id = await _create_customer_message_record(
             customer_info=customer_info,
-            delivery_result=delivery_result,
+            message_content=formatted_message,
             message_type=message_type,
             sender_employee_id=sender_employee_id
         )
         
-        # Prepare detailed feedback based on delivery results
-        if delivery_result.get("success"):
-            conversation_id = delivery_result.get("conversation_id")
-            tracking_id = tracking_result.get("tracking_id", "unknown")
+        if message_id:
+            # TODO: Implement additional delivery channels
+            # await _send_email_notification(customer_info, formatted_message)
+            # await _send_sms_notification(customer_info, formatted_message)
+            # await _send_push_notification(customer_info, formatted_message)
             
-            success_response = f"""✅ **Message Sent Successfully!**
-
-**Customer:** {customer_name}
-**Message Type:** {message_type.title()}
-**Delivery Method:** Chat message
-**Conversation ID:** {conversation_id}
-**Tracking ID:** {tracking_id}
-
-**Message Preview:**
-{confirmation_data.get('message_content', '')[:150]}{'...' if len(confirmation_data.get('message_content', '')) > 150 else ''}
-
-The customer will see this message the next time they access their chat interface."""
+            logger.info(f"[DELIVER_CUSTOMER_MESSAGE] Message delivered successfully - ID: {message_id}")
             
-            logger.info(f"[CUSTOMER_MESSAGE_CONFIRMATION] Message delivered successfully to {customer_name} (conversation: {conversation_id})")
-            return success_response
+            return {
+                "success": True,
+                "method": "in_system_message",
+                "message_id": message_id,
+                "error": None
+            }
         else:
-            error_details = delivery_result.get("error", "Unknown delivery error")
-            tracking_id = tracking_result.get("tracking_id", "unknown")
+            error_msg = "Failed to create message record"
+            logger.error(f"[DELIVER_CUSTOMER_MESSAGE] {error_msg}")
             
-            failure_response = f"""❌ **Message Delivery Failed**
-
-**Customer:** {customer_name}
-**Message Type:** {message_type.title()}
-**Error:** {error_details}
-**Tracking ID:** {tracking_id}
-
-**Possible Reasons:**
-• Customer doesn't have an active chat account
-• Database connection issues
-• Technical system error
-
-Please try again later or contact technical support if the issue persists."""
+            return {
+                "success": False,
+                "method": None,
+                "message_id": None,
+                "error": error_msg
+            }
             
-            logger.error(f"[CUSTOMER_MESSAGE_CONFIRMATION] Message delivery failed to {customer_name}: {error_details}")
-            return failure_response
+    except Exception as e:
+        error_msg = f"Message delivery error: {str(e)}"
+        logger.error(f"[DELIVER_CUSTOMER_MESSAGE] {error_msg}")
+        
+        return {
+            "success": False,
+            "method": None,
+            "message_id": None,
+            "error": error_msg
+        }
+
+
+async def _create_customer_message_record(
+    customer_info: dict,
+    message_content: str,
+    message_type: str,
+    sender_employee_id: str
+) -> Optional[str]:
+    """
+    Create a message record in the database for the customer to view.
+    
+    Args:
+        customer_info: Customer information dictionary
+        message_content: Message content to store
+        message_type: Type of message
+        sender_employee_id: ID of the sending employee
+        
+    Returns:
+        Message ID if successful, None if failed
+    """
+    try:
+        from database import db_client
+        import uuid
+        
+        # Get customer UUID
+        customer_id = customer_info.get("id") or customer_info.get("customer_id")
+        if not customer_id:
+            logger.error("[CREATE_MESSAGE_RECORD] No valid customer ID found")
+            return None
+        
+        # Create or get user record for the customer
+        user_id = await _get_or_create_customer_user(customer_id, customer_info)
+        if not user_id:
+            logger.error(f"[CREATE_MESSAGE_RECORD] Failed to get user for customer {customer_id}")
+            return None
+        
+        # Create conversation record
+        conversation_id = str(uuid.uuid4())
+        message_id = str(uuid.uuid4())
+        
+        # Insert conversation
+        conversation_data = {
+            "id": conversation_id,
+            "user_id": user_id,
+            "title": f"Message from {message_type.replace('_', ' ').title()}",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        conv_result = db_client.client.table("conversations").insert(conversation_data).execute()
+        if not conv_result.data:
+            logger.error("[CREATE_MESSAGE_RECORD] Failed to create conversation")
+            return None
+        
+        # Insert message
+        message_data = {
+            "id": message_id,
+            "conversation_id": conversation_id,
+            "role": "assistant",
+            "content": message_content,
+            "metadata": {
+                "message_type": message_type,
+                "sender_employee_id": sender_employee_id,
+                "customer_id": customer_id,
+                "delivery_timestamp": datetime.now().isoformat()
+            },
+            "created_at": datetime.now().isoformat()
+        }
+        
+        msg_result = db_client.client.table("messages").insert(message_data).execute()
+        if msg_result.data:
+            logger.info(f"[CREATE_MESSAGE_RECORD] Created message record {message_id} for customer {customer_info.get('name')}")
+            return message_id
+        else:
+            logger.error("[CREATE_MESSAGE_RECORD] Failed to create message record")
+            return None
+            
+    except Exception as e:
+        logger.error(f"[CREATE_MESSAGE_RECORD] Error creating message record: {str(e)}")
+        return None
+
+
+async def _get_or_create_customer_user(customer_id: str, customer_info: dict) -> Optional[str]:
+    """
+    Get or create a user record for a customer.
+    
+    Args:
+        customer_id: Customer UUID from customers table
+        customer_info: Customer information dictionary
+        
+    Returns:
+        User ID (UUID) if successful, None otherwise
+    """
+    try:
+        from database import db_client
+        
+        # Check for existing user
+        existing_user = db_client.client.table("users").select("id").eq("customer_id", customer_id).execute()
+        
+        if existing_user.data:
+            user_id = existing_user.data[0]["id"]
+            logger.debug(f"[GET_OR_CREATE_USER] Found existing user {user_id} for customer {customer_id}")
+            return user_id
+        
+        # Create new user record
+        user_data = {
+            "email": customer_info.get("email", ""),
+            "display_name": customer_info.get("name", "Unknown Customer"),
+            "user_type": "customer",
+            "customer_id": customer_id,
+            "is_active": True,
+            "is_verified": False,
+            "metadata": {
+                "customer_info": {
+                    "phone": customer_info.get("phone", ""),
+                    "company": customer_info.get("company", ""),
+                    "is_for_business": customer_info.get("is_for_business", False)
+                }
+            }
+        }
+        
+        user_result = db_client.client.table("users").insert(user_data).execute()
+        
+        if user_result.data:
+            user_id = user_result.data[0]["id"]
+            logger.info(f"[GET_OR_CREATE_USER] Created user {user_id} for customer {customer_id}")
+            return user_id
+        else:
+            logger.error(f"[GET_OR_CREATE_USER] Failed to create user for customer {customer_id}")
+            return None
         
     except Exception as e:
-        logger.error(f"[CUSTOMER_MESSAGE_CONFIRMATION] Error handling confirmation: {e}")
-        return f"""❌ **Confirmation Processing Error**
+        logger.error(f"[GET_OR_CREATE_USER] Error: {str(e)}")
+        return None
 
-An unexpected error occurred while processing your message confirmation: {str(e)}
 
-Please try the message request again or contact technical support."""
+async def _handle_confirmation_denied(context_data: dict) -> str:
+    """
+    Process denied customer message confirmations from the HITL system.
+    
+    This function is called when the HITL system determines that a confirmation
+    has been denied/cancelled. It provides user-friendly feedback without
+    performing any message delivery.
+    
+    Args:
+        context_data: Context data from the HITLRequest containing message details
+        
+    Returns:
+        String response with cancellation confirmation and details
+    """
+    try:
+        # Extract message details from context for feedback
+        customer_info = context_data.get("customer_info", {})
+        customer_name = customer_info.get("name", "Unknown Customer")
+        customer_email = customer_info.get("email", "no-email")
+        message_content = context_data.get("message_content", "")
+        message_type = context_data.get("message_type", "follow_up")
+        sender_employee_id = context_data.get("sender_employee_id")
+        
+        logger.info(f"[HANDLE_CONFIRMATION_DENIED] Processing denied message for {customer_name} by employee {sender_employee_id}")
+        
+        # Create cancellation response with details
+        cancellation_message = f"""🚫 **Message Cancelled**
+
+**To:** {customer_name} ({customer_email})
+**Type:** {message_type.replace('_', ' ').title()}
+**Status:** Cancelled by User
+**Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+**Cancelled Message:**
+{message_content}
+
+No message was sent to the customer. You can create a new message request anytime."""
+        
+        logger.info(f"[HANDLE_CONFIRMATION_DENIED] Message cancelled for {customer_name} - no delivery performed")
+        return cancellation_message
+    
+    except Exception as e:
+        error_msg = f"Error processing denied customer message: {str(e)}"
+        logger.error(f"[HANDLE_CONFIRMATION_DENIED] {error_msg}")
+        
+        # Return user-friendly error message
+        return f"""🚫 **Message Cancellation Confirmed**
+
+Your customer message request has been cancelled as requested.
+
+If you encounter any issues or need to send a message later, please try again or contact technical support."""
+
+
+async def _handle_input_received(context_data: dict, user_input: str) -> str:
+    """
+    Process customer identifier inputs from HITL system and retry customer lookup.
+    
+    This function is called when the HITL system receives user input in response
+    to a customer-not-found scenario. It attempts to find the customer using the
+    additional information provided and either proceeds with message confirmation
+    or requests more details.
+    
+    Args:
+        context_data: Context data from the HITLRequest containing original request details
+        user_input: Additional customer information provided by the user
+        
+    Returns:
+        String response - either new confirmation request or helpful feedback
+    """
+    try:
+        # Extract original request details from context
+        original_customer_id = context_data.get("original_customer_id", "")
+        message_content = context_data.get("message_content", "")
+        message_type = context_data.get("message_type", "follow_up")
+        sender_employee_id = context_data.get("sender_employee_id")
+        
+        logger.info(f"[HANDLE_INPUT_RECEIVED] Processing customer lookup retry with input: '{user_input[:50]}...' for employee {sender_employee_id}")
+        
+        # Validate user input
+        if not user_input or not user_input.strip():
+            return """❓ **No Additional Information Provided**
+
+Please provide some additional customer details to help me locate them:
+- Customer name variations or full name
+- Email address or phone number  
+- Company name (for business customers)
+- Any other identifying information
+
+Try again with more specific details."""
+        
+        # Attempt customer lookup with the new information
+        customer_info = await _lookup_customer(user_input.strip())
+        
+        if customer_info:
+            # Customer found! Proceed with the original message confirmation flow
+            customer_name = customer_info.get('name', 'Unknown Customer')
+            customer_email = customer_info.get('email', 'no-email')
+            
+            logger.info(f"[HANDLE_INPUT_RECEIVED] Customer found: {customer_name} - proceeding with message confirmation")
+            
+            # Format the message with professional templates
+            formatted_message = _format_message_by_type(message_content, message_type, customer_info)
+            
+            # Create confirmation prompt for the user
+            message_type_display = message_type.replace('_', ' ').title()
+            
+            confirmation_prompt = f"""✅ **Customer Found!**
+
+I found the customer using your additional details.
+
+🔄 **Customer Message Confirmation**
+
+**To:** {customer_name} ({customer_email})
+**Type:** {message_type_display}
+**Message:** {message_content}
+
+**Formatted Preview:**
+{formatted_message}
+
+Do you want to send this message to the customer?"""
+            
+            # Prepare context data for confirmation processing
+            context_data_new = {
+                "tool": "trigger_customer_message",
+                "customer_info": customer_info,
+                "message_content": message_content,
+                "formatted_message": formatted_message,
+                "message_type": message_type,
+                "customer_id": customer_info.get("id") or customer_info.get("customer_id"),
+                "sender_employee_id": sender_employee_id,
+                "requested_by": context_data.get("requested_by"),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Return new confirmation request using HITLRequest
+            return HITLRequest.confirmation(
+                prompt=confirmation_prompt,
+                context=context_data_new,
+                approve_text="send",
+                deny_text="cancel"
+            )
+        
+        else:
+            # Customer still not found - provide helpful feedback with suggestions
+            search_suggestions = _generate_search_suggestions(user_input, original_customer_id)
+            
+            not_found_response = f"""❓ **Customer Still Not Found**
+
+I searched for a customer using:
+- Original identifier: "{original_customer_id}"
+- Additional details: "{user_input}"
+
+But couldn't find a match in our system.
+
+**Possible next steps:**
+{search_suggestions}
+
+**Alternative options:**
+• Double-check the customer information for accuracy
+• Search in the CRM system directly if available
+• Contact the customer to confirm their details
+• Create a new customer record if they're new to our system
+
+Would you like to try again with different information, or would you prefer to handle this differently?"""
+            
+            logger.info(f"[HANDLE_INPUT_RECEIVED] Customer still not found after retry - providing suggestions")
+            return not_found_response
+    
+    except Exception as e:
+        error_msg = f"Error processing customer identifier input: {str(e)}"
+        logger.error(f"[HANDLE_INPUT_RECEIVED] {error_msg}")
+        
+        # Return user-friendly error message
+        return f"""❌ **Search Error**
+
+An error occurred while searching for the customer with your additional information.
+
+**Error Details:** {str(e)}
+
+Please try again with the customer information, or contact technical support if the issue persists."""
+
+
+async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
+    """
+    Enhanced customer lookup using multiple search strategies.
+    
+    Attempts to find customers using various fields and fuzzy matching techniques.
+    
+    Args:
+        customer_identifier: The customer UUID, name, email, or other identifier to look up
+        
+    Returns:
+        Customer info dictionary if found, None otherwise
+    """
+    try:
+        from database import db_client
+        
+        # Clean and prepare search input
+        search_terms = customer_identifier.lower().strip()
+        
+        logger.info(f"[CUSTOMER_LOOKUP] Searching with: '{search_terms}'")
+        
+        # Ensure client is initialized
+        client = db_client.client
+        # Strategy 1: Check if input looks like a UUID first
+        if len(search_terms.replace("-", "")) == 32 and search_terms.count("-") == 4:
+            try:
+                result = client.table("customers").select("*").eq("id", customer_identifier).execute()
+                if result.data:
+                    customer_data = result.data[0]
+                    customer = _format_customer_data(customer_data)
+                    logger.info(f"[CUSTOMER_LOOKUP] Found customer via UUID: {customer.get('name')}")
+                    return customer
+            except Exception as e:
+                logger.debug(f"[CUSTOMER_LOOKUP] UUID search failed: {e}")
+        
+        # Strategy 2: Direct field matches with fuzzy matching
+        search_strategies = [
+            ("name", f"%{search_terms}%"),
+            ("email", f"%{search_terms}%"), 
+            ("phone", f"%{search_terms.replace(' ', '').replace('-', '')}%"),
+            ("company", f"%{search_terms}%")
+        ]
+        
+        for field, pattern in search_strategies:
+            try:
+                result = client.table("customers").select("*").filter(field, "ilike", pattern).limit(1).execute()
+                if result.data:
+                    customer_data = result.data[0]
+                    customer = _format_customer_data(customer_data)
+                    logger.info(f"[CUSTOMER_LOOKUP] Found customer via {field}: {customer.get('name')}")
+                    return customer
+            except Exception as e:
+                logger.debug(f"[CUSTOMER_LOOKUP] Search by {field} failed: {e}")
+                continue
+        
+        # Strategy 3: Multi-word search (split terms and search each)
+        if " " in search_terms:
+            words = search_terms.split()
+            for word in words:
+                if len(word) >= 3:  # Only search meaningful words
+                    try:
+                        result = client.table("customers").select("*").filter("name", "ilike", f"%{word}%").limit(1).execute()
+                        if result.data:
+                            customer_data = result.data[0]
+                            customer = _format_customer_data(customer_data)
+                            logger.info(f"[CUSTOMER_LOOKUP] Found customer via word '{word}': {customer.get('name')}")
+                            return customer
+                    except Exception as e:
+                        logger.debug(f"[CUSTOMER_LOOKUP] Word search for '{word}' failed: {e}")
+                        continue
+        
+        # Strategy 4: Email domain search (if input looks like email)
+        if "@" in search_terms:
+            domain = search_terms.split("@")[-1] if "@" in search_terms else ""
+            if domain:
+                try:
+                    result = client.table("customers").select("*").filter("email", "ilike", f"%@{domain}").limit(1).execute()
+                    if result.data:
+                        customer_data = result.data[0]
+                        customer = _format_customer_data(customer_data)
+                        logger.info(f"[CUSTOMER_LOOKUP] Found customer via email domain '{domain}': {customer.get('name')}")
+                        return customer
+                except Exception as e:
+                    logger.debug(f"[CUSTOMER_LOOKUP] Domain search failed: {e}")
+        
+        logger.info(f"[CUSTOMER_LOOKUP] No customer found with any strategy")
+        return None
+        
+    except Exception as e:
+        logger.error(f"[CUSTOMER_LOOKUP] Error in customer lookup: {e}")
+        return None
+
+
+def _generate_search_suggestions(user_input: str, original_id: str) -> str:
+    """
+    Generate helpful search suggestions based on the failed search attempts.
+    
+    Args:
+        user_input: The user input that failed to find a customer
+        original_id: The original identifier that failed
+        
+    Returns:
+        Formatted string with search suggestions
+    """
+    suggestions = []
+    
+    # Analyze input to provide targeted suggestions
+    input_lower = user_input.lower()
+    
+    if "@" in user_input:
+        suggestions.append("• Try just the name part of the email address")
+        suggestions.append("• Check if the email domain is correct")
+    
+    if any(char.isdigit() for char in user_input):
+        suggestions.append("• If that's a phone number, try without formatting (spaces, dashes)")
+        suggestions.append("• Try searching by name instead of number")
+    
+    if " " in user_input:
+        suggestions.append("• Try just the first or last name separately")
+        suggestions.append("• Check for alternative spellings or nicknames")
+    
+    if len(user_input) < 3:
+        suggestions.append("• Provide more details - longer names or additional information")
+    
+    # General suggestions
+    suggestions.extend([
+        "• Try the customer's company name if they're a business customer",
+        "• Check for recent spelling variations or name changes",
+        "• Look for partial matches in your CRM system directly"
+    ])
+    
+    return "\n".join(suggestions)
+
+
+# DEPRECATED: Use _handle_confirmation_approved() and _handle_confirmation_denied() instead
+# async def _handle_customer_message_confirmation(confirmation_data: dict, human_response: str) -> str:
+#     """DEPRECATED: Legacy confirmation handler. Use _handle_confirmation_approved() and _handle_confirmation_denied() instead."""
 
 
 # =============================================================================
@@ -1560,7 +2041,8 @@ def get_all_tools():
     return [
         simple_query_crm_data,
         simple_rag,
-        trigger_customer_message
+        trigger_customer_message,
+        gather_further_details
     ]
 
 
@@ -1570,14 +2052,16 @@ def get_tools_for_user_type(user_type: str = "employee"):
         # Customers get full RAG access but restricted CRM access
         return [
             simple_query_crm_data,  # Will be internally filtered for table access
-            simple_rag  # Full access
+            simple_rag,  # Full access
+            gather_further_details  # General information gathering
         ]
     elif user_type in ["employee", "admin"]:
         # Employees get full access to all tools including customer messaging
         return [
             simple_query_crm_data,  # Full access
             simple_rag,  # Full access  
-            trigger_customer_message  # Employee only - customer outreach tool
+            trigger_customer_message,  # Employee only - customer outreach tool
+            gather_further_details  # General information gathering
         ]
     else:
         # Unknown users get no tools

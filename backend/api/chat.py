@@ -13,25 +13,19 @@ import re
 
 try:
     from langgraph.errors import GraphInterrupt
-    from langgraph.types import Command
 except ImportError:
     # Fallback for development/testing
     class GraphInterrupt(Exception):
         """Mock GraphInterrupt for development/testing"""
         pass
-    
-    class Command:
-        """Mock Command for development/testing"""
-        def __init__(self, resume=None):
-            self.resume = resume
 
-from models.base import APIResponse, ConfirmationRequest, ConfirmationResponse, DeliveryResult, ConfirmationStatus
+from models.base import APIResponse, ConfirmationStatus
 from database import db_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Models for chat functionality
+# Simplified models for ephemeral confirmation flow
 class MessageRequest(BaseModel):
     """Request model for chat messages"""
     message: str = Field(..., description="User message")
@@ -46,14 +40,36 @@ class ChatResponse(BaseModel):
     is_interrupted: bool = Field(default=False, description="Whether processing was interrupted")
     conversation_id: str = Field(..., description="Conversation ID")
     confirmation_id: Optional[str] = Field(None, description="Confirmation ID if interrupted")
+    error: bool = Field(default=False, description="Whether an error occurred during processing")
+    error_type: Optional[str] = Field(None, description="Type of error for client-side handling")
 
 class PendingConfirmation(BaseModel):
-    """Model for pending confirmations"""
-    confirmation_id: str
-    conversation_id: str
-    message: str
-    created_at: datetime
-    status: ConfirmationStatus
+    """Simplified ephemeral confirmation model"""
+    confirmation_id: str = Field(..., description="Unique confirmation ID")
+    conversation_id: str = Field(..., description="Associated conversation ID")
+    message: str = Field(..., description="Message content requiring confirmation")
+    created_at: str = Field(..., description="Creation timestamp")
+    status: str = Field(default="pending", description="Current status")
+
+# Simple in-memory confirmation tracking (ephemeral)
+# ❌ LEGACY CONFIRMATION SYSTEM - DISABLED
+# The new HITL system handles all confirmations internally.
+# This legacy system is disabled to prevent duplicate confirmations.
+_pending_confirmations: Dict[str, PendingConfirmation] = {}
+
+def clear_conversation_confirmations(conversation_id: str):
+    """Clear all legacy confirmations for a specific conversation."""
+    to_remove = [
+        conf_id for conf_id, conf in _pending_confirmations.items() 
+        if conf.conversation_id == conversation_id
+    ]
+    for conf_id in to_remove:
+        del _pending_confirmations[conf_id]
+    
+    if to_remove:
+        logger.info(f"🔍 [LEGACY_CLEANUP] Cleared {len(to_remove)} stale legacy confirmations for conversation {conversation_id}")
+    else:
+        logger.debug(f"🔍 [LEGACY_CLEANUP] No legacy confirmations to clear for conversation {conversation_id}")
 
 # Initialize the agent (will be lazily loaded)
 _agent_instance = None
@@ -67,231 +83,176 @@ async def get_agent():
         await _agent_instance._ensure_initialized()  # Use the correct method name
     return _agent_instance
 
-# In-memory storage for active confirmations (replace with Redis/database in production)
-_active_confirmations: Dict[str, PendingConfirmation] = {}
-
-# Global tracking for preventing infinite confirmation loops
-_confirmation_creation_tracker: Dict[str, int] = {}  # conversation_id -> creation_count
-MAX_CONFIRMATIONS_PER_CONVERSATION = 3  # Circuit breaker limit
-
 @router.post("/message", response_model=ChatResponse)
 async def post_chat_message(request: MessageRequest, background_tasks: BackgroundTasks):
     """Process a chat message with the agent."""
+    
+    # EMERGENCY LOGGING - Check if function is being called at all
+    print(f"🚨 [EMERGENCY] Function post_chat_message CALLED with message: '{request.message}'")
+    logger.info(f"🚨 [EMERGENCY] Function post_chat_message CALLED with message: '{request.message}'")
+    
     # Generate defaults for optional fields
     conversation_id = request.conversation_id or str(uuid.uuid4())
     user_id = request.user_id or "anonymous"
     
-    logger.info(f"Processing chat message for conversation {conversation_id}")
+    logger.info(f"🔍 [CHAT_DEBUG] Processing message: '{request.message}' for conversation {conversation_id}")
+
+    # STATE-BASED APPROVAL DETECTION: Check if agent is waiting for HITL approval
+    agent = await get_agent()
+    
+    # Check the agent's current state for HITL data using the graph
+    try:
+        # Ensure agent is initialized 
+        await agent._ensure_initialized()
+        
+        # Use the agent's graph to get current state (ASYNC method)
+        current_state = await agent.graph.aget_state(config={
+            "configurable": {"thread_id": conversation_id}
+        })
+        
+        # Extract HITL state information
+        hitl_data = None
+        is_awaiting_hitl = False
+        
+        if current_state and hasattr(current_state, 'values'):
+            state_values = current_state.values or {}
+            hitl_data = state_values.get('hitl_data')
+            # Agent is awaiting HITL response when hitl_data exists and awaiting_response is True
+            is_awaiting_hitl = hitl_data and isinstance(hitl_data, dict) and hitl_data.get('awaiting_response', False)
+            
+        logger.info(f"🔍 [CHAT_DEBUG] HITL state check: hitl_data={bool(hitl_data)}, awaiting_hitl={is_awaiting_hitl}")
+        if hitl_data:
+            logger.info(f"🔍 [CHAT_DEBUG] HITL data type: {hitl_data.get('type')}, awaiting_response: {hitl_data.get('awaiting_response')}")
+            logger.info(f"🔍 [CHAT_DEBUG] HITL data keys: {list(hitl_data.keys())}")
+            logger.info(f"🔍 [CHAT_DEBUG] HITL context: {hitl_data.get('context', {})}")
+            
+    except Exception as e:
+        logger.warning(f"🔍 [CHAT_DEBUG] Could not check agent HITL state: {e}")
+        hitl_data = None
+        is_awaiting_hitl = False
+
+    # Detect approval messages when agent is waiting for HITL response
+    approval_keywords = ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'proceed']
+    is_approval_message = any(keyword in request.message.lower().strip() for keyword in approval_keywords)
+    
+    logger.info(f"🔍 [CHAT_DEBUG] State-based approval detection: message='{request.message}', is_approval={is_approval_message}, awaiting_hitl={is_awaiting_hitl}")
+
+    if is_awaiting_hitl and is_approval_message:
+        logger.info(f"🔍 [CHAT_DEBUG] STATE-BASED APPROVAL DETECTED: Agent is awaiting HITL response, passing approval to agent")
+        
+        # STATE-BASED APPROACH: Resume interrupted conversation with approval response
+        logger.info(f"🔍 [CHAT_DEBUG] ✅ RESUMING HITL CONVERSATION with approval: '{request.message}'")
+        
+        processed_result = await agent.resume_interrupted_conversation(
+            conversation_id=conversation_id,
+            user_response=request.message
+        )
+        
+        # Convert agent result to API format
+        processed_result = await agent._process_agent_result_for_api(processed_result, conversation_id)
+        
+        logger.info(f"🔍 [CHAT_DEBUG] Agent processed approval. Interrupted: {processed_result.get('is_interrupted', False)}")
+        
+        # Return the processed approval response
+        agent_response_message = processed_result.get("message", "I've processed your approval.")
+        return ChatResponse(
+            message=agent_response_message,
+            sources=processed_result.get("sources", []),
+            is_interrupted=processed_result.get("is_interrupted", False),
+            conversation_id=processed_result.get("conversation_id", conversation_id)
+        )
 
     # Circuit Breaker: Check for excessive confirmation creation
-    confirmation_count = _confirmation_creation_tracker.get(conversation_id, 0)
-    if confirmation_count >= MAX_CONFIRMATIONS_PER_CONVERSATION:
-        logger.error(f"Circuit breaker triggered: too many confirmations for conversation {conversation_id}")
-        # Clear all confirmations for this conversation to reset the cycle
-        for conf_id, confirmation in list(_active_confirmations.items()):
-            if confirmation.conversation_id == conversation_id:
-                logger.info(f"Circuit breaker clearing confirmation {conf_id}")
-                del _active_confirmations[conf_id]
-        # Reset the counter
-        _confirmation_creation_tracker[conversation_id] = 0
+    # confirmation_count = _confirmation_creation_tracker.get(conversation_id, 0) # This line is removed
+    # if confirmation_count >= MAX_CONFIRMATIONS_PER_CONVERSATION: # This line is removed
+    #     logger.error(f"Circuit breaker triggered: too many confirmations for conversation {conversation_id}") # This line is removed
+    #     # Clear all confirmations for this conversation to reset the cycle # This line is removed
+    #     storage = get_confirmation_storage() # This line is removed
+    #     conv_confirmations = storage.get_confirmations_by_conversation(conversation_id) # This line is removed
+    #     for confirmation in conv_confirmations: # This line is removed
+    #         logger.info(f"Circuit breaker clearing confirmation {confirmation.confirmation_id}") # This line is removed
+    #         storage.delete_confirmation(confirmation.confirmation_id) # This line is removed
+    #     # Reset the counter # This line is removed
+    #     _confirmation_creation_tracker[conversation_id] = 0 # This line is removed
         
+    #     return ChatResponse( # This line is removed
+    #         message="I detected a system issue with confirmations. The conversation has been reset. Please try your request again.", # This line is removed
+    #         sources=[], # This line is removed
+    #         is_interrupted=False, # This line is removed
+    #         conversation_id=conversation_id # This line is removed
+    #     ) # This line is removed
+
+    # Regular message processing - no approval detected
+    logger.info(f"🔍 [CHAT_DEBUG] REGULAR: Processing as regular message")
+    
+    # Use clean semantic interface - no LangGraph details in API layer
+    processed_result = await agent.process_user_message(
+        user_query=request.message,
+        conversation_id=conversation_id,
+        user_id=user_id
+    )
+    
+    logger.info(f"🔍 [CHAT_DEBUG] Agent processing completed. Interrupted: {processed_result.get('is_interrupted', False)}")
+    
+    # ✅ NEW HITL SYSTEM: Clean semantic interface handling
+    # The new HITL system is self-contained and handles all confirmation logic internally.
+    # No need to create additional API-layer confirmations - just return the agent's response.
+    
+    if processed_result.get("is_interrupted", False):
+        logger.info(f"🔍 [CHAT_DEBUG] ✅ HITL INTERRUPT: Agent requires human interaction, returning prompt directly")
+        
+        # Return HITL prompt directly - no additional confirmation creation needed
+        hitl_prompt = processed_result.get("message", "Confirmation required")
         return ChatResponse(
-            message="I detected a system issue with confirmations. The conversation has been reset. Please try your request again.",
-            sources=[],
-            is_interrupted=False,
-            conversation_id=conversation_id
-        )
-
-    # Get the agent instance
-    agent = await get_agent()
-
-    # Check if there are pending confirmations (interrupted state) for this conversation
-    pending_confirmations = [
-        req for req in _active_confirmations.values() 
-        if req.conversation_id == conversation_id and req.status == ConfirmationStatus.PENDING
-    ]
-    
-    if pending_confirmations:
-        logger.info(f"Found {len(pending_confirmations)} pending confirmations, resuming LangGraph execution with user message: '{request.message}'")
-        
-        # Mark confirmations as handled (the agent will determine the actual action)
-        for confirmation in pending_confirmations:
-            confirmation.status = ConfirmationStatus.APPROVED  # Generic status, agent handles the logic
-            _active_confirmations[confirmation.confirmation_id] = confirmation
-        
-        # Resume LangGraph execution using proper Command pattern following best practices
-        try:
-            logger.info(f"Resuming LangGraph execution with Command(resume='{request.message}')")
-            
-            # CRITICAL FIX: Use agent.graph.ainvoke (not agent.invoke) for Command objects
-            # This fixes the AsyncPostgresSaver threading issue that causes resume failures
-            result = await agent.graph.ainvoke(
-                Command(resume=request.message),  # Direct Command object
-                config={
-                    "configurable": {"thread_id": conversation_id}
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"Error resuming LangGraph execution with Command: {e}")
-            
-            # Clear any stale confirmations to prevent infinite loops
-            logger.info("Cleaning up stale confirmations due to resume failure")
-            for conf_id, confirmation in list(_active_confirmations.items()):
-                if confirmation.conversation_id == conversation_id:
-                    logger.info(f"Removing stale confirmation {conf_id}")
-                    del _active_confirmations[conf_id]
-            
-            # If Command pattern fails, DO NOT fall back to regular processing
-            # This prevents the infinite loop of creating new interrupts
-            logger.warning("Command resume failed - returning error instead of fallback processing")
-            return ChatResponse(
-                message="I encountered an issue processing your confirmation. Please try again.",
-                sources=[],
-                is_interrupted=False,
-                conversation_id=conversation_id
-            )
-    else:
-        # No pending confirmations, process as regular message
-        logger.info("No pending confirmations found, processing as regular message")
-        result = await agent.invoke(
-            user_query=request.message,
-            conversation_id=conversation_id,
-            user_id=user_id
-        )
-
-    # Check for LangGraph interrupt state following best practices
-    logger.info(f"Agent result keys: {list(result.keys()) if result else 'None'}")
-    
-    # LangGraph best practice: Check for interrupted state using '__interrupt__' field
-    is_interrupted = False
-    interrupt_message = ""
-    
-    if result:
-        # Method 1: Check for LangGraph's actual interrupt indicator
-        if isinstance(result, dict) and '__interrupt__' in result:
-            logger.info(f"LangGraph interrupt detected: __interrupt__ field found")
-            is_interrupted = True
-        elif hasattr(result, '__interrupt__'):
-            logger.info(f"LangGraph interrupt detected: __interrupt__ attribute found")
-            is_interrupted = True
-    
-    # If interrupted, extract the interrupt message
-    if is_interrupted and result:
-        logger.info(f"Extracting interrupt message from result...")
-        
-        if isinstance(result, dict) and '__interrupt__' in result:
-            interrupt_data = result['__interrupt__']
-            logger.info(f"__interrupt__ field type: {type(interrupt_data)}")
-            logger.info(f"__interrupt__ field content: {str(interrupt_data)[:300]}...")
-            
-            if isinstance(interrupt_data, list) and len(interrupt_data) > 0:
-                # Handle list of Interrupt objects (LangGraph's actual format)
-                first_interrupt = interrupt_data[0]
-                logger.info(f"First interrupt object type: {type(first_interrupt)}")
-                if hasattr(first_interrupt, 'value'):
-                    interrupt_message = str(first_interrupt.value)
-                    logger.info(f"Found interrupt message in __interrupt__[0].value field")
-
-    # Handle LangGraph interrupt
-    if is_interrupted and interrupt_message:
-        logger.info(f"Processing LangGraph interrupt for conversation {conversation_id}")
-
-        # Circuit Breaker: Track confirmation creation
-        if conversation_id not in _confirmation_creation_tracker:
-            _confirmation_creation_tracker[conversation_id] = 0
-        _confirmation_creation_tracker[conversation_id] += 1
-        
-        logger.info(f"Confirmation creation count for {conversation_id}: {_confirmation_creation_tracker[conversation_id]}")
-
-        # Create confirmation object
-        confirmation = PendingConfirmation(
-            confirmation_id=str(uuid.uuid4()),
-            conversation_id=conversation_id,
-            message=interrupt_message,
-            created_at=datetime.now(),
-            status=ConfirmationStatus.PENDING
-        )
-
-        # Store in active confirmations
-        _active_confirmations[confirmation.confirmation_id] = confirmation
-        logger.info(f"Created confirmation {confirmation.confirmation_id}")
-
-        return ChatResponse(
-            message=interrupt_message,
-            sources=[],
+            message=hitl_prompt,
+            sources=processed_result.get("sources", []),
             is_interrupted=True,
-            confirmation_id=confirmation.confirmation_id,
-            conversation_id=conversation_id
+            conversation_id=processed_result.get("conversation_id", conversation_id),
+            error=False,  # HITL interactions are not errors
+            error_type=None
         )
-
-    # Check if confirmation_data has been cleared (HITL completed successfully)
-    # Reset confirmation creation counter on successful completion
-    confirmation_data = result.get("confirmation_data")
-    confirmation_result = result.get("confirmation_result")
-
-    if confirmation_result and not confirmation_data:
-        logger.info(f"HITL completed with result: {confirmation_result} - resetting confirmation counter")
-        # Reset the circuit breaker counter on successful completion
-        _confirmation_creation_tracker[conversation_id] = 0
+    
+    # Normal conversation response (no interruption)
+    logger.info(f"🔍 [CHAT_DEBUG] ✅ NORMAL RESPONSE: Returning agent response")
+    
+    # Clear any stale legacy confirmations for completed conversations
+    clear_conversation_confirmations(conversation_id)
+    
+    agent_response = processed_result.get("message", "I apologize, but I encountered an issue processing your request.")
+    
+    # Check if there was an error in the agent processing
+    has_error = processed_result.get("error", False)
+    error_type = None
+    if has_error:
+        logger.warning(f"🔍 [CHAT_DEBUG] ⚠️ ERROR STATE: Agent returned error state")
+        error_details = processed_result.get("error_details", "")
         
-        # Clean up any pending confirmations for this conversation
-        for conf_id, confirmation in list(_active_confirmations.items()):
-            if confirmation.conversation_id == conversation_id:
-                logger.info(f"Cleaning up confirmation {conf_id} after HITL completion")
-                del _active_confirmations[conf_id]
-
-    # Normal processing - extract final message
-    final_message = "I apologize, but I encountered an issue processing your request."
-    sources = []
+        # Determine error type for client-side handling
+        if "Failed to resume conversation" in error_details:
+            error_type = "resume_failed"
+        elif "conversation session has expired" in agent_response.lower():
+            error_type = "session_expired"
+        elif "technical issue" in agent_response.lower():
+            error_type = "technical_error"
+        else:
+            error_type = "general_error"
     
-    if result and result.get('messages'):
-        logger.info(f"Found {len(result['messages'])} messages in result")
-        # Log message details for debugging
-        for i, msg in enumerate(result['messages']):
-            msg_type = getattr(msg, 'type', 'no_type')
-            msg_role = getattr(msg, 'role', 'no_role')
-            content_preview = str(getattr(msg, 'content', 'no_content'))[:50] + "..."
-            logger.info(f"Message {i}: type={msg_type}, role={msg_role}, content={content_preview}")
-        
-        # Get the last AI message
-        for msg in reversed(result['messages']):
-            # Check for LangChain message types (ai, assistant)
-            if hasattr(msg, 'type') and msg.type in ['ai', 'assistant'] and hasattr(msg, 'content'):
-                final_message = msg.content
-                break
-            elif hasattr(msg, 'role') and msg.role in ['ai', 'assistant'] and hasattr(msg, 'content'):
-                final_message = msg.content
-                break
-            elif hasattr(msg, 'content') and not hasattr(msg, 'type') and not hasattr(msg, 'role'):
-                # Fallback for messages without type or role
-                final_message = str(msg.content)
-                break
-    
-    logger.info(f"Final message extracted: {final_message[:100]}...")
-    logger.info(f"Final message type: {type(final_message)}")
-    
-    # Extract sources if available
-    if result and result.get('retrieved_docs'):
-        sources = [
-            {
-                "content": doc.get('content', '')[:500],
-                "metadata": doc.get('metadata', {})
-            }
-            for doc in result['retrieved_docs'][:3]  # Limit to top 3
-        ]
-
     return ChatResponse(
-        message=final_message,
-        sources=sources,
+        message=agent_response,
+        sources=processed_result.get("sources", []),
         is_interrupted=False,
-        conversation_id=conversation_id
+        conversation_id=processed_result.get("conversation_id", conversation_id),
+        error=has_error,
+        error_type=error_type
     )
 
 @router.get("/confirmation/pending/{conversation_id}")
 async def get_pending_confirmations(conversation_id: str):
     """Get pending confirmations for a conversation"""
     logger.info(f"Fetching pending confirmations for conversation {conversation_id}")
+    
+    # Log current confirmation state before filtering
+    logger.debug(f"🔍 [CONFIRMATION_STATE] BEFORE_PENDING_FETCH for conversation {conversation_id}")
     
     # Check if conversation still exists in database
     try:
@@ -303,47 +264,80 @@ async def get_pending_confirmations(conversation_id: str):
         logger.warning(f"Error checking conversation {conversation_id}: {e}")
         # Continue anyway - return empty confirmations
     
-    pending = [
+    # Get all confirmations for this conversation from Redis
+    # storage = get_confirmation_storage() # This line is removed
+    all_conv_confirmations = [
+        conf for conf in _pending_confirmations.values()
+        if conf.conversation_id == conversation_id
+    ]
+    
+    logger.info(f"🔍 [PENDING_CONFIRMATIONS] Found {len(all_conv_confirmations)} total confirmations for conversation {conversation_id}")
+    for conf in all_conv_confirmations:
+        status_value = conf.status.value if hasattr(conf.status, 'value') else conf.status
+        logger.info(f"🔍 [PENDING_CONFIRMATIONS]   - {conf.confirmation_id}: {status_value} (requested: {conf.created_at})")
+    
+    # Filter for pending only
+    pending_confirmations = [
         {
             "confirmation_id": confirmation.confirmation_id,
             "message": confirmation.message,
-            "created_at": confirmation.created_at.isoformat(),
-            "status": confirmation.status.value
+            "created_at": confirmation.created_at,
+            "status": confirmation.status
         }
-        for confirmation in _active_confirmations.values()
-        if (confirmation.conversation_id == conversation_id and 
-            confirmation.status == ConfirmationStatus.PENDING)
+        for confirmation in all_conv_confirmations
     ]
     
-    return {"success": True, "data": pending}
+    logger.info(f"🔍 [PENDING_CONFIRMATIONS] Returning {len(pending_confirmations)} pending confirmations to frontend")
+    if pending_confirmations:
+        for p in pending_confirmations:
+            logger.info(f"🔍 [PENDING_CONFIRMATIONS] Returning: {p['confirmation_id']} - {p['status']}")
+    else:
+        logger.info(f"🔍 [PENDING_CONFIRMATIONS] No pending confirmations found for conversation {conversation_id}")
+    
+    return {"success": True, "data": pending_confirmations}
 
 @router.post("/confirmation/{confirmation_id}/respond")
 async def respond_to_confirmation(confirmation_id: str, response: Dict[str, Any]):
-    """Respond to a pending confirmation"""
+    """Respond to a pending confirmation and resume the agent conversation"""
     logger.info(f"Processing confirmation response: {confirmation_id}")
     
-    if confirmation_id not in _active_confirmations:
+    confirmation = _pending_confirmations.get(confirmation_id)
+    if not confirmation:
         raise HTTPException(status_code=404, detail="Confirmation not found")
-    
-    confirmation = _active_confirmations[confirmation_id]
     
     # Update confirmation status
     action = response.get('action', 'deny')
-    if action == 'approve':
-        confirmation.status = ConfirmationStatus.APPROVED
-    else:
-        confirmation.status = ConfirmationStatus.DENIED
+    new_status = ConfirmationStatus.APPROVED if action == 'approve' else ConfirmationStatus.DENIED
     
-    _active_confirmations[confirmation_id] = confirmation
-    
-    # Reset confirmation creation counter on response
-    conversation_id = confirmation.conversation_id
-    if conversation_id in _confirmation_creation_tracker:
-        _confirmation_creation_tracker[conversation_id] = 0
-    
+    # Add to in-memory tracking
+    confirmation.status = new_status
     logger.info(f"Confirmation {confirmation_id} {action}ed")
     
-    return {"success": True, "message": f"Confirmation {action}ed"}
+    # CRITICAL FIX: Resume the interrupted agent conversation using clean semantic interface
+    try:
+        agent = await get_agent()
+        conversation_id = confirmation.conversation_id
+        
+        logger.info(f"🔄 Resuming agent conversation {conversation_id} with response: {action}")
+        
+        # Use clean semantic interface - no LangGraph details in API layer
+        result = await agent.resume_interrupted_conversation(
+            conversation_id=conversation_id,
+            user_response=action
+        )
+        
+        logger.info(f"✅ Agent conversation resumed successfully. Keys: {list(result.keys()) if result else 'None'}")
+        
+        # Remove the confirmation from pending list since it's now processed
+        if confirmation_id in _pending_confirmations:
+            del _pending_confirmations[confirmation_id]
+            logger.info(f"🧹 Removed processed confirmation {confirmation_id} from pending list")
+        
+        return {"success": True, "message": f"Confirmation {action}ed and conversation resumed"}
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to resume agent conversation after confirmation: {e}")
+        return {"success": True, "message": f"Confirmation {action}ed (warning: conversation resumption failed)"}
 
 @router.delete("/conversation/{conversation_id}", response_model=APIResponse)
 async def clear_conversation(conversation_id: str):
@@ -375,6 +369,9 @@ async def clear_conversation(conversation_id: str):
         deleted_conversations = len(conversation_result.data or [])
         logger.info(f"Deleted {deleted_conversations} conversations with ID {conversation_id}")
         
+        # Clear in-memory confirmations for this conversation
+        clear_conversation_confirmations(conversation_id)
+
         return APIResponse.success_response(
             data={
                 "conversation_id": conversation_id,
@@ -434,6 +431,10 @@ async def clear_all_user_conversations(user_id: str):
         deleted_conversations = len(conversations_delete_result.data or [])
         logger.info(f"Deleted {deleted_conversations} conversations for user {user_id}")
         
+        # Clear in-memory confirmations for all conversations of this user
+        for conv_id in conversation_ids:
+            clear_conversation_confirmations(conv_id)
+
         return APIResponse.success_response(
             data={
                 "user_id": user_id,
