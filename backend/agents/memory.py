@@ -464,6 +464,152 @@ class ContextWindowManager:
             "available_for_input": self.model_limits.get(model, 6000)
         }
 
+    def smart_trim_messages_preserving_tool_pairs(
+        self,
+        messages: List[BaseMessage],
+        max_messages: int
+    ) -> List[BaseMessage]:
+        """
+        Smart trim messages while preserving tool_calls/tool message pairs.
+        
+        This function ensures that:
+        1. System messages are always preserved
+        2. Tool calls and their corresponding tool responses are kept together
+        3. Messages are trimmed from the oldest first while respecting pairs
+        4. The result never violates OpenAI's message format requirements
+        
+        Args:
+            messages: List of messages to trim
+            max_messages: Maximum number of messages to keep
+            
+        Returns:
+            List of trimmed messages that preserve tool call pairs
+        """
+        if len(messages) <= max_messages:
+            return messages
+            
+        # Separate system messages from conversation messages
+        system_messages = []
+        conversation_messages = []
+        
+        for msg in messages:
+            if hasattr(msg, 'type') and msg.type == 'system':
+                system_messages.append(msg)
+            else:
+                conversation_messages.append(msg)
+        
+        # Calculate how many conversation messages we can keep
+        # (total limit minus system messages)
+        max_conversation_messages = max_messages - len(system_messages)
+        
+        if max_conversation_messages <= 0:
+            # If we can't fit any conversation messages, just return system messages
+            return system_messages
+            
+        if len(conversation_messages) <= max_conversation_messages:
+            # No trimming needed for conversation messages
+            return system_messages + conversation_messages
+        
+        # We need to trim conversation messages while preserving tool pairs
+        trimmed_conversation = self._trim_preserving_tool_pairs(
+            conversation_messages, 
+            max_conversation_messages
+        )
+        
+        return system_messages + trimmed_conversation
+    
+    def _trim_preserving_tool_pairs(
+        self, 
+        messages: List[BaseMessage], 
+        max_messages: int
+    ) -> List[BaseMessage]:
+        """
+        Trim messages while preserving tool_calls/tool pairs.
+        
+        Strategy:
+        1. Start from the end (most recent) and work backwards
+        2. Keep complete tool_calls -> tool pairs together
+        3. If we encounter an orphaned tool message, skip it
+        4. If we encounter tool_calls without room for the tool response, skip both
+        """
+        if len(messages) <= max_messages:
+            return messages
+            
+        result = []
+        i = len(messages) - 1  # Start from the end
+        
+        while i >= 0 and len(result) < max_messages:
+            current_msg = messages[i]
+            
+            # Check if this is a tool message
+            if hasattr(current_msg, 'type') and current_msg.type == 'tool':
+                # Look for the preceding message with tool_calls
+                preceding_msg = None
+                if i > 0:
+                    preceding_msg = messages[i - 1]
+                
+                # Check if the preceding message has tool_calls that match this tool response
+                if (preceding_msg and 
+                    hasattr(preceding_msg, 'tool_calls') and 
+                    preceding_msg.tool_calls):
+                    
+                    # We have a tool pair - check if we have room for both
+                    if len(result) + 2 <= max_messages:
+                        # Add both messages (tool response first since we're building backwards)
+                        result.insert(0, current_msg)  # tool message
+                        result.insert(0, preceding_msg)  # tool_calls message
+                        i -= 2  # Skip both messages
+                    else:
+                        # Not enough room for both, so skip this pair
+                        i -= 2
+                else:
+                    # Orphaned tool message - skip it
+                    i -= 1
+            
+            # Check if this is a message with tool_calls
+            elif (hasattr(current_msg, 'tool_calls') and 
+                  current_msg.tool_calls and 
+                  i < len(messages) - 1):
+                
+                # Look for the following tool message(s)
+                tool_messages = []
+                j = i + 1
+                
+                # Collect all immediate tool responses
+                while (j < len(messages) and 
+                       hasattr(messages[j], 'type') and 
+                       messages[j].type == 'tool'):
+                    tool_messages.append(messages[j])
+                    j += 1
+                
+                if tool_messages:
+                    # We have a tool_calls + tool pair(s)
+                    total_pair_size = 1 + len(tool_messages)  # tool_calls + all tool responses
+                    
+                    if len(result) + total_pair_size <= max_messages:
+                        # Add all messages in the pair
+                        for tool_msg in reversed(tool_messages):  # Insert in reverse order
+                            result.insert(0, tool_msg)
+                        result.insert(0, current_msg)  # tool_calls message
+                        i -= 1  # We'll handle the tool messages when we get to them
+                    else:
+                        # Not enough room for the complete pair, skip it
+                        i -= 1
+                else:
+                    # tool_calls message without following tool responses
+                    # This might be the last message in conversation, so include it
+                    if len(result) + 1 <= max_messages:
+                        result.insert(0, current_msg)
+                    i -= 1
+            
+            else:
+                # Regular message (human, ai without tool_calls, etc.)
+                if len(result) + 1 <= max_messages:
+                    result.insert(0, current_msg)
+                i -= 1
+        
+        return result
+
 
 # =============================================================================
 # DATABASE MANAGEMENT (Simplified Supabase Integration)

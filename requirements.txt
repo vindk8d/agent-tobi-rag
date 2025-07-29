@@ -11,6 +11,7 @@ pydantic-settings>=2.1.0
 # Database and Supabase
 supabase>=2.3.0
 redis>=5.0.1
+psycopg2-binary>=2.9.5
 
 # OpenAI and language model dependencies  
 openai>=1.10.0

@@ -884,7 +884,12 @@ This information from your past interactions may help me better assist you.
             # =================================================================
             logger.info("[CA_MEMORY_STORE] Step 1: Storing all customer conversation messages")
             
-            if messages and config:
+            # FIX: Create proper config from conversation_id if not provided
+            working_config = config
+            if not config or config is False:
+                working_config = {"configurable": {"thread_id": str(conversation_id)}}
+            
+            if messages and working_config:
                 stored_count = 0
                 # Store all messages in chronological order to preserve full conversation flow
                 for msg in messages:
@@ -899,7 +904,7 @@ This information from your past interactions may help me better assist you.
                     if msg_type in ["human", "ai"]:
                         await self.memory_manager.store_message_from_agent(
                             message=msg,
-                            config=config,
+                            config=working_config,
                             agent_type="rag",
                             user_id=user_id,
                         )
@@ -1455,14 +1460,15 @@ Failed to deliver your message to {customer_name}.
 
                 # CRITICAL: Implement LangGraph-style moving context window
                 # Trim processing_messages to prevent context window bloat while preserving database records
+                # Use smart trimming that preserves tool_calls/tool message pairs
                 max_context_messages = getattr(self.settings, 'memory_max_messages', 12)
                 
                 if len(processing_messages) > max_context_messages:
-                    # Keep system message + recent messages within limit
-                    system_msg = processing_messages[0] if processing_messages and isinstance(processing_messages[0], SystemMessage) else None
-                    recent_messages = processing_messages[-(max_context_messages-1):] if system_msg else processing_messages[-max_context_messages:]
-                    
-                    trimmed_messages = ([system_msg] + recent_messages) if system_msg else recent_messages
+                    from agents.memory import context_manager
+                    trimmed_messages = context_manager.smart_trim_messages_preserving_tool_pairs(
+                        processing_messages, 
+                        max_context_messages
+                    )
                     logger.info(f"[EMPLOYEE_AGENT_NODE] 🔄 Applied moving context window: {len(processing_messages)} → {len(trimmed_messages)} messages")
                     processing_messages = trimmed_messages
 
@@ -1779,14 +1785,15 @@ Be helpful, professional, and make full use of your available tools to assist wi
 
                 # CRITICAL: Implement LangGraph-style moving context window
                 # Trim processing_messages to prevent context window bloat while preserving database records
+                # Use smart trimming that preserves tool_calls/tool message pairs
                 max_context_messages = getattr(self.settings, 'memory_max_messages', 12)
                 
                 if len(processing_messages) > max_context_messages:
-                    # Keep system message + recent messages within limit
-                    system_msg = processing_messages[0] if processing_messages and isinstance(processing_messages[0], SystemMessage) else None
-                    recent_messages = processing_messages[-(max_context_messages-1):] if system_msg else processing_messages[-max_context_messages:]
-                    
-                    trimmed_messages = ([system_msg] + recent_messages) if system_msg else recent_messages
+                    from agents.memory import context_manager
+                    trimmed_messages = context_manager.smart_trim_messages_preserving_tool_pairs(
+                        processing_messages, 
+                        max_context_messages
+                    )
                     logger.info(f"[CUSTOMER_AGENT_NODE] 🔄 Applied moving context window: {len(processing_messages)} → {len(trimmed_messages)} messages")
                     processing_messages = trimmed_messages
 
@@ -1888,7 +1895,7 @@ Be helpful, professional, and make full use of your available tools to assist wi
             # Update the original messages with the AI responses (excluding system message)
             updated_messages = list(original_messages)
             for msg in processing_messages[1:]:  # Skip system message
-                if hasattr(msg, "type") and msg.type in ["ai", "tool"]:
+                if hasattr(msg, "type") and msg.type in ["ai", "tool", "human"]:
                     updated_messages.append(msg)
 
             # Extract thread_id from config if needed for conversation_id
@@ -2453,12 +2460,13 @@ Be helpful, professional, and make full use of your available tools to assist wi
         """Get the customer-specific system prompt with restricted capabilities."""
         return f"""You are a helpful vehicle sales assistant designed specifically for customers looking for vehicle information.
 
-You have access to limited tools for customer inquiries:
+You have access to specialized tools for customer inquiries:
 - simple_rag: Search company documents and vehicle information
-- simple_query_crm_data: Query vehicle specifications and pricing (RESTRICTED ACCESS)
+- simple_query_crm_data: Query vehicle specifications, pricing, and inventory data
 
-**IMPORTANT - Your Access Restrictions:**
-- You can ONLY help with vehicle specifications, models, features, and pricing information
+**IMPORTANT - Your Access Capabilities:**
+- You CAN help with vehicle specifications, models, features, and pricing information
+- You CAN access vehicle inventory and availability data
 - You CANNOT access employee information, customer records, sales opportunities, or internal business data
 - You CANNOT provide information about other customers or internal company operations
 
@@ -2466,7 +2474,7 @@ You have access to limited tools for customer inquiries:
 - Vehicle models, specifications, and features
 - Pricing information and available discounts
 - Vehicle comparisons and recommendations
-- Inventory availability
+- **Inventory availability and stock quantities**
 - Vehicle features and options
 
 **What you CANNOT help with:**
@@ -2485,7 +2493,8 @@ Available tools:
 
 Guidelines:
 - Use simple_rag for comprehensive document-based answers about vehicles and company information
-- Use simple_query_crm_data for specific vehicle specifications and pricing questions  
+- **Use simple_query_crm_data for vehicle specifications, pricing, and inventory availability questions**
+- For inventory questions like "How many [model] are available?", always use simple_query_crm_data to check current stock
 - Be helpful and customer-focused in your responses
 - If asked about restricted data, redirect to vehicle and pricing topics
 - Provide source citations when documents are found
