@@ -21,7 +21,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 # Add the backend directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
-from agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+from agents.tobi_sales_copilot.agent import UnifiedToolCallingRAGAgent
 from agents.tobi_sales_copilot.state import AgentState
 from agents.tools import (
     trigger_customer_message,

@@ -20,7 +20,7 @@ backend_path = pathlib.Path(__file__).parent.parent / "backend"
 if str(backend_path) not in sys.path:
     sys.path.insert(0, str(backend_path))
 
-from agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+from agents.tobi_sales_copilot.agent import UnifiedToolCallingRAGAgent
 from agents.tobi_sales_copilot.state import AgentState
 from agents.hitl import HITLRequest
 from langchain_core.messages import HumanMessage, AIMessage
@@ -33,7 +33,7 @@ async def create_test_agent():
     agent = UnifiedToolCallingRAGAgent()
     
     # Mock the settings and initialization
-    with patch('agents.tobi_sales_copilot.rag_agent.get_settings') as mock_settings:
+    with patch('agents.tobi_sales_copilot.agent.get_settings') as mock_settings:
         mock_settings.return_value = AsyncMock()
         mock_settings.return_value.openai_chat_model = "gpt-4"
         mock_settings.return_value.openai_temperature = 0.1
@@ -45,7 +45,7 @@ async def create_test_agent():
         mock_settings.return_value.memory.max_messages = 20
         
         # Mock memory manager with real checkpointer behavior
-        with patch('agents.tobi_sales_copilot.rag_agent.memory_manager') as mock_memory:
+        with patch('agents.tobi_sales_copilot.agent.memory_manager') as mock_memory:
             mock_memory._ensure_initialized = AsyncMock()
             
             # Mock checkpointer for state persistence during interrupts
@@ -55,11 +55,11 @@ async def create_test_agent():
             mock_memory.get_checkpointer = AsyncMock(return_value=mock_checkpointer)
             
             # Mock memory scheduler
-            with patch('agents.tobi_sales_copilot.rag_agent.memory_scheduler') as mock_scheduler:
+            with patch('agents.tobi_sales_copilot.agent.memory_scheduler') as mock_scheduler:
                 mock_scheduler.start = AsyncMock()
                 
                 # Mock database client
-                with patch('agents.tobi_sales_copilot.rag_agent.db_client'):
+                with patch('agents.tobi_sales_copilot.agent.db_client'):
                     await agent._ensure_initialized()
     
     return agent

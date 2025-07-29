@@ -10,7 +10,7 @@ Key components:
 """
 
 from .tobi_sales_copilot.state import ConversationMemory
-from .tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+from .tobi_sales_copilot.agent import UnifiedToolCallingRAGAgent
 
 # Export the key classes for easy importing
 __all__ = [

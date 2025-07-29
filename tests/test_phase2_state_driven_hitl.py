@@ -29,7 +29,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 # Add the backend directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
-from agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+from agents.tobi_sales_copilot.agent import UnifiedToolCallingRAGAgent
 from agents.tobi_sales_copilot.state import AgentState
 from agents.tools import (
     trigger_customer_message,
@@ -332,7 +332,7 @@ class TestDedicatedHITLNode:
             confirmation_data=confirmation_data
         )
         
-        with patch('agents.tobi_sales_copilot.rag_agent.interrupt') as mock_interrupt:
+        with patch('agents.tobi_sales_copilot.agent.interrupt') as mock_interrupt:
             with patch.object(agent, '_execute_customer_message_delivery') as mock_delivery:
                 # Mock human approval
                 mock_interrupt.return_value = "approve"
@@ -384,7 +384,7 @@ class TestDedicatedHITLNode:
             confirmation_data=confirmation_data
         )
         
-        with patch('agents.tobi_sales_copilot.rag_agent.interrupt') as mock_interrupt:
+        with patch('agents.tobi_sales_copilot.agent.interrupt') as mock_interrupt:
             with patch.object(agent, '_execute_customer_message_delivery') as mock_delivery:
                 # Mock human denial
                 mock_interrupt.return_value = "deny"
@@ -472,7 +472,7 @@ class TestGraphFlowIntegration:
             with UserContext(user_id="emp123", user_type="employee"):  # Set proper user context
                 with patch('agents.tools._lookup_customer') as mock_lookup:
                     with patch('agents.tools.get_current_employee_id', return_value="emp123"):
-                        with patch('agents.tobi_sales_copilot.rag_agent.interrupt') as mock_interrupt:
+                        with patch('agents.tobi_sales_copilot.agent.interrupt') as mock_interrupt:
                             with patch.object(agent, '_execute_customer_message_delivery') as mock_delivery:
                                 # Setup mocks
                                 mock_lookup.return_value = {

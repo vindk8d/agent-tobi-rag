@@ -78,7 +78,7 @@ async def get_agent():
     """Get or create the agent instance"""
     global _agent_instance
     if _agent_instance is None:
-        from agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+        from agents.tobi_sales_copilot.agent import UnifiedToolCallingRAGAgent
         _agent_instance = UnifiedToolCallingRAGAgent()
         await _agent_instance._ensure_initialized()  # Use the correct method name
     return _agent_instance

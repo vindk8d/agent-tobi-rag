@@ -2863,7 +2863,7 @@ Important: Use the tools to help you provide the best possible assistance to the
         logger.info(f"[LEGACY] User type '{user_type}' -> employee access: {is_employee}")
         return is_employee
 
-    @traceable(name="rag_agent_invoke")
+    @traceable(name="agent_invoke")
     async def invoke(
         self,
         user_query: str,  # Only accepts string queries now
@@ -2986,7 +2986,7 @@ Important: Use the tools to help you provide the best possible assistance to the
 
         return result
 
-    @traceable(name="rag_agent_resume")
+    @traceable(name="agent_resume")
     async def resume_interrupted_conversation(
         self, 
         conversation_id: str, 

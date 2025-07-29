@@ -267,7 +267,7 @@ function ChatInterface({ selectedUserId }: { selectedUserId?: string }) {
         {!isChatMinimized && (
           <div className="flex items-center space-x-2">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <h3 className="text-lg font-semibold text-gray-900">🤖 AI Assistant</h3>
+            <h3 className="text-lg font-semibold text-gray-900">AI Assistant</h3>
           </div>
         )}
         <div className="flex items-center space-x-1">
@@ -957,7 +957,7 @@ export default function MemoryCheckPage() {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center h-16">
               <div className="flex items-center space-x-4">
-                <h1 className="text-2xl font-bold text-gray-900">🧠 Memory Debug Interface</h1>
+                <h1 className="text-2xl font-bold text-gray-900">Memory Debug Interface</h1>
                 <div className="hidden md:block">
                   <span className="text-sm text-gray-500">
                     Long-term Memory & Conversation Analysis
@@ -1102,7 +1102,7 @@ export default function MemoryCheckPage() {
               {/* Memory Statistics */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-gray-900">📊 Memory Statistics</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Memory Statistics</h2>
                   <div className="flex items-center space-x-2">
                     {(loadingStates.memoryData || loadingStates.masterSummaryData || loadingStates.conversationData || loadingStates.messages) && (
                       <svg className="animate-spin h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24">
@@ -1142,7 +1142,7 @@ export default function MemoryCheckPage() {
               {/* Long-term Memory Visualization */}
               <div className="lg:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-gray-900">🧠 Long-term Memory Entries</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Long-term Memory Entries</h2>
                   <div className="flex items-center space-x-2">
                     {loadingStates.memoryData && (
                       <svg className="animate-spin h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24">
@@ -1354,7 +1354,7 @@ export default function MemoryCheckPage() {
 
               {/* Memory Debugging Tools */}
               <div className="lg:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 p-6 mt-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">🛠️ Memory Debugging Tools</h2>
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">Memory Debugging Tools</h2>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Memory Search Tool */}

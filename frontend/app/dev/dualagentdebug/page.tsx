@@ -77,6 +77,10 @@ export default function DualAgentDebugPage() {
   const [selectedEmployeeUser, setSelectedEmployeeUser] = useState<User | null>(null);
   const [selectedCustomerUser, setSelectedCustomerUser] = useState<User | null>(null);
   const [usersLoading, setUsersLoading] = useState(true);
+  
+  // Filtered customers based on selected employee
+  const [filteredCustomerUsers, setFilteredCustomerUsers] = useState<User[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
 
   // Chat state for both sides
   const [employeeChat, setEmployeeChat] = useState<ConversationState>({
@@ -146,6 +150,16 @@ export default function DualAgentDebugPage() {
       loadEmployeeMessages();
     }
   }, [selectedEmployeeUser]);
+
+  // Fetch customers for selected employee
+  useEffect(() => {
+    if (selectedEmployeeUser && users.length > 0) {
+      fetchCustomersForEmployee();
+    } else {
+      setFilteredCustomerUsers([]);
+      setSelectedCustomerUser(null);
+    }
+  }, [selectedEmployeeUser, users]);
 
   // Set up realtime subscriptions for hot reload
   useEffect(() => {
@@ -246,7 +260,7 @@ export default function DualAgentDebugPage() {
             // Check if this message belongs to the current customer's conversation
             if (payload.new && selectedCustomerRef.current && customerConversationRef.current) {
               const newMessage = payload.new as any;
-              console.log(`👤 Customer: Checking message conversation_id ${newMessage?.conversation_id} vs current ${customerConversationRef.current}`);
+              console.log(`�� Customer: Checking message conversation_id ${newMessage?.conversation_id} vs current ${customerConversationRef.current}`);
               
               if (newMessage?.conversation_id === customerConversationRef.current) {
                 console.log('✅ Customer: Message belongs to current conversation - reloading messages');
@@ -399,17 +413,71 @@ export default function DualAgentDebugPage() {
 
       setUsers(transformedUsers);
 
-      // Auto-select first employee and customer if available
+      // Auto-select first employee (customer will be auto-selected after filtering)
       const employees = transformedUsers.filter(u => u.user_type === 'employee');
-      const customers = transformedUsers.filter(u => u.user_type === 'customer');
       
       if (employees.length > 0) setSelectedEmployeeUser(employees[0]);
-      if (customers.length > 0) setSelectedCustomerUser(customers[0]);
 
     } catch (error) {
       console.error('Error loading users:', error);
     } finally {
       setUsersLoading(false);
+    }
+  }
+
+  async function fetchCustomersForEmployee() {
+    if (!selectedEmployeeUser?.employee_id) {
+      setFilteredCustomerUsers([]);
+      setSelectedCustomerUser(null);
+      return;
+    }
+
+    setCustomersLoading(true);
+    try {
+      // First, get unique customer IDs for this employee from opportunities
+      const customerIdsResult = await supabase
+        .from('opportunities')
+        .select('customer_id')
+        .eq('opportunity_salesperson_ae_id', selectedEmployeeUser.employee_id);
+
+      if (customerIdsResult.error) {
+        console.error('Error fetching customer IDs:', customerIdsResult.error);
+        setFilteredCustomerUsers([]);
+        return;
+      }
+
+      const uniqueCustomerIds = Array.from(new Set(customerIdsResult.data?.map(opp => opp.customer_id) || []));
+      
+      if (uniqueCustomerIds.length === 0) {
+        setFilteredCustomerUsers([]);
+        setSelectedCustomerUser(null);
+        return;
+      }
+
+      // Then get users who are customers and have customer_ids in our list
+      const customerUsers = users.filter(user => 
+        user.user_type === 'customer' && 
+        user.customer_id && 
+        uniqueCustomerIds.includes(user.customer_id)
+      );
+
+      setFilteredCustomerUsers(customerUsers);
+      
+      // If currently selected customer is not in the filtered list, clear selection
+      if (selectedCustomerUser && !customerUsers.find(u => u.id === selectedCustomerUser.id)) {
+        setSelectedCustomerUser(null);
+      }
+      
+      // Auto-select first customer if none is selected and we have customers available
+      if (!selectedCustomerUser && customerUsers.length > 0) {
+        setSelectedCustomerUser(customerUsers[0]);
+      }
+      
+    } catch (error) {
+      console.error('Error fetching customers for employee:', error);
+      setFilteredCustomerUsers([]);
+    } finally {
+      setCustomersLoading(false);
     }
   }
 
@@ -1059,7 +1127,7 @@ export default function DualAgentDebugPage() {
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            🚀 Dual Agent Debug Interface
+            Dual Agent Debug Interface
           </h1>
           <p className="text-gray-600">
             Test customer and employee chat experiences side-by-side
@@ -1071,7 +1139,7 @@ export default function DualAgentDebugPage() {
           <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center space-x-2">
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
             <div className="text-sm text-blue-800 font-medium">
-              🔄 {hotReloadNotification}
+              {hotReloadNotification}
             </div>
           </div>
         )}
@@ -1110,16 +1178,25 @@ export default function DualAgentDebugPage() {
               <select
                 value={selectedCustomerUser?.id || ''}
                 onChange={(e) => {
-                  const user = users.find(u => u.id === e.target.value);
+                  const user = filteredCustomerUsers.find(u => u.id === e.target.value);
                   setSelectedCustomerUser(user || null);
                 }}
-                disabled={usersLoading}
+                disabled={usersLoading || customersLoading || !selectedEmployeeUser}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
               >
-                <option value="">Select Customer...</option>
-                {users.filter(u => u.user_type === 'customer').map(user => (
+                <option value="">
+                  {!selectedEmployeeUser 
+                    ? "Select Employee First..." 
+                    : customersLoading 
+                    ? "Loading Customers..." 
+                    : filteredCustomerUsers.length === 0 
+                    ? "No Customers for Employee" 
+                    : "Select Customer..."
+                  }
+                </option>
+                {filteredCustomerUsers.map(user => (
                   <option key={user.id} value={user.id}>
-                    {user.name} ({user.email})
+                    {user.name} ({user.email}) - ID: {user.id.substring(0, 8)}...
                   </option>
                 ))}
               </select>
@@ -1178,7 +1255,7 @@ export default function DualAgentDebugPage() {
         {pendingConfirmations.length > 0 && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
             <h3 className="text-lg font-semibold text-yellow-800 mb-3">
-              🔔 Pending Confirmations ({pendingConfirmations.length})
+              Pending Confirmations ({pendingConfirmations.length})
             </h3>
             <div className="space-y-3">
               {pendingConfirmations.map((conf) => (
@@ -1252,7 +1329,9 @@ export default function DualAgentDebugPage() {
                     conversationId: employeeChat.conversationId,
                     messageCount: employeeChat.messages.length,
                     isLoading: employeeChat.isLoading,
-                    error: employeeChat.error
+                    error: employeeChat.error,
+                    userAccountId: selectedEmployeeUser?.id ? selectedEmployeeUser.id.substring(0, 8) + '...' : 'None',
+                    employeeMappingId: selectedEmployeeUser?.employee_id ? selectedEmployeeUser.employee_id.substring(0, 8) + '...' : 'None'
                   }, null, 2)}
                 </pre>
               </div>
@@ -1264,7 +1343,9 @@ export default function DualAgentDebugPage() {
                     conversationId: customerChat.conversationId,
                     messageCount: customerChat.messages.length,
                     isLoading: customerChat.isLoading,
-                    error: customerChat.error
+                    error: customerChat.error,
+                    userAccountId: selectedCustomerUser?.id ? selectedCustomerUser.id.substring(0, 8) + '...' : 'None',
+                    customerMappingId: selectedCustomerUser?.customer_id ? selectedCustomerUser.customer_id.substring(0, 8) + '...' : 'None'
                   }, null, 2)}
                 </pre>
               </div>
@@ -1277,6 +1358,8 @@ export default function DualAgentDebugPage() {
           <p>
             API: {API_BASE_URL} | 
             Users: {users.length} loaded | 
+            Filtered Customers: {filteredCustomerUsers.length} | 
+            Selected: {selectedEmployeeUser ? `Employee(${selectedEmployeeUser.name})` : 'No Employee'} & {selectedCustomerUser ? `Customer(${selectedCustomerUser.name})` : 'No Customer'} |
             Confirmations: {pendingConfirmations.length} pending |
             Hot Reload: <span className={`font-medium ${
               realtimeStatus === 'connected' ? 'text-green-600' :

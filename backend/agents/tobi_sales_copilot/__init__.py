@@ -2,7 +2,7 @@
 Tobi Sales Copilot Agent Package
 """
 
-from .rag_agent import (
+from .agent import (
     UnifiedToolCallingRAGAgent,
     ToolCallingRAGAgent,
     SimpleRAGAgent,

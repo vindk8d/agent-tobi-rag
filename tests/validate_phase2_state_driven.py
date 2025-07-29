@@ -33,7 +33,7 @@ async def validate_phase2_implementation():
     try:
         # Import required modules
         from agents.tools import trigger_customer_message, UserContext
-        from agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+        from agents.tobi_sales_copilot.agent import UnifiedToolCallingRAGAgent
         from agents.tobi_sales_copilot.state import AgentState
         from langchain_core.messages import HumanMessage, AIMessage
         

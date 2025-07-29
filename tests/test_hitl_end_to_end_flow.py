@@ -22,7 +22,7 @@ backend_path = pathlib.Path(__file__).parent.parent / "backend"
 if str(backend_path) not in sys.path:
     sys.path.insert(0, str(backend_path))
 
-from agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+from agents.tobi_sales_copilot.agent import UnifiedToolCallingRAGAgent
 from agents.tobi_sales_copilot.state import AgentState
 from agents.hitl import HITLRequest
 from langchain_core.messages import HumanMessage, AIMessage
@@ -37,7 +37,7 @@ class TestHITLEndToEndFlow:
         agent = UnifiedToolCallingRAGAgent()
         
         # Mock the settings and initialization
-        with patch('agents.tobi_sales_copilot.rag_agent.get_settings') as mock_settings:
+        with patch('agents.tobi_sales_copilot.agent.get_settings') as mock_settings:
             mock_settings.return_value = AsyncMock()
             mock_settings.return_value.openai_chat_model = "gpt-4"
             mock_settings.return_value.openai_temperature = 0.1
@@ -49,17 +49,17 @@ class TestHITLEndToEndFlow:
             mock_settings.return_value.memory.max_messages = 20
             
             # Mock memory manager
-            with patch('agents.tobi_sales_copilot.rag_agent.memory_manager') as mock_memory:
+            with patch('agents.tobi_sales_copilot.agent.memory_manager') as mock_memory:
                 mock_memory._ensure_initialized = AsyncMock()
                 mock_memory.get_checkpointer = AsyncMock()
                 mock_memory.get_checkpointer.return_value = MagicMock()
                 
                 # Mock memory scheduler
-                with patch('agents.tobi_sales_copilot.rag_agent.memory_scheduler') as mock_scheduler:
+                with patch('agents.tobi_sales_copilot.agent.memory_scheduler') as mock_scheduler:
                     mock_scheduler.start = AsyncMock()
                     
                     # Mock database client
-                    with patch('agents.tobi_sales_copilot.rag_agent.db_client'):
+                    with patch('agents.tobi_sales_copilot.agent.db_client'):
                         await agent._ensure_initialized()
         
         return agent
@@ -199,8 +199,8 @@ class TestHITLEndToEndFlow:
         print("✅ HITL routing handles invalid user types safely")
 
     @pytest.mark.asyncio
-    @patch('agents.tobi_sales_copilot.rag_agent.ChatOpenAI')
-    @patch('agents.tobi_sales_copilot.rag_agent.get_all_tools')
+    @patch('agents.tobi_sales_copilot.agent.ChatOpenAI')
+    @patch('agents.tobi_sales_copilot.agent.get_all_tools')
     async def test_tool_hitl_integration(self, mock_get_tools, mock_chat_openai, agent, employee_state):
         """
         Test integration between tool execution and HITL system.

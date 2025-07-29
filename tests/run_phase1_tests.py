@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 try:
-    from agents.tobi_sales_copilot.rag_agent import UnifiedToolCallingRAGAgent
+    from agents.tobi_sales_copilot.agent import UnifiedToolCallingRAGAgent
     from agents.tools import UserContext, get_current_user_type, get_tools_for_user_type
     from langchain_core.messages import HumanMessage, AIMessage
     print("✅ Successfully imported required modules")

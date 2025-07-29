@@ -130,7 +130,7 @@ export default function ConfirmationPanel({
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <div className="flex">
             <div className="flex-shrink-0">
-              <span className="text-red-400">⚠️</span>
+              <span className="text-red-400 font-bold">!</span>
             </div>
             <div className="ml-3">
               <h3 className="text-sm font-medium text-red-800">
