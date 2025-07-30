@@ -1452,17 +1452,14 @@ class ConversationConsolidator:
             return None
 
     async def _get_recent_conversation_messages(self, conversation_id: str, previous_summary: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Get only recent messages since the last summary, or last 10 messages if no previous summary."""
+        """Get recent messages using a moving context window of configurable size."""
         try:
             from core.database import db_client
-
-            def _get_messages_since_summary(last_summary_time):
-                return (db_client.client.table("messages")
-                    .select("role,content,created_at,user_id")
-                    .eq("conversation_id", conversation_id)
-                    .order("created_at")
-                    .gt("created_at", last_summary_time)
-                    .execute())
+            from core.config import get_settings
+            
+            # Get context window size from configuration
+            settings = await get_settings()
+            context_window_size = settings.memory.context_window_size
 
             def _count_messages():
                 return (db_client.client.table("messages")
@@ -1478,26 +1475,23 @@ class ConversationConsolidator:
                     .range(offset, offset + limit - 1)
                     .execute())
 
-            if previous_summary:
-                # Get messages since the last summary
-                last_summary_time = previous_summary['created_at']
-                print(f"            📅 Getting messages since last summary: {last_summary_time}")
-                result = await asyncio.to_thread(_get_messages_since_summary, last_summary_time)
+            # FIXED: Always use moving context window - get only the last N messages
+            # This ensures we maintain a consistent window size regardless of summary history
+            print(f"            🪟 Using moving context window of {context_window_size} messages")
+            
+            # First count total messages
+            count_result = await asyncio.to_thread(_count_messages)
+            total_messages = count_result.count
+
+            if total_messages > context_window_size:
+                # Skip earlier messages, get only the latest N
+                offset = total_messages - context_window_size
+                result = await asyncio.to_thread(_get_last_n_messages, offset, context_window_size)
+                print(f"            📊 Retrieved last {context_window_size} of {total_messages} total messages")
             else:
-                # No previous summary - get the last 10 messages for first summarization
-                # First count total messages
-                count_result = await asyncio.to_thread(_count_messages)
-                total_messages = count_result.count
-
-                if total_messages > 10:
-                    # Skip earlier messages, get only the latest 10
-                    offset = total_messages - 10
-                    result = await asyncio.to_thread(_get_last_n_messages, offset, 10)
-                else:
-                    # Get all messages if 10 or fewer
-                    result = await asyncio.to_thread(_get_last_n_messages, 0, total_messages)
-
-                print(f"            🆕 No previous summary - getting last 10 of {total_messages} total messages")
+                # Get all messages if fewer than window size
+                result = await asyncio.to_thread(_get_last_n_messages, 0, total_messages)
+                print(f"            📊 Retrieved all {total_messages} messages (within window size)")
 
             messages = result.data if result.data else []
             print(f"            ✅ Retrieved {len(messages)} recent messages")

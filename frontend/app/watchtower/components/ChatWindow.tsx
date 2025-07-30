@@ -83,25 +83,11 @@ export default function ChatWindow({ customer, supabase }: ChatWindowProps) {
             const message = payload.new as Message;
             
             if (payload.eventType === 'INSERT') {
-              console.log('Adding new message:', message);
+              console.log('Adding new message via hot reload:', message);
               setMessages(prevMessages => {
-                // Avoid duplicates
-                if (prevMessages.find(m => m.id === message.id)) {
-                  console.log('Duplicate message detected, skipping');
-                  return prevMessages;
-                }
-                
-                // Optimize: check if we can just append (most common case)
-                const lastMessage = prevMessages[prevMessages.length - 1];
-                if (!lastMessage || new Date(message.created_at) >= new Date(lastMessage.created_at)) {
-                  // New message is newer than the last one, just append
-                  return [...prevMessages, message];
-                } else {
-                  // Need to insert in correct position
-                  const newMessages = [...prevMessages, message];
-                  newMessages.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                  return newMessages;
-                }
+                // STATE RECONCILIATION: Use robust merge instead of simple duplicate check
+                const reconciledMessages = reconcileMessages(prevMessages, [message]);
+                return reconciledMessages;
               });
               
               // Enable auto-scroll for new messages (likely from the current conversation)
@@ -239,6 +225,70 @@ export default function ChatWindow({ customer, supabase }: ChatWindowProps) {
     );
   };
 
+  // STATE RECONCILIATION: Helper function to merge messages (WhatsApp/Telegram approach)
+  const reconcileMessages = (currentMessages: Message[], serverMessages: Message[]): Message[] => {
+    console.log('🔄 ChatWindow state reconciliation: merging', currentMessages.length, 'current with', serverMessages.length, 'server messages');
+    
+    const result: Message[] = [];
+    const processedServerIds = new Set<string>();
+    
+    // Step 1: Add all server messages (they are the source of truth)
+    serverMessages.forEach(serverMsg => {
+      if (!processedServerIds.has(serverMsg.id)) {
+        result.push(serverMsg);
+        processedServerIds.add(serverMsg.id);
+      }
+    });
+    
+    // Step 2: Handle temp messages - either match with server or keep as orphaned optimistic updates
+    currentMessages.forEach(currentMsg => {
+      const isTemp = currentMsg.id.startsWith('temp_');
+      
+      if (!isTemp) {
+        // Non-temp message - add if not already present
+        if (!result.find(msg => msg.id === currentMsg.id)) {
+          result.push(currentMsg);
+        }
+        return;
+      }
+      
+      // This is a temp message - try to match with server message
+      const matchingServerMsg = serverMessages.find(serverMsg => {
+        // Match by content, role, and timestamp (within 10 seconds tolerance)
+        const contentMatch = serverMsg.content.trim() === currentMsg.content.trim();
+        const roleMatch = (
+          (serverMsg.role === 'user' && currentMsg.role === 'human') ||
+          (serverMsg.role === 'assistant' && currentMsg.role === 'ai') ||
+          (serverMsg.role === currentMsg.role)
+        );
+        const timeDiff = Math.abs(
+          new Date(serverMsg.created_at).getTime() - 
+          new Date(currentMsg.created_at).getTime()
+        );
+        const timeMatch = timeDiff < 10000; // 10 second tolerance
+        
+        return contentMatch && roleMatch && timeMatch;
+      });
+      
+      if (matchingServerMsg) {
+        console.log(`✅ ChatWindow: Temp message ${currentMsg.id} matched with server message ${matchingServerMsg.id}`);
+        // Server message already added in step 1, temp message is now reconciled
+      } else {
+        console.log(`⚠️ ChatWindow: Orphaned temp message ${currentMsg.id} - keeping as optimistic update`);
+        // Keep orphaned temp message (better than losing user's message)
+        result.push(currentMsg);
+      }
+    });
+    
+    // Step 3: Sort chronologically and return
+    const sortedResult = result.sort((a, b) => 
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+    
+    console.log('🎯 ChatWindow state reconciliation complete:', sortedResult.length, 'final messages');
+    return sortedResult;
+  };
+
   const formatTime = (dateString: string) => {
     return new Date(dateString).toLocaleTimeString('en-US', {
       hour: 'numeric',
@@ -333,7 +383,7 @@ export default function ChatWindow({ customer, supabase }: ChatWindowProps) {
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <h2 className="text-lg font-semibold text-gray-900">Live Chat</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Customer Chat with AI Agent</h2>
           </div>
           
           <div className="flex items-center space-x-3">

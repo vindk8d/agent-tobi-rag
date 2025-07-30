@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -108,48 +108,148 @@ export default function DualAgentDebugPage() {
   // Debug state
   const [debugMode, setDebugMode] = useState(false);
   const [showSources, setShowSources] = useState(true);
-
-  // Hot reload state
-  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
-  const [lastMessageUpdate, setLastMessageUpdate] = useState<string | null>(null);
-  const [hotReloadNotification, setHotReloadNotification] = useState<string | null>(null);
-
+  const [lastUpdate, setLastUpdate] = useState<string | null>(null);
+  
   // Refs for auto-scroll
   const employeeChatRef = useRef<HTMLDivElement>(null);
   const customerChatRef = useRef<HTMLDivElement>(null);
-  
-  // Refs to avoid stale closures in realtime subscriptions
-  const employeeConversationRef = useRef<string | null>(null);
-  const customerConversationRef = useRef<string | null>(null);
-  const selectedEmployeeRef = useRef<User | null>(null);
-  const selectedCustomerRef = useRef<User | null>(null);
+
+  // Helper function to normalize role names for consistent matching
+  const normalizeRole = useCallback((role: string): string => {
+    if (role === 'user') return 'human';
+    if (role === 'assistant') return 'ai';
+    return role;
+  }, []);
+
+  // Stable message loading functions
+  const loadEmployeeMessages = useCallback(async () => {
+    if (!selectedEmployeeUser) return;
+
+    try {
+      setEmployeeChat(prev => ({ ...prev, isLoading: true, error: null }));
+
+      const url = `${API_BASE_URL}/api/v1/memory-debug/users/${selectedEmployeeUser.id}/messages`;
+      const response = await fetch(url);
+      
+      if (response.ok) {
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          const existingMessages: Message[] = result.data.map((msg: any) => ({
+            id: msg.id,
+            role: normalizeRole(msg.role) as 'human' | 'ai' | 'system',
+            content: msg.content,
+            timestamp: msg.created_at,
+            sources: []
+          })).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+          const conversationId = result.data.length > 0 ? result.data[0].conversation_id : null;
+
+          setEmployeeChat({
+            messages: existingMessages,
+            conversationId: conversationId,
+            isLoading: false,
+            error: null
+          });
+        } else {
+          setEmployeeChat({
+            messages: [],
+            conversationId: null,
+            isLoading: false,
+            error: null
+          });
+        }
+      } else {
+        setEmployeeChat(prev => ({
+          ...prev,
+          messages: [],
+          conversationId: null,
+          isLoading: false
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading employee messages:', error);
+      setEmployeeChat(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to load messages'
+      }));
+    }
+  }, [selectedEmployeeUser, normalizeRole]);
+
+  const loadCustomerMessages = useCallback(async () => {
+    if (!selectedCustomerUser) return;
+
+    try {
+      setCustomerChat(prev => ({ ...prev, isLoading: true, error: null }));
+
+      const url = `${API_BASE_URL}/api/v1/memory-debug/users/${selectedCustomerUser.id}/messages`;
+      const response = await fetch(url);
+      
+      if (response.ok) {
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          const existingMessages: Message[] = result.data.map((msg: any) => ({
+            id: msg.id,
+            role: normalizeRole(msg.role) as 'human' | 'ai' | 'system',
+            content: msg.content,
+            timestamp: msg.created_at,
+            sources: []
+          })).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+          const conversationId = result.data.length > 0 ? result.data[0].conversation_id : null;
+
+          setCustomerChat({
+            messages: existingMessages,
+            conversationId: conversationId,
+            isLoading: false,
+            error: null
+          });
+        } else {
+          setCustomerChat({
+            messages: [],
+            conversationId: null,
+            isLoading: false,
+            error: null
+          });
+        }
+      } else {
+        setCustomerChat(prev => ({
+          ...prev,
+          messages: [],
+          conversationId: null,
+          isLoading: false
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading customer messages:', error);
+      setCustomerChat(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to load messages'
+      }));
+    }
+  }, [selectedCustomerUser, normalizeRole]);
 
   // Load users on mount
   useEffect(() => {
     loadUsers();
   }, []);
 
-  // Update refs when values change
-  useEffect(() => {
-    employeeConversationRef.current = employeeChat.conversationId;
-    customerConversationRef.current = customerChat.conversationId;
-    selectedEmployeeRef.current = selectedEmployeeUser;
-    selectedCustomerRef.current = selectedCustomerUser;
-  }, [employeeChat.conversationId, customerChat.conversationId, selectedEmployeeUser, selectedCustomerUser]);
-
   // Load existing messages when customer is selected
   useEffect(() => {
     if (selectedCustomerUser) {
       loadCustomerMessages();
     }
-  }, [selectedCustomerUser]);
+  }, [selectedCustomerUser, loadCustomerMessages]);
 
   // Load existing messages when employee is selected
   useEffect(() => {
     if (selectedEmployeeUser) {
       loadEmployeeMessages();
     }
-  }, [selectedEmployeeUser]);
+  }, [selectedEmployeeUser, loadEmployeeMessages]);
 
   // Fetch customers for selected employee
   useEffect(() => {
@@ -161,202 +261,73 @@ export default function DualAgentDebugPage() {
     }
   }, [selectedEmployeeUser, users]);
 
-  // Set up realtime subscriptions for hot reload
+  // Refresh messages after sending (no constant polling)
+  const refreshMessages = useCallback(async (userType?: 'employee' | 'customer') => {
+    if (userType === 'employee' && selectedEmployeeUser) {
+      await loadEmployeeMessages();
+    } else if (userType === 'customer' && selectedCustomerUser) {
+      await loadCustomerMessages();
+    } else {
+      // Refresh both if no specific type
+      if (selectedEmployeeUser) await loadEmployeeMessages();
+      if (selectedCustomerUser) await loadCustomerMessages();
+    }
+    setLastUpdate(new Date().toLocaleTimeString());
+  }, [selectedEmployeeUser, selectedCustomerUser, loadEmployeeMessages, loadCustomerMessages]);
+
+  // Simple realtime subscription to detect new messages
   useEffect(() => {
-    // Only set up subscriptions if we have users selected
-    if (!selectedEmployeeUser && !selectedCustomerUser) {
+    if (!employeeChat.conversationId && !customerChat.conversationId) {
       return;
     }
 
-    console.log('🔄 Setting up realtime subscriptions for hot reload');
-    console.log('👨‍💼 Employee user:', selectedEmployeeUser?.id);
-    console.log('👤 Customer user:', selectedCustomerUser?.id);
-
-    // Set status to connecting
-    setRealtimeStatus('connecting');
-
-    // Create separate channels for employee and customer to avoid conflicts
-    const channels: any[] = [];
-    let connectedChannels = 0;
-    const totalChannels = (selectedEmployeeUser ? 1 : 0) + (selectedCustomerUser ? 1 : 0) + 1; // +1 for generic
-
-    const checkAllConnected = () => {
-      connectedChannels++;
-      if (connectedChannels >= totalChannels) {
-        setRealtimeStatus('connected');
-      }
-    };
-
-    // Employee messages subscription
-    if (selectedEmployeeUser) {
-      const employeeChannel = supabase
-        .channel(`employee-messages-${selectedEmployeeUser.id}`)
-        .on('postgres_changes', 
-          { 
-            event: '*', // Listen to INSERT, UPDATE, DELETE
-            schema: 'public', 
-            table: 'messages'
-          }, 
-          (payload) => {
-            console.log('🔔 Employee message change detected:', payload);
-            setLastMessageUpdate(`Employee: ${new Date().toLocaleTimeString()}`);
-            
-            // Check if this message belongs to the current employee's conversation
-            if (payload.new && selectedEmployeeRef.current && employeeConversationRef.current) {
-              const newMessage = payload.new as any;
-              console.log(`👨‍💼 Employee: Checking message conversation_id ${newMessage?.conversation_id} vs current ${employeeConversationRef.current}`);
-              
-              if (newMessage?.conversation_id === employeeConversationRef.current) {
-                console.log('✅ Employee: Message belongs to current conversation - reloading messages');
-                // Immediate reload without delay for better UX
-                loadEmployeeMessages();
-                
-                // Show hot reload notification
-                setHotReloadNotification('Employee message updated via hot reload');
-                setTimeout(() => setHotReloadNotification(null), 3000);
-              } else {
-                console.log('❌ Employee: Message from different conversation, ignoring');
-              }
-            } else if (payload.old && selectedEmployeeRef.current && employeeConversationRef.current) {
-              // Handle DELETE events
-              const deletedMessage = payload.old as any;
-              if (deletedMessage?.conversation_id === employeeConversationRef.current) {
-                console.log('🗑️ Employee: Message deleted from current conversation - reloading messages');
-                loadEmployeeMessages();
-                
-                // Show hot reload notification
-                setHotReloadNotification('Employee message deleted via hot reload');
-                setTimeout(() => setHotReloadNotification(null), 3000);
-              }
-            }
-          }
-        )
-        .subscribe((status) => {
-          console.log('👨‍💼 Employee realtime subscription status:', status);
-          if (status === 'SUBSCRIBED') {
-            checkAllConnected();
-          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-            setRealtimeStatus('disconnected');
-          }
-        });
-      
-      channels.push(employeeChannel);
-    }
-
-    // Customer messages subscription  
-    if (selectedCustomerUser) {
-      const customerChannel = supabase
-        .channel(`customer-messages-${selectedCustomerUser.id}`)
-        .on('postgres_changes', 
-          { 
-            event: '*', // Listen to INSERT, UPDATE, DELETE
-            schema: 'public', 
-            table: 'messages'
-          }, 
-          (payload) => {
-            console.log('🔔 Customer message change detected:', payload);
-            setLastMessageUpdate(`Customer: ${new Date().toLocaleTimeString()}`);
-            
-            // Check if this message belongs to the current customer's conversation
-            if (payload.new && selectedCustomerRef.current && customerConversationRef.current) {
-              const newMessage = payload.new as any;
-              console.log(`�� Customer: Checking message conversation_id ${newMessage?.conversation_id} vs current ${customerConversationRef.current}`);
-              
-              if (newMessage?.conversation_id === customerConversationRef.current) {
-                console.log('✅ Customer: Message belongs to current conversation - reloading messages');
-                // Immediate reload without delay for better UX
-                loadCustomerMessages();
-                
-                // Show hot reload notification
-                setHotReloadNotification('Customer message updated via hot reload');
-                setTimeout(() => setHotReloadNotification(null), 3000);
-              } else {
-                console.log('❌ Customer: Message from different conversation, ignoring');
-              }
-            } else if (payload.old && selectedCustomerRef.current && customerConversationRef.current) {
-              // Handle DELETE events
-              const deletedMessage = payload.old as any;
-              if (deletedMessage?.conversation_id === customerConversationRef.current) {
-                console.log('🗑️ Customer: Message deleted from current conversation - reloading messages');
-                loadCustomerMessages();
-                
-                // Show hot reload notification
-                setHotReloadNotification('Customer message deleted via hot reload');
-                setTimeout(() => setHotReloadNotification(null), 3000);
-              }
-            }
-          }
-        )
-        .subscribe((status) => {
-          console.log('👤 Customer realtime subscription status:', status);
-          if (status === 'SUBSCRIBED') {
-            checkAllConnected();
-          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-            setRealtimeStatus('disconnected');
-          }
-        });
-      
-      channels.push(customerChannel);
-    }
-
-    // Generic message subscription for any conversation changes (fallback)
-    const genericChannel = supabase
-      .channel('all-messages-fallback')
-      .on('postgres_changes',
-        {
+    console.log('🔔 Setting up simple realtime subscription for new messages');
+    
+    const channel = supabase
+      .channel('new-messages')
+      .on('postgres_changes', 
+        { 
           event: 'INSERT',
-          schema: 'public',
+          schema: 'public', 
           table: 'messages'
-        },
+        }, 
         (payload) => {
-          console.log('🔔 Generic message change detected:', payload);
-          setLastMessageUpdate(`Generic: ${new Date().toLocaleTimeString()}`);
+          console.log('📨 New message detected:', payload);
+          const newMessage = payload.new as any;
           
           // Check if this message belongs to either current conversation
-          if (payload.new) {
-            const newMessage = payload.new as any;
-            const isEmployeeMessage = employeeConversationRef.current && 
-              newMessage?.conversation_id === employeeConversationRef.current;
-            const isCustomerMessage = customerConversationRef.current && 
-              newMessage?.conversation_id === customerConversationRef.current;
+          const isEmployeeConversation = employeeChat.conversationId && 
+            newMessage?.conversation_id === employeeChat.conversationId;
+          const isCustomerConversation = customerChat.conversationId && 
+            newMessage?.conversation_id === customerChat.conversationId;
+          
+          if (isEmployeeConversation || isCustomerConversation) {
+            console.log('✅ Message belongs to current conversation - refreshing');
             
-            if (isEmployeeMessage) {
-              console.log('🔄 Generic: Employee message detected, reloading');
-              loadEmployeeMessages();
-              setHotReloadNotification('Employee message updated (generic fallback)');
-              setTimeout(() => setHotReloadNotification(null), 3000);
-            }
-            
-            if (isCustomerMessage) {
-              console.log('🔄 Generic: Customer message detected, reloading');
-              loadCustomerMessages();
-              setHotReloadNotification('Customer message updated (generic fallback)');
-              setTimeout(() => setHotReloadNotification(null), 3000);
+            // Only refresh if it's not a temp message (avoid refreshing our own optimistic updates)
+            if (!newMessage.id?.startsWith('temp_')) {
+              setTimeout(() => {
+                if (isEmployeeConversation) {
+                  loadEmployeeMessages();
+                }
+                if (isCustomerConversation) {
+                  loadCustomerMessages();
+                }
+                setLastUpdate(new Date().toLocaleTimeString());
+              }, 500); // Small delay to ensure message is fully persisted
             }
           }
         }
       )
       .subscribe((status) => {
-        console.log('🌐 Generic realtime subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          checkAllConnected();
-        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          setRealtimeStatus('disconnected');
-        }
+        console.log('🔔 Realtime subscription status:', status);
       });
-    
-    channels.push(genericChannel);
 
-    // Cleanup function
     return () => {
-      console.log('🧹 Cleaning up realtime subscriptions');
-      setRealtimeStatus('disconnected');
-      setLastMessageUpdate(null);
-      channels.forEach(channel => {
-        supabase.removeChannel(channel);
-      });
+      console.log('🧹 Cleaning up realtime subscription');
+      supabase.removeChannel(channel);
     };
-  }, [selectedEmployeeUser?.id, selectedCustomerUser?.id]); // Re-run when users change
+  }, [employeeChat.conversationId, customerChat.conversationId, loadEmployeeMessages, loadCustomerMessages]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -481,156 +452,7 @@ export default function DualAgentDebugPage() {
     }
   }
 
-  async function loadCustomerMessages() {
-    if (!selectedCustomerUser) return;
-
-    try {
-      setCustomerChat(prev => ({ ...prev, isLoading: true, error: null }));
-
-      // SINGLE CONVERSATION PER USER: Always load the user's single conversation
-      // No need to track conversation IDs since each user has exactly one conversation
-      const url = `${API_BASE_URL}/api/v1/memory-debug/users/${selectedCustomerUser.id}/messages`;
-      
-      const response = await fetch(url);
-      
-      if (response.ok) {
-        const result = await response.json();
-        
-        if (result.success && result.data) {
-          // Transform database messages to our Message format
-          const existingMessages: Message[] = result.data.map((msg: any) => {
-            // Map database roles to frontend roles
-            let role: 'human' | 'ai' | 'system';
-            if (msg.role === 'user') {
-              role = 'human';
-            } else if (msg.role === 'assistant') {
-              role = 'ai';
-            } else if (msg.role === 'system') {
-              role = 'system';
-            } else {
-              role = 'ai'; // Default fallback
-            }
-            return {
-              id: msg.id,
-              role: role,
-              content: msg.content,
-              timestamp: msg.created_at,
-              sources: []
-            };
-          }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-          // Get conversation ID from messages (single conversation per user)
-          const conversationId = result.data.length > 0 ? result.data[0].conversation_id : null;
-
-          setCustomerChat(prev => ({
-            ...prev,
-            messages: existingMessages,
-            conversationId: conversationId,
-            isLoading: false
-          }));
-        } else {
-          setCustomerChat(prev => ({
-            ...prev,
-            messages: [],
-            conversationId: null,
-            isLoading: false
-          }));
-        }
-      } else {
-        console.warn('Failed to load customer messages:', response.status);
-        setCustomerChat(prev => ({
-          ...prev,
-          messages: [],
-          conversationId: null,
-          isLoading: false
-        }));
-      }
-    } catch (error) {
-      console.error('Error loading customer messages:', error);
-      setCustomerChat(prev => ({
-        ...prev,
-        isLoading: false,
-        error: error instanceof Error ? error.message : 'Failed to load messages'
-      }));
-    }
-  }
-
-  async function loadEmployeeMessages() {
-    if (!selectedEmployeeUser) return;
-
-    try {
-      setEmployeeChat(prev => ({ ...prev, isLoading: true, error: null }));
-
-      // SINGLE CONVERSATION PER USER: Always load the user's single conversation
-      // No need to track conversation IDs since each user has exactly one conversation
-      const url = `${API_BASE_URL}/api/v1/memory-debug/users/${selectedEmployeeUser.id}/messages`;
-      
-      const response = await fetch(url);
-      
-      if (response.ok) {
-        const result = await response.json();
-        
-        if (result.success && result.data) {
-          // Transform database messages to our Message format
-          const existingMessages: Message[] = result.data.map((msg: any) => {
-            // Map database roles to frontend roles
-            let role: 'human' | 'ai' | 'system';
-            if (msg.role === 'user') {
-              role = 'human';
-            } else if (msg.role === 'assistant') {
-              role = 'ai';
-            } else if (msg.role === 'system') {
-              role = 'system';
-            } else {
-              role = 'ai'; // Default fallback
-            }
-            return {
-              id: msg.id,
-              role: role,
-              content: msg.content,
-              timestamp: msg.created_at,
-              sources: []
-            };
-          }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-          // Get conversation ID from messages (single conversation per user)
-          const conversationId = result.data.length > 0 ? result.data[0].conversation_id : null;
-
-          setEmployeeChat(prev => ({
-            ...prev,
-            messages: existingMessages,
-            conversationId: conversationId,
-            isLoading: false
-          }));
-        } else {
-          setEmployeeChat(prev => ({
-            ...prev,
-            messages: [],
-            conversationId: null,
-            isLoading: false
-          }));
-        }
-      } else {
-        console.warn('Failed to load employee messages:', response.status);
-        setEmployeeChat(prev => ({
-          ...prev,
-          messages: [],
-          conversationId: null,
-          isLoading: false
-        }));
-      }
-    } catch (error) {
-      console.error('Error loading employee messages:', error);
-      setEmployeeChat(prev => ({
-        ...prev,
-        isLoading: false,
-        error: error instanceof Error ? error.message : 'Failed to load messages'
-      }));
-    }
-  }
-
   async function clearChat(userType: 'employee' | 'customer') {
-    const chat = userType === 'employee' ? employeeChat : customerChat;
     const user = userType === 'employee' ? selectedEmployeeUser : selectedCustomerUser;
     
     if (!user) {
@@ -638,59 +460,46 @@ export default function DualAgentDebugPage() {
       return;
     }
 
+    // Clear local state immediately for better UX
+    if (userType === 'employee') {
+      setEmployeeChat({
+        messages: [],
+        conversationId: null,
+        isLoading: false,
+        error: null
+      });
+    } else {
+      setCustomerChat({
+        messages: [],
+        conversationId: null,
+        isLoading: false,
+        error: null
+      });
+    }
+
+    // Clear the user's conversation via API
     try {
-      // Clear local state immediately for better UX
-      if (userType === 'employee') {
-        setEmployeeChat({
-          messages: [],
-          conversationId: null,
-          isLoading: false,
-          error: null
-        });
-      } else {
-        setCustomerChat({
-          messages: [],
-          conversationId: null,
-          isLoading: false,
-          error: null
-        });
-      }
-
-      // SINGLE CONVERSATION PER USER: Clear the user's single conversation
-      console.log(`Clearing conversation for ${userType} user ${user.id} via API`);
-      
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/chat/user/${user.id}/all-conversations`, {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          console.log(`Successfully cleared ${userType} conversation:`, result.message);
-        } else {
-          const errorData = await response.json();
-          console.error(`Failed to clear ${userType} conversation:`, errorData.detail || 'Unknown error');
-          // Don't throw - local state is already cleared
+      const response = await fetch(`${API_BASE_URL}/api/v1/chat/user/${user.id}/all-conversations`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
         }
-      } catch (apiError) {
-        console.error(`API error clearing ${userType} conversation:`, apiError);
-        // Don't throw - local state is already cleared
-      }
+      });
 
-    } catch (error) {
-      console.error(`Error clearing ${userType} chat:`, error);
-      // Even if database deletion fails, local state is already cleared
-      // User can continue with a fresh conversation
+      if (response.ok) {
+        const result = await response.json();
+        console.log(`Successfully cleared ${userType} conversation:`, result.message);
+      } else {
+        const errorData = await response.json();
+        console.error(`Failed to clear ${userType} conversation:`, errorData.detail || 'Unknown error');
+      }
+    } catch (apiError) {
+      console.error(`API error clearing ${userType} conversation:`, apiError);
     }
   }
 
   async function sendMessage(message: string, userType: 'employee' | 'customer') {
-    console.log('🚀 sendMessage called with:', { message, userType });
-    
-    // Restart polling when sending a new message (may create confirmations)
+    // Restart confirmation polling when sending a new message
     setShouldPollConfirmations(true);
     
     const isEmployee = userType === 'employee';
@@ -698,22 +507,13 @@ export default function DualAgentDebugPage() {
     const currentChat = isEmployee ? employeeChat : customerChat;
     const setChat = isEmployee ? setEmployeeChat : setCustomerChat;
 
-    console.log('👤 User selection check:', { 
-      isEmployee, 
-      selectedEmployeeUser: selectedEmployeeUser?.id, 
-      selectedCustomerUser: selectedCustomerUser?.id,
-      user: user?.id,
-      hasMessage: !!message.trim()
-    });
-
     if (!user || !message.trim()) {
-      console.error('❌ sendMessage aborted:', { user: user?.id, hasMessage: !!message.trim() });
       return;
     }
 
     // Add user message to chat immediately for better UX
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: `temp_user_${Date.now()}`,
       role: 'human',
       content: message.trim(),
       timestamp: new Date().toISOString()
@@ -747,18 +547,15 @@ export default function DualAgentDebugPage() {
       }
 
       const result = await response.json();
-      console.log('Raw API response:', result);
       
       // Handle both direct ChatResponse and wrapped APIResponse formats
       let chatResponse: ChatResponse;
       if (result.data) {
-        // Wrapped format: {success: true, data: ChatResponse}
         if (!result.success) {
           throw new Error(result.message || 'API request failed');
         }
         chatResponse = result.data;
       } else {
-        // Direct ChatResponse format
         chatResponse = result;
       }
 
@@ -772,9 +569,8 @@ export default function DualAgentDebugPage() {
 
       // Check if this is an interrupted response (confirmation request)
       if (chatResponse.is_interrupted && chatResponse.confirmation_id) {
-        // Add the confirmation message to chat AS A MESSAGE (not just in panel)
         const confirmationMessage: Message = {
-          id: (Date.now() + 1).toString(),
+          id: `temp_confirmation_${Date.now()}`,
           role: 'ai',
           content: chatResponse.message,
           timestamp: new Date().toISOString(),
@@ -787,20 +583,18 @@ export default function DualAgentDebugPage() {
           isLoading: false
         }));
 
-        // Also trigger a check for pending confirmations (for the panel if needed)
+        // Check for pending confirmations and refresh messages
         setTimeout(() => {
           checkPendingConfirmations();
-        }, 500);
+          refreshMessages(userType);
+        }, 1000);
         
-        return; // Done processing the confirmation message
+        return;
       }
 
-      // Add AI response to chat (normal response)
-      console.log('Processing AI message. Content:', chatResponse.message);
-      console.log('Full chatResponse:', chatResponse);
-      
+      // Add AI response to chat
       const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `temp_ai_${Date.now()}`,
         role: 'ai',
         content: chatResponse.message,
         timestamp: new Date().toISOString(),
@@ -813,8 +607,10 @@ export default function DualAgentDebugPage() {
         isLoading: false
       }));
 
-      // Note: Messages are automatically persisted by the backend agent
-      // The realtime subscription will handle hot reloading
+      // Refresh messages from database after a short delay to replace temp messages with persisted ones
+      setTimeout(() => {
+        refreshMessages(userType);
+      }, 1000);
 
     } catch (error) {
       console.error('Error sending message:', error);
@@ -841,7 +637,7 @@ export default function DualAgentDebugPage() {
       message_type: typeMatch ? typeMatch[1].trim() : 'Unknown',
       requested_by: 'employee',
       requested_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 3600000).toISOString(), // 1 hour from now
+      expires_at: new Date(Date.now() + 3600000).toISOString(),
       status: 'pending',
       conversation_id: conversationId
     };
@@ -850,7 +646,6 @@ export default function DualAgentDebugPage() {
   async function checkPendingConfirmations() {
     const conversationIds = [employeeChat.conversationId, customerChat.conversationId].filter(Boolean);
     
-    // Track if we found any confirmations across all conversations
     let foundAnyConfirmations = false;
     
     for (const conversationId of conversationIds) {
@@ -858,7 +653,6 @@ export default function DualAgentDebugPage() {
         const response = await fetch(`${API_BASE_URL}/api/v1/chat/confirmation/pending/${conversationId}`);
         if (response.ok) {
           const result = await response.json();
-          // Handle both formats: backend returns {confirmations: [...]} or {success: true, data: [...]}
           const rawConfirmations = result.confirmations || result.data || [];
           
           if (rawConfirmations.length > 0) {
@@ -880,20 +674,12 @@ export default function DualAgentDebugPage() {
       }
     }
     
-    // CRITICAL FIX: If no confirmations found anywhere, clear stale frontend state
+    // Clear stale frontend state if no confirmations found
     if (!foundAnyConfirmations && conversationIds.length > 0) {
       setPendingConfirmations(prev => {
-        if (prev.length > 0) {
-          console.log('🧹 Clearing stale confirmation state - backend has no pending confirmations');
-        }
-        
-        // Stop polling if we had no confirmations and are clearing empty state
-        // This means the conversation is complete
         if (prev.length === 0) {
-          console.log('⏹️ Stopping confirmation polling - no confirmations found, conversation complete');
           setTimeout(() => setShouldPollConfirmations(false), 100);
         }
-        
         return [];
       });
     }
@@ -901,9 +687,6 @@ export default function DualAgentDebugPage() {
 
   async function respondToConfirmation(confirmationId: string, action: 'approved' | 'cancelled', modifiedMessage?: string) {
     try {
-      // CRITICAL FIX: Find the confirmation BEFORE removing it from state
-      const confirmation = pendingConfirmations.find(c => c.confirmation_id === confirmationId);
-      
       const response = await fetch(`${API_BASE_URL}/api/v1/chat/confirmation/${confirmationId}/respond`, {
         method: 'POST',
         headers: {
@@ -920,7 +703,7 @@ export default function DualAgentDebugPage() {
           prev.filter(conf => conf.confirmation_id !== confirmationId)
         );
         
-        console.log(`✅ Confirmation ${confirmationId} processed successfully - backend will resume conversation automatically`);
+        console.log(`✅ Confirmation ${confirmationId} processed successfully`);
       } else {
         console.error('Failed to respond to confirmation:', await response.text());
       }
@@ -934,26 +717,19 @@ export default function DualAgentDebugPage() {
     const isAI = message.role === 'ai';
     const isSystem = message.role === 'system';
     
-    // console.log(`Rendering message ${message.id}: role="${message.role}", isHuman=${isHuman}, isAI=${isAI}`);
-    
-    // Determine message styling based on role
     let messageStyle = '';
     let containerStyle = '';
     
     if (isHuman) {
-      // User messages: right-aligned, blue background
       containerStyle = 'justify-end';
       messageStyle = 'bg-blue-600 text-white';
     } else if (isAI) {
-      // AI messages: left-aligned, green background
       containerStyle = 'justify-start';
       messageStyle = 'bg-green-600 text-white';
     } else if (isSystem) {
-      // System messages: left-aligned, gray background
       containerStyle = 'justify-start';
       messageStyle = 'bg-gray-500 text-white';
     } else {
-      // Default: left-aligned, gray background
       containerStyle = 'justify-start';
       messageStyle = 'bg-gray-100 text-gray-800';
     }
@@ -1013,12 +789,7 @@ export default function DualAgentDebugPage() {
               </div>
               {chat.conversationId && (
                 <div className="text-xs text-gray-500">
-                  Ongoing Conversation: {chat.conversationId.substring(0, 8)}...
-                </div>
-              )}
-              {!chat.conversationId && chat.messages.length === 0 && (
-                <div className="text-xs text-green-600">
-                  Ready to start conversation
+                  Conversation: {chat.conversationId.substring(0, 8)}...
                 </div>
               )}
             </div>
@@ -1028,7 +799,7 @@ export default function DualAgentDebugPage() {
                 className="text-red-600 hover:text-red-800 text-sm"
                 title="Clear this user's conversation history"
               >
-                Clear Conversation
+                Clear
               </button>
             </div>
           </div>
@@ -1134,16 +905,6 @@ export default function DualAgentDebugPage() {
           </p>
         </div>
 
-        {/* Hot Reload Notification */}
-        {hotReloadNotification && (
-          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center space-x-2">
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-            <div className="text-sm text-blue-800 font-medium">
-              {hotReloadNotification}
-            </div>
-          </div>
-        )}
-
         {/* Controls */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1196,7 +957,7 @@ export default function DualAgentDebugPage() {
                 </option>
                 {filteredCustomerUsers.map(user => (
                   <option key={user.id} value={user.id}>
-                    {user.name} ({user.email}) - ID: {user.id.substring(0, 8)}...
+                    {user.name} ({user.email})
                   </option>
                 ))}
               </select>
@@ -1227,22 +988,24 @@ export default function DualAgentDebugPage() {
                   <span className="text-sm">Debug Mode</span>
                 </label>
                 
-                {/* Hot Reload Status Indicator */}
-                <div className="pt-2 border-t border-gray-200">
+                {/* Realtime Status & Manual Refresh */}
+                <div className="pt-2 border-t border-gray-200 space-y-2">
                   <div className="flex items-center space-x-2">
-                    <div className={`w-2 h-2 rounded-full ${
-                      realtimeStatus === 'connected' ? 'bg-green-500' :
-                      realtimeStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
-                      'bg-red-500'
-                    }`}></div>
+                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
                     <span className="text-xs font-medium">
-                      Hot Reload: {realtimeStatus === 'connected' ? 'Connected' :
-                      realtimeStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+                      Realtime: {(employeeChat.conversationId || customerChat.conversationId) ? 'Active' : 'Waiting'}
                     </span>
                   </div>
-                  {lastMessageUpdate && (
-                    <div className="text-xs text-gray-500 mt-1">
-                      Last update: {lastMessageUpdate}
+                  <button
+                    onClick={() => refreshMessages()}
+                    className="flex items-center space-x-2 px-3 py-1 bg-blue-100 hover:bg-blue-200 rounded text-xs font-medium text-blue-800"
+                    title="Manually refresh messages for both chats"
+                  >
+                    <span>Manual Refresh</span>
+                  </button>
+                  {lastUpdate && (
+                    <div className="text-xs text-gray-500">
+                      Last update: {lastUpdate}
                     </div>
                   )}
                 </div>
@@ -1270,9 +1033,6 @@ export default function DualAgentDebugPage() {
                         Type: {conf.message_type}
                       </p>
                     </div>
-                    <span className="text-xs text-gray-500">
-                      {new Date(conf.expires_at).toLocaleString()}
-                    </span>
                   </div>
                   <div className="bg-gray-50 rounded p-3 mb-3">
                     <p className="text-sm">{conf.message_content}</p>
@@ -1329,9 +1089,7 @@ export default function DualAgentDebugPage() {
                     conversationId: employeeChat.conversationId,
                     messageCount: employeeChat.messages.length,
                     isLoading: employeeChat.isLoading,
-                    error: employeeChat.error,
-                    userAccountId: selectedEmployeeUser?.id ? selectedEmployeeUser.id.substring(0, 8) + '...' : 'None',
-                    employeeMappingId: selectedEmployeeUser?.employee_id ? selectedEmployeeUser.employee_id.substring(0, 8) + '...' : 'None'
+                    error: employeeChat.error
                   }, null, 2)}
                 </pre>
               </div>
@@ -1343,9 +1101,7 @@ export default function DualAgentDebugPage() {
                     conversationId: customerChat.conversationId,
                     messageCount: customerChat.messages.length,
                     isLoading: customerChat.isLoading,
-                    error: customerChat.error,
-                    userAccountId: selectedCustomerUser?.id ? selectedCustomerUser.id.substring(0, 8) + '...' : 'None',
-                    customerMappingId: selectedCustomerUser?.customer_id ? selectedCustomerUser.customer_id.substring(0, 8) + '...' : 'None'
+                    error: customerChat.error
                   }, null, 2)}
                 </pre>
               </div>
@@ -1361,19 +1117,13 @@ export default function DualAgentDebugPage() {
             Filtered Customers: {filteredCustomerUsers.length} | 
             Selected: {selectedEmployeeUser ? `Employee(${selectedEmployeeUser.name})` : 'No Employee'} & {selectedCustomerUser ? `Customer(${selectedCustomerUser.name})` : 'No Customer'} |
             Confirmations: {pendingConfirmations.length} pending |
-            Hot Reload: <span className={`font-medium ${
-              realtimeStatus === 'connected' ? 'text-green-600' :
-              realtimeStatus === 'connecting' ? 'text-yellow-600' :
-              'text-red-600'
-            }`}>
-              {realtimeStatus}
-            </span>
-            {lastMessageUpdate && (
-              <> | Last sync: {lastMessageUpdate}</>
+            Mode: <span className="font-medium text-green-600">Realtime + On-Demand</span>
+            {lastUpdate && (
+              <> | Last refresh: {lastUpdate}</>
             )}
           </p>
         </div>
       </div>
     </div>
   );
-} 
+}

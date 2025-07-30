@@ -107,7 +107,7 @@ export default function WatchtowerPage() {
       {/* Header */}
       <div className="bg-white shadow-sm border-b border-gray-200 px-6 py-4 flex-shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
+          <div className="flex flex-col">
             <h1 className="text-2xl font-bold text-gray-900">Sales Watchtower</h1>
             <div className="text-sm text-gray-500">Monitor customer conversations</div>
           </div>

@@ -217,6 +217,7 @@ class Settings(BaseSettings):
     memory_max_messages: int = Field(default=12, env="MEMORY_MAX_MESSAGES")
     memory_summary_interval: int = Field(default=10, env="MEMORY_SUMMARY_INTERVAL")
     memory_auto_summarize: bool = Field(default=True, env="MEMORY_AUTO_SUMMARIZE")
+    memory_context_window_size: int = Field(default=20, env="MEMORY_CONTEXT_WINDOW_SIZE", description="Number of recent messages to keep in moving context window")
     # Removed master_summary_conversation_limit - system simplified to use conversation summaries only
 
     # Telegram Configuration
@@ -283,7 +284,8 @@ class Settings(BaseSettings):
         return SimpleNamespace(
             max_messages=self.memory_max_messages,
             summary_interval=self.memory_summary_interval,
-            auto_summarize=self.memory_auto_summarize
+            auto_summarize=self.memory_auto_summarize,
+            context_window_size=self.memory_context_window_size
         )
 
     @property

@@ -33,6 +33,7 @@ if str(backend_path) not in sys.path:
 
 # Now use absolute imports
 from agents.tobi_sales_copilot.state import AgentState
+from agents.tobi_sales_copilot.language import detect_user_language, detect_user_language_from_context, get_employee_system_prompt, get_customer_system_prompt
 from agents.tools import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
 from agents.memory import memory_manager, memory_scheduler, context_manager
 from agents.hitl import parse_tool_response, hitl_node
@@ -100,6 +101,8 @@ class UnifiedToolCallingRAGAgent:
             logger.info("LangSmith tracing disabled")
 
         self._initialized = True
+
+
 
     async def _build_graph(self) -> StateGraph:
         """Build a graph with automatic checkpointing and state persistence between agent steps."""
@@ -431,7 +434,7 @@ Use this context to provide personalized, contextually aware responses that buil
             long_term_context = []
             current_query = ""
             
-            # Extract current query from most recent human message
+            # Extract current query from most recent human message and detect language from context
             for msg in reversed(enhanced_messages):
                 if hasattr(msg, "type") and msg.type == "human":
                     current_query = msg.content
@@ -439,6 +442,10 @@ Use this context to provide personalized, contextually aware responses that buil
                 elif isinstance(msg, dict) and msg.get("role") == "human":
                     current_query = msg.get("content", "")
                     break
+            
+            # Detect user's language preference from conversation context (not just current message)
+            user_language = detect_user_language_from_context(enhanced_messages, max_messages=10)
+            logger.info(f"[EA_MEMORY_PREP] Detected user language from context: {user_language}")
             
             if user_id and current_query:
                 long_term_context = await self.memory_manager.get_relevant_context(
@@ -474,7 +481,7 @@ This context from previous conversations may be relevant to the current query.
             
             # Apply context window management for employee model
             selected_model = self.settings.openai_chat_model
-            system_prompt = self._get_employee_system_prompt()
+            system_prompt = get_employee_system_prompt(self.tool_names, user_language)
             
             trimmed_messages, trim_stats = await context_manager.trim_messages_for_context(
                 messages=enhanced_messages,
@@ -587,7 +594,7 @@ Use this context to provide personalized, helpful responses that build on your p
             long_term_context = []
             current_query = ""
             
-            # Extract current query from most recent human message
+            # Extract current query from most recent human message and detect language from context
             for msg in reversed(enhanced_messages):
                 if hasattr(msg, "type") and msg.type == "human":
                     current_query = msg.content
@@ -595,6 +602,10 @@ Use this context to provide personalized, helpful responses that build on your p
                 elif isinstance(msg, dict) and msg.get("role") == "human":
                     current_query = msg.get("content", "")
                     break
+            
+            # Detect user's language preference from conversation context for customer system prompt adaptation
+            user_language = detect_user_language_from_context(enhanced_messages, max_messages=10)
+            logger.info(f"[CA_MEMORY_PREP] Detected user language from context: {user_language}")
             
             if user_id and current_query:
                 long_term_context = await self.memory_manager.get_relevant_context(
@@ -633,7 +644,7 @@ This information from your past interactions may help me better assist you.
             
             # Apply context window management for customer model
             selected_model = self.settings.openai_chat_model
-            customer_system_prompt = self._get_customer_system_prompt()
+            customer_system_prompt = get_customer_system_prompt(user_language)
             
             # Use slightly smaller context for customers to ensure better response quality
             max_customer_messages = min(self.settings.memory.max_messages, 15)
@@ -1430,8 +1441,21 @@ Failed to deliver your message to {customer_name}.
             # Use messages as-is from memory preparation
             trimmed_messages = messages
 
-            # Create system prompt for employee
-            system_prompt = self._get_employee_system_prompt()
+            # Detect user language from conversation context
+            current_query = ""
+            for msg in reversed(trimmed_messages):
+                if hasattr(msg, "type") and msg.type == "human":
+                    current_query = msg.content
+                    break
+                elif isinstance(msg, dict) and msg.get("role") == "human":
+                    current_query = msg.get("content", "")
+                    break
+            
+            user_language = detect_user_language_from_context(trimmed_messages, max_messages=10)
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Detected user language from context: {user_language}")
+
+            # Create system prompt for employee with language adaptation
+            system_prompt = get_employee_system_prompt(self.tool_names, user_language)
             
             processing_messages = [
                 SystemMessage(content=system_prompt)
@@ -1644,38 +1668,7 @@ Failed to deliver your message to {customer_name}.
             "hitl_data": state.get("hitl_data"),
         }
 
-    def _get_employee_system_prompt(self) -> str:
-        """Get the system prompt for employee users."""
-        return f"""You are a helpful sales assistant with full access to company tools and data.
 
-Available tools:
-{', '.join(self.tool_names)}
-
-**IMPORTANT - Current System Status:**
-All employee identification and customer messaging systems are fully operational. You can directly use trigger_customer_message for any customer messaging requests without needing additional employee information.
-
-**Tool Usage Guidelines:**
-- Use simple_rag for comprehensive document-based answers
-- Use simple_query_crm_data for specific CRM database queries  
-- Use trigger_customer_message when asked to send messages, follow-ups, or contact customers
-
-**Customer Messaging:**
-When asked to "send a message to [customer]", "follow up with [customer]", or "contact [customer]", DIRECTLY use the trigger_customer_message tool. The system will automatically identify you as the sending employee. This will prepare the message and request your confirmation before sending.
-
-**Message Content Guidelines:**
-- If specific message content is provided, use it exactly
-- If no specific content is given, generate appropriate professional content based on the message type
-- For follow-up messages, create content like "Hi [Name], I wanted to follow up on our recent interaction. Please let me know if you have any questions or need assistance."
-- NEVER ask for message content using gather_further_details - generate appropriate content instead
-
-DO NOT ask for additional employee information - the system handles employee identification automatically.
-
-You have full access to:
-- All CRM data (employees, customers, vehicles, sales, etc.)
-- All company documents through RAG system
-- Customer messaging capabilities with confirmation workflows
-
-Be helpful, professional, and make full use of your available tools to assist with sales and customer management tasks."""
 
     @traceable(name="customer_agent_node")
     async def _customer_agent_node(
@@ -1741,6 +1734,10 @@ Be helpful, professional, and make full use of your available tools to assist wi
                     current_query = msg.get("content", "")
                     break
 
+            # Detect user language from conversation context
+            user_language = detect_user_language_from_context(original_messages, max_messages=10)
+            logger.info(f"[CUSTOMER_AGENT_NODE] Detected user language from context: {user_language}")
+
             # Log thread_id and conversation_id for debugging
             conversation_id = state.get("conversation_id")
             thread_id = (
@@ -1752,8 +1749,8 @@ Be helpful, professional, and make full use of your available tools to assist wi
             # Use customer-specific model selection
             selected_model = self.settings.openai_chat_model
 
-            # Get customer-specific system prompt
-            system_prompt = self._get_customer_system_prompt()
+            # Get customer-specific system prompt with language adaptation
+            system_prompt = get_customer_system_prompt(user_language)
 
             # Build processing messages with customer system prompt
             # Context management and user context already handled by ca_memory_prep
@@ -2456,50 +2453,7 @@ Be helpful, professional, and make full use of your available tools to assist wi
             logger.error(f"[STORAGE] Failed to store message record: {str(e)}")
             raise
 
-    def _get_customer_system_prompt(self) -> str:
-        """Get the customer-specific system prompt with restricted capabilities."""
-        return f"""You are a helpful vehicle sales assistant designed specifically for customers looking for vehicle information.
 
-You have access to specialized tools for customer inquiries:
-- simple_rag: Search company documents and vehicle information
-- simple_query_crm_data: Query vehicle specifications, pricing, and inventory data
-
-**IMPORTANT - Your Access Capabilities:**
-- You CAN help with vehicle specifications, models, features, and pricing information
-- You CAN access vehicle inventory and availability data
-- You CANNOT access employee information, customer records, sales opportunities, or internal business data
-- You CANNOT provide information about other customers or internal company operations
-
-**What you CAN help with:**
-- Vehicle models, specifications, and features
-- Pricing information and available discounts
-- Vehicle comparisons and recommendations
-- **Inventory availability and stock quantities**
-- Vehicle features and options
-
-**What you CANNOT help with:**
-- Employee information or contact details
-- Other customer information or records
-- Sales opportunities or deals
-- Internal company operations
-- Business performance data
-
-Your goal is to help customers find the right vehicle by providing accurate information about our vehicle inventory and pricing.
-
-Be friendly, helpful, and focus on addressing the customer's vehicle-related questions. If asked about restricted information, politely explain that you can only assist with vehicle and pricing information.
-
-Available tools:
-{', '.join(['simple_rag', 'simple_query_crm_data'])}
-
-Guidelines:
-- Use simple_rag for comprehensive document-based answers about vehicles and company information
-- **Use simple_query_crm_data for vehicle specifications, pricing, and inventory availability questions**
-- For inventory questions like "How many [model] are available?", always use simple_query_crm_data to check current stock
-- Be helpful and customer-focused in your responses
-- If asked about restricted data, redirect to vehicle and pricing topics
-- Provide source citations when documents are found
-
-Remember: You are here to help customers make informed vehicle purchasing decisions!"""
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the unified agent."""
