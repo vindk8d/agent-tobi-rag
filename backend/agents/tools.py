@@ -369,129 +369,70 @@ async def _get_conversation_context(conversation_id: str, limit: int = 6) -> str
 
 async def _generate_sql_query_simple(question: str, db: SQLDatabase, user_type: str = "employee") -> str:
     """
-    Generate SQL query using LangChain best practice approach with user type-based access control.
-    No hard-coded keywords - let the LLM use natural language understanding.
-    
-    Args:
-        question: The user's question
-        db: Database connection
-        user_type: User type for access control (employee, customer, admin)
+    Generate SQL query using minimal context + optional tools approach.
+    Follows LangChain best practices - start minimal, let LLM request more via tools.
     """
     try:
-        # Get conversation context (keep this enhancement)
-        conversation_id = get_current_conversation_id()
-        conversation_context = ""
-        if conversation_id:
-            conversation_context = await _get_conversation_context(conversation_id)
-
-        # Get current employee ID for employee-specific queries
-        employee_id = await get_current_employee_id()
-        employee_context = ""
-        if employee_id:
-            employee_context = f"\nCurrent user employee ID: {employee_id}"
-
-        # Get appropriate LLM using natural language assessment
+        # Get LLM with tool calling capability
         llm = await _get_appropriate_llm(question)
+        
+        # Make tools available for LLM to use when needed
+        tools = [get_detailed_schema, get_recent_conversation_context]
+        llm_with_tools = llm.bind_tools(tools)
 
-        # User type-specific system templates
+        # Simple, minimal prompt templates
         if user_type == "customer":
-            system_template = """You are a {dialect} expert. Given an input question, create a syntactically correct {dialect} query to run.
+            template = """You are a PostgreSQL expert. Create a SELECT query for: {question}
 
-IMPORTANT - CUSTOMER ACCESS RESTRICTIONS:
-You can ONLY query these tables:
-- vehicles (for vehicle specifications, models, features)
-- pricing (for price information)
+{minimal_schema}
 
-You MUST NOT query these restricted tables:
-- employees (FORBIDDEN)
-- opportunities (FORBIDDEN)
-- customers (FORBIDDEN)
-- activities (FORBIDDEN)
-- branches (FORBIDDEN)
+CUSTOMER RESTRICTIONS: Only query vehicles and pricing tables.
 
-Database Schema (CUSTOMER ACCESS ONLY):
-{table_info}
-
-{context}
-
-Guidelines for CUSTOMER queries:
-- Query for at most 5 results using LIMIT unless specified otherwise
-- Only query columns needed to answer the question about vehicles and pricing
-- Use proper JOIN conditions between vehicles and pricing tables when needed
-- Be careful with column names and table references
-- Focus only on vehicle specifications, features, models, and pricing
-- If asked about employees, deals, opportunities, or customer records, respond with "Access denied - customers can only query vehicle and pricing information"
-
-Question: {question}
-SQL Query:"""
-        else:
-            # Employee/admin template (existing functionality)
-            system_template = """You are a {dialect} expert. Given an input question, create a syntactically correct {dialect} query to run.
-
-Database Schema:
-{table_info}
-
-{context}
-
-{employee_context}
+Available tools (use if needed):
+- get_detailed_schema(table_names) - Get full schema for specific tables
+- get_recent_conversation_context() - Get context if question references previous chat
 
 Guidelines:
-- Query for at most 5 results using LIMIT unless specified otherwise
-- Only query columns needed to answer the question
-- Use proper JOIN conditions when needed
-- Be careful with column names and table references
-- If the question references something from recent conversation, use that context
-- IMPORTANT: If a current user employee ID is provided, it means the user is asking about THEIR data
-- For employee-related queries (leads, opportunities, deals, pipeline, prospects), filter by opportunity_salesperson_ae_id = current employee ID
-- For sales/transactions, filter by opportunity_salesperson_ae_id in transactions table
-- For activities, filter by opportunity_salesperson_ae_id in activities table
+- SELECT only, LIMIT 5
+- Use exact column names from schema above
+- If you need more schema details, use get_detailed_schema tool
 
 Question: {question}
 SQL Query:"""
-
-        # Include context based on user type
-        context_section = ""
-        if conversation_context:
-            context_section = f"\nRecent conversation context:\n{conversation_context}\n"
-
-        employee_section = ""
-        if employee_context and user_type in ["employee", "admin"]:
-            employee_section = employee_context
-
-        prompt = ChatPromptTemplate.from_template(system_template)
-
-        # User type-specific chain configuration
-        if user_type == "customer":
-            # Customer chain - no employee context
-            chain = (
-                {
-                    "question": RunnablePassthrough(),
-                    "table_info": lambda _: _get_customer_table_info(db),
-                    "context": lambda _: context_section,
-                    "dialect": lambda _: db.dialect,
-                }
-                | prompt
-                | llm
-                | StrOutputParser()
-            )
         else:
-            # Employee/admin chain - full access
-            chain = (
-                {
-                    "question": RunnablePassthrough(),
-                    "table_info": lambda _: db.get_table_info(),
-                    "context": lambda _: context_section,
-                    "employee_context": lambda _: employee_section,
-                "dialect": lambda _: db.dialect
+            template = """You are a PostgreSQL expert. Create a SELECT query for: {question}
+
+{minimal_schema}
+
+Available tools (use if needed):
+- get_detailed_schema(table_names) - Get full schema for specific tables  
+- get_recent_conversation_context() - Get context if question references previous chat
+
+Guidelines:
+- SELECT only, LIMIT 5
+- Use proper JOIN conditions when needed
+- For employee queries, filter by opportunity_salesperson_ae_id when relevant
+- If you need more info, use the tools
+
+Question: {question}  
+SQL Query:"""
+
+        prompt = ChatPromptTemplate.from_template(template)
+
+        # Simple chain with minimal context
+        chain = (
+            {
+                "question": RunnablePassthrough(),
+                "minimal_schema": lambda _: get_minimal_schema_info(user_type),
             }
             | prompt
-            | llm
+            | llm_with_tools
             | StrOutputParser()
         )
 
         result = await chain.ainvoke(question)
-
-        # Basic cleanup
+        
+        # Clean up SQL
         query = result.strip()
         if query.startswith("```sql"):
             query = query[6:]
@@ -726,6 +667,51 @@ Available tables:
 - pricing: Price information, base prices, discounts, fees
 """
 
+def get_minimal_schema_info(user_type: str) -> str:
+    """Return minimal schema - just table names and key columns to reduce context size."""
+    
+    if user_type == "customer":
+        return """Available Tables:
+• vehicles: id, brand, model, year, type, color, is_available, stock_quantity
+• pricing: id, vehicle_id, base_price, final_price, is_active
+Note: Price info is in pricing table, linked via vehicle_id"""
+    
+    # Employee/admin get minimal table info
+    return """Available Tables:
+• customers: id, name, email, phone, status, created_at
+• opportunities: id, customer_id, title, status, amount, opportunity_salesperson_ae_id
+• employees: id, name, email, department, role_title
+• vehicles: id, brand, model, year, type, color, is_available, stock_quantity
+• pricing: id, vehicle_id, base_price, final_price, is_active
+• activities: id, opportunity_id, activity_type, activity_date, notes
+• branches: id, name, location, manager_id
+• transactions: id, opportunity_id, amount, transaction_date, status
+Note: Price info is in pricing table, linked to vehicles via vehicle_id"""
+
+@tool
+async def get_detailed_schema(table_names: str) -> str:
+    """Get detailed schema for specific tables when LLM needs more info.
+    
+    Args:
+        table_names: Comma-separated list of table names (e.g. "customers,opportunities")
+    """
+    try:
+        db = await _get_sql_database()
+        tables_list = [name.strip() for name in table_names.split(',')]
+        return db.get_table_info(tables_list)
+    except Exception as e:
+        return f"Error getting schema for {table_names}: {e}"
+
+@tool  
+async def get_recent_conversation_context() -> str:
+    """Get recent conversation context when question references previous discussion."""
+    try:
+        conversation_id = get_current_conversation_id()
+        if not conversation_id:
+            return "No conversation context available"
+        return await _get_conversation_context(conversation_id, limit=3)
+    except Exception as e:
+        return f"Error getting conversation context: {e}"
 
 # =============================================================================
 # RAG INFRASTRUCTURE (Simplified)
@@ -2005,7 +1991,9 @@ def get_all_tools():
         simple_query_crm_data,
         simple_rag,
         trigger_customer_message,
-        gather_further_details
+        gather_further_details,
+        get_detailed_schema,
+        get_recent_conversation_context
     ]
 
 
@@ -2016,7 +2004,8 @@ def get_tools_for_user_type(user_type: str = "employee"):
         return [
             simple_query_crm_data,  # Will be internally filtered for table access
             simple_rag,  # Full access
-            gather_further_details  # General information gathering
+            gather_further_details,  # General information gathering
+            get_detailed_schema  # Can get vehicle schema details
         ]
     elif user_type in ["employee", "admin"]:
         # Employees get full access to all tools including customer messaging
@@ -2024,7 +2013,9 @@ def get_tools_for_user_type(user_type: str = "employee"):
             simple_query_crm_data,  # Full access
             simple_rag,  # Full access  
             trigger_customer_message,  # Employee only - customer outreach tool
-            gather_further_details  # General information gathering
+            gather_further_details,  # General information gathering
+            get_detailed_schema,  # Can get detailed schema
+            get_recent_conversation_context  # Can access conversation history
         ]
     else:
         # Unknown users get no tools

@@ -1,0 +1,374 @@
+{
+  "timestamp": "20250731_233514",
+  "total_tests": 19,
+  "successful_tests": 19,
+  "failed_tests": 0,
+  "average_response_time_ms": 13765,
+  "average_token_usage": 510,
+  "detailed_results": [
+    {
+      "query": {
+        "description": "Basic vehicle availability check",
+        "question": "Is the Toyota Prius available?",
+        "expected_complexity": "simple",
+        "user_type": "customer",
+        "should_succeed": true,
+        "expected_tools_used": [],
+        "notes": "Should work with minimal schema only"
+      },
+      "success": true,
+      "response_message": "Is there anything specific you'd like to know about the Toyota Prius, such as features, pricing, or trim options? I'm here to help!",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 24255,
+      "estimated_tokens": 507,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Simple vehicle listing",
+        "question": "Show me all available Toyota models",
+        "expected_complexity": "simple",
+        "user_type": "customer",
+        "should_succeed": true,
+        "expected_tools_used": [],
+        "notes": "Basic vehicle lookup"
+      },
+      "success": true,
+      "response_message": "I processed your request, but didn't generate a response message. If you were expecting a specific action or response, please try rephrasing your request.",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 15777,
+      "estimated_tokens": 508,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Employee basic customer lookup",
+        "question": "Show me active customers",
+        "expected_complexity": "simple",
+        "user_type": "employee",
+        "should_succeed": true,
+        "expected_tools_used": [],
+        "notes": "Should work with minimal schema"
+      },
+      "success": true,
+      "response_message": "I encountered an issue: SQL_ERROR: (psycopg2.errors.UndefinedColumn) column o.status does not exist\nLINE 4: WHERE o.status = 'active'\n              ^\nHINT:  Perhaps you meant to reference the column \"o.stage\".\n\n[SQL: SELECT c.id, c.name, c.email, c.phone\nFROM customers c\nJOIN opportunities o ON c.id = o.customer_id\nWHERE o.status = 'active'\nLIMIT 5;]\n(Background on this error at: https://sqlalche.me/e/20/f405). Could you please rephrase your question?",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 15600,
+      "estimated_tokens": 506,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Vehicle with pricing information",
+        "question": "Show me Toyota Prius models with their prices",
+        "expected_complexity": "complex",
+        "user_type": "customer",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_detailed_schema"
+        ],
+        "notes": "Needs JOIN between vehicles and pricing"
+      },
+      "success": true,
+      "response_message": "I processed your request, but didn't generate a response message. If you were expecting a specific action or response, please try rephrasing your request.",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 18528,
+      "estimated_tokens": 511,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Customer opportunities for employee",
+        "question": "Show me customers with pending deals over $50000",
+        "expected_complexity": "complex",
+        "user_type": "employee",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_detailed_schema"
+        ],
+        "notes": "Needs JOIN between customers and opportunities"
+      },
+      "success": true,
+      "response_message": "I encountered an issue: SQL_ERROR: (psycopg2.errors.UndefinedColumn) column p.opportunity_id does not exist\nLINE 4: JOIN pricing p ON o.id = p.opportunity_id\n                                 ^\n\n[SQL: SELECT c.id, c.name, c.email, c.phone\nFROM customers c\nJOIN opportunities o ON c.id = o.customer_id\nJOIN pricing p ON o.id = p.opportunity_id\nWHERE o.status = 'pending' AND p.final_price > 50000\nLIMIT 5;]\n(Background on this error at: https://sqlalche.me/e/20/f405). Could you please rephrase your question?",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 14166,
+      "estimated_tokens": 512,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Complex aggregation query",
+        "question": "What's the average price of available vehicles by brand?",
+        "expected_complexity": "complex",
+        "user_type": "customer",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_detailed_schema"
+        ],
+        "notes": "Needs detailed schema for aggregation"
+      },
+      "success": true,
+      "response_message": "Hi po! Here\u2019s the average price of available vehicles by brand:\n\n- Ford: \u20b11,955,667\n- Honda: \u20b11,421,943\n- Hyundai: \u20b11,276,000\n- Nissan: \u20b11,299,550\n- Toyota: \u20b11,459,600\n\nThis should help you get an idea of the pricing across different brands. If you have a specific brand or model in mind na gusto mong pag-usapan, let me know! Sana nakatulong!",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 12635,
+      "estimated_tokens": 514,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Reference to previous conversation",
+        "question": "Send a follow-up message to that customer we discussed",
+        "expected_complexity": "contextual",
+        "user_type": "employee",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_recent_conversation_context"
+        ],
+        "notes": "Should call conversation context tool"
+      },
+      "success": true,
+      "response_message": "\ud83d\udd04 **Customer Message Confirmation**\n\n**To:** Grace Lee (grace.lee@consulting.com)\n**Type:** Follow Up\n**Message:** Hi Grace, I wanted to follow up on our recent interaction. Please let me know if you have any questions or need assistance.\n\n**Formatted Preview:**\nDear Grace Lee,\n\nI hope this message finds you well. I'm following up on our recent interaction.\n\nHi Grace, I wanted to follow up on our recent interaction. Please let me know if you have any questions or need assistance.\n\nPlease don't hesitate to reach out if you have any questions or need further assistance.\n\nBest regards\n\nDo you want to send this message to the customer?",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 2987,
+      "estimated_tokens": 513,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Reference with pronoun",
+        "question": "What was the price of that Toyota model I asked about?",
+        "expected_complexity": "contextual",
+        "user_type": "customer",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_recent_conversation_context"
+        ],
+        "notes": "Needs context to resolve 'that Toyota model'"
+      },
+      "success": true,
+      "response_message": "The latest model of the Toyota Prius (2024) has a base price of \u20b11,300,000, with a final price of \u20b11,273,000. If you have any specific features or trim levels in mind, let me know, and I can provide more detailed information! Also, if you're still interested in the availability of the Prius, I can try checking that again for you.",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 5993,
+      "estimated_tokens": 513,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Customer trying to access employee data",
+        "question": "Show me all employee performance metrics",
+        "expected_complexity": "invalid",
+        "user_type": "customer",
+        "should_succeed": false,
+        "expected_tools_used": [],
+        "notes": "Should be blocked by access control"
+      },
+      "success": true,
+      "response_message": "Pasensya na po, pero hindi ko ma-access ang employee performance metrics o anumang internal company data. Ang maaasahan ko lang ay ang impormasyon tungkol sa mga sasakyan, pricing, at availability. \n\nKung may iba pa kayong katanungan tungkol sa Toyota Prius, Honda CR-V, o iba pang sasakyan, nandito lang po ako para tumulong! Salamat po!",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 11417,
+      "estimated_tokens": 510,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Customer trying to access customer records",
+        "question": "Show me all customer contact information",
+        "expected_complexity": "invalid",
+        "user_type": "customer",
+        "should_succeed": false,
+        "expected_tools_used": [],
+        "notes": "Should be blocked - customers can't see other customers"
+      },
+      "success": true,
+      "response_message": "Pasensya na po, pero hindi ko maibigay ang customer contact information. Ang kaya ko lang talagang tulungan ay tungkol sa mga sasakyan, pricing, at availability. \n\nKung may iba pa kayong katanungan tungkol sa Toyota Prius, Honda CR-V, o ibang models, nandito lang po ako para tumulong! Salamat po!",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 4261,
+      "estimated_tokens": 510,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Employee accessing customer data (allowed)",
+        "question": "Show me customer contact information for my active deals",
+        "expected_complexity": "complex",
+        "user_type": "employee",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_detailed_schema"
+        ],
+        "notes": "Employee should have access with proper filtering"
+      },
+      "success": true,
+      "response_message": "I encountered an issue: SQL_ERROR: (psycopg2.errors.UndefinedColumn) column o.status does not exist\nLINE 4: WHERE o.status = 'active'\n              ^\nHINT:  Perhaps you meant to reference the column \"o.stage\".\n\n[SQL: SELECT c.name, c.email, c.phone\nFROM customers c\nJOIN opportunities o ON c.id = o.customer_id\nWHERE o.status = 'active'\nLIMIT 5;]\n(Background on this error at: https://sqlalche.me/e/20/f405). Could you please rephrase your question?",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 12882,
+      "estimated_tokens": 514,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Non-existent table",
+        "question": "Show me data from the unicorns table",
+        "expected_complexity": "invalid",
+        "user_type": "employee",
+        "should_succeed": false,
+        "expected_tools_used": [],
+        "notes": "Should handle gracefully"
+      },
+      "success": true,
+      "response_message": "Sorry, pero wala tayong access sa \"unicorns\" table. Kung may specific na data ka na gustong malaman, baka pwede kitang matulungan sa ibang paraan. Anong klaseng information ang hinahanap mo?",
+      "error_message": null,
+      "tools_called": [
+        "get_detailed_schema"
+      ],
+      "response_time_ms": 5648,
+      "estimated_tokens": 509,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Malformed question",
+        "question": "asdfasdf car price when?",
+        "expected_complexity": "invalid",
+        "user_type": "customer",
+        "should_succeed": false,
+        "expected_tools_used": [],
+        "notes": "Should handle gracefully or ask for clarification"
+      },
+      "success": true,
+      "response_message": "It looks like you're interested in the pricing for the Toyota Prius! The latest model for 2024 has a base price of \u20b11,300,000, and the final price can go down to \u20b11,273,000 depending on any available discounts or promotions.\n\nIf you have any specific features or trim levels in mind, let me know, and I can provide more detailed information! Also, if you're still curious about the availability of the Prius or any other vehicle, I'm here to help with that as well.",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 12199,
+      "estimated_tokens": 506,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Empty question",
+        "question": "",
+        "expected_complexity": "invalid",
+        "user_type": "customer",
+        "should_succeed": false,
+        "expected_tools_used": [],
+        "notes": "Should handle empty input gracefully"
+      },
+      "success": true,
+      "response_message": "I apologize, but I encountered an error while processing your request.",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 55,
+      "estimated_tokens": 500,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Impossible request",
+        "question": "Show me vehicles that cost negative money",
+        "expected_complexity": "complex",
+        "user_type": "customer",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_detailed_schema"
+        ],
+        "notes": "Should generate valid SQL even if no results"
+      },
+      "success": true,
+      "response_message": "Hi po! Sa totoo lang, wala tayong vehicles na nagkakahalaga ng negative money. Lahat ng vehicles ay may price range, at usually, nag-start ang mga ito sa base price na above zero. \n\nKung may specific model or type of vehicle ka na gustong malaman ang presyo, let me know! Baka makatulong ako sa paghanap ng magandang deal para sa iyo. Salamat po!",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 7539,
+      "estimated_tokens": 510,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Question that should trigger schema tool",
+        "question": "Show me the relationship between vehicles and their pricing details",
+        "expected_complexity": "complex",
+        "user_type": "employee",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_detailed_schema"
+        ],
+        "notes": "Should call detailed schema for relationship info"
+      },
+      "success": true,
+      "response_message": "Narito ang mga detalye ng ilang vehicles kasama ang kanilang pricing:\n\n1. **Toyota Camry 2024** (sedan, Silver)\n   - Base Price: $1,200,000.00\n   - Final Price: $1,175,000.00\n\n2. **Toyota RAV4 2024** (SUV, Blue)\n   - Base Price: $1,450,000.00\n   - Final Price: $1,420,000.00\n\n3. **Honda Civic 2024** (sedan, White)\n   - Base Price: $1,100,000.00\n   - Final Price: $1,080,000.00\n\n4. **Honda CR-V 2024** (SUV, Black)\n   - Base Price: $1,350,000.00\n   - Final Price: $1,322,000.00\n\n5. **Ford F-150 2024** (pickup, Red)\n   - Base Price: $2,200,000.00\n   - Final Price: $2,155,000.00\n\nAng relationship ng vehicles at pricing details ay nagpapakita ng brand, model, year, type, color, base price, at final price. Makikita mo na ang pricing ay naka-link sa bawat vehicle base sa kanilang unique identifiers. Kung may iba ka pang katanungan o kailangan, sabihin mo lang po!",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 27051,
+      "estimated_tokens": 516,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Question with time reference",
+        "question": "Show me the vehicles we discussed in our last conversation",
+        "expected_complexity": "contextual",
+        "user_type": "customer",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_recent_conversation_context"
+        ],
+        "notes": "Should call conversation context tool"
+      },
+      "success": true,
+      "response_message": "Hi po! Sorry, medyo nagka-technical difficulties tayo sa pag-check ng inventory ng Toyota Prius at Honda CR-V. Pero don't worry, I can still provide you with the pricing information.\n\nFor the Toyota Prius 2024, the base price is \u20b11,300,000, and the final price is \u20b11,273,000. \n\nAs for the Honda CR-V, it's known for being spacious and reliable, perfect for families. If you want, I can check again for the current inventory or any specific features you're interested in.\n\nSana nakatulong! Let me know if you have any other questions or if there's anything else I can assist you with.",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 18373,
+      "estimated_tokens": 514,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Very specific query (minimal context should suffice)",
+        "question": "How many Toyota Camry vehicles are available?",
+        "expected_complexity": "simple",
+        "user_type": "customer",
+        "should_succeed": true,
+        "expected_tools_used": [],
+        "notes": "Should be fast with minimal context"
+      },
+      "success": true,
+      "response_message": "Hi po! Meron tayong 3 Toyota Camry vehicles available sa stock. \n\n- Dalawa sa kanila ay Silver in color, with a base price of \u20b11,200,000 and a final price of \u20b11,175,000.\n- Yung isa naman is Midnight Blue, with the same pricing.\n\nKung may iba ka pang questions or if you need more details, feel free to ask! Sana nakatulong!",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 21231,
+      "estimated_tokens": 511,
+      "actual_behavior": "Generated response successfully"
+    },
+    {
+      "query": {
+        "description": "Multi-table complex query",
+        "question": "Show me customers who bought Toyota vehicles in the last 6 months with their transaction details",
+        "expected_complexity": "complex",
+        "user_type": "employee",
+        "should_succeed": true,
+        "expected_tools_used": [
+          "get_detailed_schema"
+        ],
+        "notes": "Complex query needing multiple tables"
+      },
+      "success": true,
+      "response_message": "I encountered an issue: SQL_ERROR: (psycopg2.errors.UndefinedColumn) column transactions.transaction_date does not exist\nLINE 4:     transactions.transaction_date,\n            ^\n\n[SQL: SELECT \n    customers.id AS customer_id,\n    customers.name AS customer_name,\n    transactions.transaction_date,\n    transactions.status AS transaction_status,\n    vehicles.brand AS vehicle_brand\nFROM \n    customers\nJOIN \n    opportunities ON customers.id = opportunities.customer_id\nJOIN \n    transactions ON opportunities.id = transactions.opportunity_id\nJOIN \n    vehicles ON opportunities.id = vehicles.id\nWHERE \n    vehicles.brand = 'Toyota' AND\n    transactions.transaction_date >= NOW() - INTERVAL '6 months'\nLIMIT 5;]\n(Background on this error at: https://sqlalche.me/e/20/f405). Could you please rephrase your question?",
+      "error_message": null,
+      "tools_called": [],
+      "response_time_ms": 30951,
+      "estimated_tokens": 524,
+      "actual_behavior": "Generated response successfully"
+    }
+  ]
+}

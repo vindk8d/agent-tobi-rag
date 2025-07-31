@@ -275,6 +275,9 @@ export default function DualAgentDebugPage() {
     setLastUpdate(new Date().toLocaleTimeString());
   }, [selectedEmployeeUser, selectedCustomerUser, loadEmployeeMessages, loadCustomerMessages]);
 
+  // Track if we're currently refreshing to prevent multiple simultaneous refreshes
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   // Simple realtime subscription to detect new messages
   useEffect(() => {
     if (!employeeChat.conversationId && !customerChat.conversationId) {
@@ -301,21 +304,26 @@ export default function DualAgentDebugPage() {
           const isCustomerConversation = customerChat.conversationId && 
             newMessage?.conversation_id === customerChat.conversationId;
           
-          if (isEmployeeConversation || isCustomerConversation) {
+          if ((isEmployeeConversation || isCustomerConversation) && !isRefreshing) {
             console.log('✅ Message belongs to current conversation - refreshing');
             
-            // Only refresh if it's not a temp message (avoid refreshing our own optimistic updates)
-            if (!newMessage.id?.startsWith('temp_')) {
-              setTimeout(() => {
+            // Prevent multiple simultaneous refreshes
+            setIsRefreshing(true);
+            
+            // Small delay to ensure message is fully persisted, then refresh
+            setTimeout(async () => {
+              try {
                 if (isEmployeeConversation) {
-                  loadEmployeeMessages();
+                  await loadEmployeeMessages();
                 }
                 if (isCustomerConversation) {
-                  loadCustomerMessages();
+                  await loadCustomerMessages();
                 }
                 setLastUpdate(new Date().toLocaleTimeString());
-              }, 500); // Small delay to ensure message is fully persisted
-            }
+              } finally {
+                setIsRefreshing(false);
+              }
+            }, 800); // Slightly longer delay to ensure message is fully persisted
           }
         }
       )
@@ -327,7 +335,7 @@ export default function DualAgentDebugPage() {
       console.log('🧹 Cleaning up realtime subscription');
       supabase.removeChannel(channel);
     };
-  }, [employeeChat.conversationId, customerChat.conversationId, loadEmployeeMessages, loadCustomerMessages]);
+  }, [employeeChat.conversationId, customerChat.conversationId, loadEmployeeMessages, loadCustomerMessages, isRefreshing]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -583,10 +591,9 @@ export default function DualAgentDebugPage() {
           isLoading: false
         }));
 
-        // Check for pending confirmations and refresh messages
+        // Check for pending confirmations (realtime subscription will handle message refresh)
         setTimeout(() => {
           checkPendingConfirmations();
-          refreshMessages(userType);
         }, 1000);
         
         return;
@@ -607,10 +614,7 @@ export default function DualAgentDebugPage() {
         isLoading: false
       }));
 
-      // Refresh messages from database after a short delay to replace temp messages with persisted ones
-      setTimeout(() => {
-        refreshMessages(userType);
-      }, 1000);
+      // Note: Realtime subscription will automatically refresh messages when they're persisted to database
 
     } catch (error) {
       console.error('Error sending message:', error);
@@ -997,11 +1001,21 @@ export default function DualAgentDebugPage() {
                     </span>
                   </div>
                   <button
-                    onClick={() => refreshMessages()}
-                    className="flex items-center space-x-2 px-3 py-1 bg-blue-100 hover:bg-blue-200 rounded text-xs font-medium text-blue-800"
+                    onClick={async () => {
+                      if (!isRefreshing) {
+                        setIsRefreshing(true);
+                        try {
+                          await refreshMessages();
+                        } finally {
+                          setIsRefreshing(false);
+                        }
+                      }
+                    }}
+                    disabled={isRefreshing}
+                    className="flex items-center space-x-2 px-3 py-1 bg-blue-100 hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-medium text-blue-800"
                     title="Manually refresh messages for both chats"
                   >
-                    <span>Manual Refresh</span>
+                    <span>{isRefreshing ? 'Refreshing...' : 'Manual Refresh'}</span>
                   </button>
                   {lastUpdate && (
                     <div className="text-xs text-gray-500">
@@ -1118,6 +1132,9 @@ export default function DualAgentDebugPage() {
             Selected: {selectedEmployeeUser ? `Employee(${selectedEmployeeUser.name})` : 'No Employee'} & {selectedCustomerUser ? `Customer(${selectedCustomerUser.name})` : 'No Customer'} |
             Confirmations: {pendingConfirmations.length} pending |
             Mode: <span className="font-medium text-green-600">Realtime + On-Demand</span>
+            {isRefreshing && (
+              <> | <span className="text-blue-600 font-medium">Refreshing...</span></>
+            )}
             {lastUpdate && (
               <> | Last refresh: {lastUpdate}</>
             )}
