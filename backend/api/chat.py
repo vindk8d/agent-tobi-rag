@@ -125,8 +125,8 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
             hitl_phase = state_values.get('hitl_phase')
             hitl_prompt = state_values.get('hitl_prompt')
             hitl_context = state_values.get('hitl_context')
-            # Agent is awaiting HITL response when hitl_phase is "awaiting_response"
-            is_awaiting_hitl = hitl_phase == "awaiting_response"
+            # Agent is awaiting HITL response when hitl_phase indicates waiting for user input
+            is_awaiting_hitl = hitl_phase in ["awaiting_response", "needs_confirmation", "needs_prompt"]
             
         logger.info(f"🔍 [CHAT_DEBUG] HITL 3-field state check: phase={hitl_phase}, awaiting_hitl={is_awaiting_hitl}")
         if hitl_phase:
@@ -142,7 +142,7 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
         is_awaiting_hitl = False
 
     # Detect approval messages when agent is waiting for HITL response
-    approval_keywords = ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'proceed']
+    approval_keywords = ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'proceed', 'go ahead', 'send', 'send it', 'do it']
     is_approval_message = any(keyword in request.message.lower().strip() for keyword in approval_keywords)
     
     logger.info(f"🔍 [CHAT_DEBUG] State-based approval detection: message='{request.message}', is_approval={is_approval_message}, awaiting_hitl={is_awaiting_hitl}")

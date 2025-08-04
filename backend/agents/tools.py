@@ -10,6 +10,7 @@ This module provides:
 Following the principle: Use LLM intelligence rather than keyword matching or complex logic.
 """
 
+import asyncio
 import logging
 import contextvars
 import json
@@ -1005,6 +1006,12 @@ async def trigger_customer_message(customer_id: str, message_content: str, messa
     try:
         # Check if user is an employee by verifying employee_id is available
         sender_employee_id = await get_current_employee_id()
+        
+        # DEBUG: Log context during tool execution
+        logger.info(f"🔍 [TRIGGER_CUSTOMER_MESSAGE_CONTEXT] customer_id param: {customer_id}")
+        logger.info(f"🔍 [TRIGGER_CUSTOMER_MESSAGE_CONTEXT] sender_employee_id: {sender_employee_id}")
+        logger.info(f"🔍 [TRIGGER_CUSTOMER_MESSAGE_CONTEXT] current context: {get_user_context()}")
+        
         if not sender_employee_id:
             logger.warning("[CUSTOMER_MESSAGE] Non-employee user attempted to use customer messaging tool")
             return "I apologize, but customer messaging is only available to employees. Please contact your administrator if you need assistance."
@@ -1986,12 +1993,24 @@ async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
         
         logger.info(f"[CUSTOMER_LOOKUP] Searching with: '{search_terms}'")
         
+        # DEBUG: Test database connection during agent execution
+        logger.info(f"🔍 [DATABASE_DEBUG] db_client type: {type(db_client)}")
+        logger.info(f"🔍 [DATABASE_DEBUG] db_client._client before init: {type(db_client._client)}")
+        
         # Ensure client is initialized
         client = db_client.client
+        
+        # DEBUG: Test basic connectivity with async wrapper
+        logger.info(f"🔍 [DATABASE_DEBUG] client after init: {type(client)}")
+        try:
+            test_query = await asyncio.to_thread(lambda: client.table("customers").select("count").execute())
+            logger.info(f"🔍 [DATABASE_DEBUG] Basic connectivity test successful, customer table accessible")
+        except Exception as e:
+            logger.error(f"🔍 [DATABASE_DEBUG] Basic connectivity test FAILED: {e}")
         # Strategy 1: Check if input looks like a UUID first
         if len(search_terms.replace("-", "")) == 32 and search_terms.count("-") == 4:
             try:
-                result = client.table("customers").select("*").eq("id", customer_identifier).execute()
+                result = await asyncio.to_thread(lambda: client.table("customers").select("*").eq("id", customer_identifier).execute())
                 if result.data:
                     customer_data = result.data[0]
                     customer = _format_customer_data(customer_data)
@@ -2010,13 +2029,22 @@ async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
         
         for field, pattern in search_strategies:
             try:
-                result = client.table("customers").select("*").filter(field, "ilike", pattern).limit(1).execute()
+                logger.info(f"🔍 [DATABASE_DEBUG] Searching {field} with pattern: {pattern}")
+                # Wrap synchronous database call with asyncio.to_thread for LangGraph compatibility
+                result = await asyncio.to_thread(
+                    lambda: client.table("customers").select("*").filter(field, "ilike", pattern).limit(1).execute()
+                )
+                logger.info(f"🔍 [DATABASE_DEBUG] Query result: {len(result.data)} records found")
                 if result.data:
+                    logger.info(f"🔍 [DATABASE_DEBUG] Found customer data: {result.data[0]}")
                     customer_data = result.data[0]
                     customer = _format_customer_data(customer_data)
                     logger.info(f"[CUSTOMER_LOOKUP] Found customer via {field}: {customer.get('name')}")
                     return customer
+                else:
+                    logger.info(f"🔍 [DATABASE_DEBUG] No results for {field} search with pattern {pattern}")
             except Exception as e:
+                logger.error(f"🔍 [DATABASE_DEBUG] Search by {field} failed: {e}")
                 logger.debug(f"[CUSTOMER_LOOKUP] Search by {field} failed: {e}")
                 continue
         
@@ -2026,7 +2054,9 @@ async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
             for word in words:
                 if len(word) >= 3:  # Only search meaningful words
                     try:
-                        result = client.table("customers").select("*").filter("name", "ilike", f"%{word}%").limit(1).execute()
+                        result = await asyncio.to_thread(
+                            lambda: client.table("customers").select("*").filter("name", "ilike", f"%{word}%").limit(1).execute()
+                        )
                         if result.data:
                             customer_data = result.data[0]
                             customer = _format_customer_data(customer_data)
@@ -2041,7 +2071,9 @@ async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
             domain = search_terms.split("@")[-1] if "@" in search_terms else ""
             if domain:
                 try:
-                    result = client.table("customers").select("*").filter("email", "ilike", f"%@{domain}").limit(1).execute()
+                    result = await asyncio.to_thread(
+                        lambda: client.table("customers").select("*").filter("email", "ilike", f"%@{domain}").limit(1).execute()
+                    )
                     if result.data:
                         customer_data = result.data[0]
                         customer = _format_customer_data(customer_data)

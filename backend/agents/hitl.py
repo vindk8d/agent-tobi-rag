@@ -14,6 +14,7 @@ human interaction.
 
 import logging
 import json
+import time
 from datetime import datetime, date
 from typing import Dict, Any, Optional, List, Literal
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -36,9 +37,7 @@ except ImportError:
         logger.info(f"🧪 [MOCK_INTERRUPT] {message}")
         return f"[MOCK_INTERRUPT] {message}"
     
-    class GraphInterrupt(Exception):
-        """Mock GraphInterrupt for development/testing"""
-        pass
+    # Removed GraphInterrupt - using simple message-based flow instead
 
 # HITL Phase definitions for ultra-minimal 3-field architecture
 # 
@@ -64,6 +63,13 @@ HITL_REQUIRED_PREFIX = "HITL_REQUIRED"
 SUGGESTED_APPROVE_TEXT = "approve"
 SUGGESTED_DENY_TEXT = "deny" 
 SUGGESTED_CANCEL_TEXT = "cancel"
+
+# PROACTIVE LOOP PREVENTION: Single-repetition detection constants
+# Even ONE repeat is frustrating - prevent it proactively
+RECENT_HITL_HISTORY_KEY = "_hitl_interaction_history"
+MAX_RECENT_HITL_TRACKED = 5  # Track last 5 HITL interactions for repetition detection
+PROMPT_SIMILARITY_THRESHOLD = 0.8  # 80% similarity considered a repeat
+CONTEXT_SIMILARITY_THRESHOLD = 0.7  # 70% context similarity considered same interaction
 
 
 class HITLJSONEncoder(json.JSONEncoder):
@@ -100,6 +106,214 @@ class HITLJSONEncoder(json.JSONEncoder):
         else:
             # Fallback: convert to string representation
             return str(obj)
+
+
+def _calculate_text_similarity(text1: str, text2: str) -> float:
+    """
+    Calculate similarity between two text strings using simple token-based approach.
+    
+    This is a lightweight similarity calculation optimized for HITL prompt comparison.
+    Uses normalized token overlap to detect when the same question is being asked again.
+    
+    Args:
+        text1: First text string
+        text2: Second text string
+        
+    Returns:
+        float: Similarity score between 0.0 and 1.0 (1.0 = identical)
+    """
+    if not text1 or not text2:
+        return 0.0
+    
+    if text1.strip() == text2.strip():
+        return 1.0
+    
+    # Normalize texts - lowercase, remove extra whitespace
+    norm_text1 = " ".join(text1.lower().split())
+    norm_text2 = " ".join(text2.lower().split())
+    
+    if norm_text1 == norm_text2:
+        return 1.0
+    
+    # Simple token-based similarity
+    tokens1 = set(norm_text1.split())
+    tokens2 = set(norm_text2.split())
+    
+    if not tokens1 or not tokens2:
+        return 0.0
+    
+    intersection = len(tokens1.intersection(tokens2))
+    union = len(tokens1.union(tokens2))
+    
+    return intersection / union if union > 0 else 0.0
+
+
+def _track_hitl_interaction(state: Dict[str, Any], hitl_prompt: str, hitl_context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Track current HITL interaction in state history for repetition detection.
+    
+    Maintains a rolling history of recent HITL interactions to detect patterns
+    and prevent immediate repetition that frustrates users.
+    
+    Args:
+        state: Current agent state
+        hitl_prompt: The prompt being shown to user
+        hitl_context: Context for the HITL interaction
+        
+    Returns:
+        Updated state with tracked interaction history
+    """
+    # Get existing history or initialize
+    history = state.get(RECENT_HITL_HISTORY_KEY, [])
+    
+    # Create interaction record
+    interaction_record = {
+        "timestamp": time.time(),
+        "prompt": hitl_prompt,
+        "context_summary": {
+            "source_tool": hitl_context.get("source_tool", "unknown"),
+            "action_type": hitl_context.get("action_type", "unknown"),
+            # Store key context indicators, not full context for efficiency
+            "context_hash": hash(str(sorted(hitl_context.items()))) if hitl_context else 0
+        }
+    }
+    
+    # Add to history (most recent first)
+    history.insert(0, interaction_record)
+    
+    # Trim to max tracked interactions
+    if len(history) > MAX_RECENT_HITL_TRACKED:
+        history = history[:MAX_RECENT_HITL_TRACKED]
+    
+    logger.debug(f"🔄 [HITL_TRACKING] Added interaction to history. Total tracked: {len(history)}")
+    
+    return {
+        **state,
+        RECENT_HITL_HISTORY_KEY: history
+    }
+
+
+def _detect_hitl_repetition(state: Dict[str, Any], current_prompt: str, current_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    PROACTIVE: Detect if current HITL request is a repetition of recent interaction.
+    
+    Even ONE repetition is frustrating to users. This function proactively detects
+    when the same question is being asked again and prevents user frustration.
+    
+    Args:
+        state: Current agent state with interaction history
+        current_prompt: The prompt about to be shown
+        current_context: Context for current HITL interaction
+        
+    Returns:
+        Dict with repetition details if detected, None if no repetition
+    """
+    if not current_prompt:
+        return None
+    
+    history = state.get(RECENT_HITL_HISTORY_KEY, [])
+    if not history:
+        return None
+    
+    current_context_hash = hash(str(sorted(current_context.items()))) if current_context else 0
+    current_source = current_context.get("source_tool", "unknown")
+    
+    logger.debug(f"🔍 [REPETITION_DETECTION] Checking current prompt against {len(history)} recent interactions")
+    
+    # Check each recent interaction for similarity
+    for i, past_interaction in enumerate(history):
+        past_prompt = past_interaction.get("prompt", "")
+        past_context = past_interaction.get("context_summary", {})
+        
+        # Calculate prompt similarity
+        prompt_similarity = _calculate_text_similarity(current_prompt, past_prompt)
+        
+        # Check context similarity
+        same_tool = (current_source == past_context.get("source_tool", "unknown"))
+        context_similarity = 1.0 if current_context_hash == past_context.get("context_hash", -1) else 0.0
+        
+        # Detect repetition based on thresholds
+        is_prompt_repeat = prompt_similarity >= PROMPT_SIMILARITY_THRESHOLD
+        is_context_repeat = same_tool and context_similarity >= CONTEXT_SIMILARITY_THRESHOLD
+        
+        if is_prompt_repeat or is_context_repeat:
+            repetition_info = {
+                "detected": True,
+                "repetition_index": i,
+                "prompt_similarity": prompt_similarity,
+                "context_similarity": context_similarity,
+                "same_tool": same_tool,
+                "past_interaction": past_interaction,
+                "detection_reason": "prompt_similarity" if is_prompt_repeat else "context_similarity"
+            }
+            
+            logger.warning(f"🚨 [REPETITION_DETECTED] Found repetition at index {i}:")
+            logger.warning(f"   Prompt similarity: {prompt_similarity:.2f} (threshold: {PROMPT_SIMILARITY_THRESHOLD})")
+            logger.warning(f"   Context similarity: {context_similarity:.2f} (threshold: {CONTEXT_SIMILARITY_THRESHOLD})")
+            logger.warning(f"   Same tool: {same_tool}")
+            logger.warning(f"   Detection reason: {repetition_info['detection_reason']}")
+            
+            return repetition_info
+    
+    logger.debug(f"✅ [REPETITION_DETECTION] No repetition detected - interaction is unique")
+    return None
+
+
+def _handle_hitl_repetition_recovery(state: Dict[str, Any], repetition_info: Dict[str, Any], current_context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    INTELLIGENT RECOVERY: Handle detected HITL repetition with user-friendly resolution.
+    
+    When repetition is detected, provide intelligent recovery instead of frustrating
+    the user with the same question again.
+    
+    Args:
+        state: Current agent state
+        repetition_info: Details about the detected repetition
+        current_context: Context for current HITL interaction
+        
+    Returns:
+        Updated state with intelligent recovery handling
+    """
+    past_interaction = repetition_info.get("past_interaction", {})
+    detection_reason = repetition_info.get("detection_reason", "unknown")
+    
+    # Create intelligent recovery message
+    recovery_message = (
+        f"I notice I'm about to ask you the same question again. "
+        f"Let me check if there's additional information I can use from our conversation "
+        f"instead of repeating the request."
+    )
+    
+    # Add recovery message to conversation
+    recovery_messages = list(state.get("messages", []))
+    recovery_messages.append({
+        "role": "assistant",
+        "content": recovery_message,
+        "type": "ai",
+        "metadata": {"recovery_type": "hitl_repetition_prevention"}
+    })
+    
+    logger.info(f"🛠️ [REPETITION_RECOVERY] Applying intelligent recovery for {detection_reason} repetition")
+    logger.info(f"   Recovery message: {recovery_message}")
+    
+    # Mark as recovery attempt in context
+    recovered_context = {
+        **current_context,
+        "recovery_applied": True,
+        "recovery_reason": detection_reason,
+        "recovery_timestamp": time.time()
+    }
+    
+    # Clear HITL state to prevent the repetitive interaction
+    # The agent should try a different approach or use conversation analysis
+    return {
+        **state,
+        "messages": recovery_messages,
+        "hitl_phase": None,  # Clear HITL phase to exit HITL mode
+        "hitl_prompt": None,
+        "hitl_context": recovered_context,  # Keep context with recovery info
+        "repetition_recovery_applied": True
+    }
 
 
 def serialize_hitl_context(data: Dict[str, Any]) -> str:
@@ -598,143 +812,96 @@ def parse_tool_response(response: str, tool_name: str) -> Dict[str, Any]:
 # REVOLUTIONARY: Ultra-Simple 3-Field HITL Node Implementation
 async def hitl_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    REVOLUTIONARY: Ultra-simple HITL node using 3-field architecture.
+    ULTRA-SIMPLE HITL: Just show prompt, interrupt, and wait for response.
     
-    Uses the new minimal state fields instead of complex nested JSON:
-    - hitl_phase: "needs_prompt" | "awaiting_response" | "approved" | "denied" 
-    - hitl_prompt: The exact text to show the user (tool-generated)
-    - hitl_context: Minimal execution context for post-interaction processing
-    
-    Args:
-        state: The current agent state containing 3-field HITL data
-        
-    Returns:
-        Updated state after HITL interaction or response processing
-        
-    Flow:
-        1. If hitl_phase is "needs_prompt": Show prompt → interrupt()
-        2. If hitl_phase is "awaiting_response": Process human response with LLM
-        3. Clear HITL fields when interaction is complete
-        4. Always successful - LLM interprets any response naturally
+    No complex phases, no routing logic - just basic interrupt/resume pattern.
     """
     try:
-        # REVOLUTIONARY: Use 3-field architecture instead of complex hitl_data
-        hitl_phase = state.get("hitl_phase")
         hitl_prompt = state.get("hitl_prompt")
         hitl_context = state.get("hitl_context", {})
         messages = state.get("messages", [])
         
-        # REVOLUTIONARY: Enhanced 3-field state logging
-        _log_3field_state_snapshot(
-            location="hitl_node_entry",
-            hitl_phase=hitl_phase,
-            hitl_prompt=hitl_prompt,
-            hitl_context=hitl_context,
-            message_count=len(messages)
-        )
+        logger.info(f"[HITL_SIMPLE] Showing prompt and interrupting")
+        logger.info(f"[HITL_SIMPLE] Prompt: {hitl_prompt[:100]}...")
         
-        if not hitl_phase:
-            # Shouldn't happen, but handle gracefully
-            logger.warning("🤖 [HITL_3FIELD] Called without hitl_phase, returning state unchanged")
-            _log_3field_state_transition(
-                operation="error_no_phase",
-                additional_info={"error": "Missing hitl_phase", "action": "returning_unchanged"}
-            )
+        # Add prompt to conversation
+        updated_messages = list(messages)
+        if hitl_prompt:
+            updated_messages.append({
+                "role": "assistant",
+                "content": hitl_prompt,
+                "type": "ai"
+            })
+        
+        # CRITICAL: Call interrupt() to STOP and wait for user
+        interrupt(hitl_prompt or "Please provide your response:")
+        
+        # This code runs when user responds and system resumes
+        logger.info(f"[HITL_SIMPLE] Resumed - looking for user response")
+        
+        # Get user response from latest messages  
+        user_response = None
+        all_messages = updated_messages
+        for msg in reversed(all_messages):
+            if isinstance(msg, dict) and msg.get("type") == "human":
+                user_response = msg.get("content", "").strip()
+                break
+            elif hasattr(msg, 'type') and msg.type == "human":
+                user_response = msg.content.strip()
+                break
+        
+        if not user_response:
+            logger.warning(f"[HITL_SIMPLE] No user response found after resume")
+            interrupt("Please provide your response:")
             return state
         
-        log_hitl_operation(
-            "hitl_node_3field_entry",
-            hitl_phase=hitl_phase,
-            has_messages=len(messages) > 0
-        )
+        # Simple approval detection
+        response_lower = user_response.lower()
+        approve_words = ["yes", "approve", "send", "go ahead", "confirm", "ok", "proceed"]
+        is_approved = any(word in response_lower for word in approve_words)
         
-        if hitl_phase == "needs_prompt":
-            # First time running - show the prompt
-            _log_3field_state_transition(
-                operation="prompt_display",
-                before_phase=hitl_phase,
-                after_phase="awaiting_response",
-                prompt_preview=hitl_prompt[:50] if hitl_prompt else None,
-                context_keys=list(hitl_context.keys()) if hitl_context else None
-            )
-            return await _show_hitl_prompt_3field(state, hitl_prompt, hitl_context)
-            
-        elif hitl_phase == "awaiting_response":
-            # Processing human response
-            _log_3field_state_transition(
-                operation="response_processing",
-                before_phase=hitl_phase,
-                context_keys=list(hitl_context.keys()) if hitl_context else None,
-                additional_info={"processing_mode": "llm_driven"}
-            )
-            result = await _process_hitl_response_3field(state, hitl_context)
-            
-            # REVOLUTIONARY: Log the final transition result
-            final_phase = result.get("hitl_phase")
-            _log_3field_state_transition(
-                operation="response_complete",
-                before_phase="awaiting_response",
-                after_phase=final_phase,
-                additional_info={
-                    "hitl_context_set": bool(result.get("hitl_context")),
-                    "messages_updated": len(result.get("messages", [])) != len(messages)
-                }
-            )
-            return result
-            
+        # Clear HITL state and set result
+        if is_approved:
+            logger.info(f"[HITL_SIMPLE] User approved: '{user_response}'")
+            response_msg = "✅ Approved! Executing action..."
+            # Keep context for agent execution  
+            execution_context = hitl_context
         else:
-            # Phase is already "approved" or "denied" - shouldn't reach here but handle gracefully
-            _log_3field_state_transition(
-                operation="unexpected_phase",
-                before_phase=hitl_phase,
-                after_phase="cleared",
-                additional_info={"warning": f"Unexpected phase '{hitl_phase}'", "action": "clearing_state"}
-            )
-            logger.warning(f"🤖 [HITL_3FIELD] Unexpected phase '{hitl_phase}', clearing HITL state")
-            return {
-                **state,
-                "hitl_phase": None,
-                "hitl_prompt": None,
-                "hitl_context": None
-            }
-            
-    except GraphInterrupt:
-        # GraphInterrupt is expected behavior - let it propagate naturally
-        logger.info(f"🤖 [HITL_3FIELD] GraphInterrupt raised - this is expected for prompting")
-        raise
-    except HITLError as e:
-        # Handle HITL-specific errors
-        logger.error(f"🤖 [HITL_3FIELD] HITLError: {e}")
-        hitl_logger.log_error(e, interaction_type=None)
+            logger.info(f"[HITL_SIMPLE] User denied: '{user_response}'")
+            response_msg = "❌ Action cancelled."
+            execution_context = None
+        
+        # Add response message
+        final_messages = list(updated_messages)
+        final_messages.append({
+            "role": "assistant",
+            "content": response_msg,
+            "type": "ai"
+        })
+        
+        # Return cleaned state
         return {
             **state,
-            "hitl_phase": None,  # REVOLUTIONARY: Clear 3-field HITL state
-            "hitl_prompt": None,
+            "messages": final_messages,
+            "hitl_phase": "approved" if is_approved else "denied",  # Set completion phase
+            "hitl_prompt": None,     # Clear prompt
+            "hitl_context": execution_context  # Keep context if approved
+        }
+            
+    except GraphInterrupt:
+        # Expected - let it propagate
+        logger.info(f"[HITL_SIMPLE] GraphInterrupt raised (expected)")
+        raise
+    except Exception as e:
+        logger.error(f"[HITL_SIMPLE] Error: {e}")
+        return {
+            **state,
+            "hitl_phase": None,
+            "hitl_prompt": None, 
             "hitl_context": None,
             "messages": state.get("messages", []) + [{
                 "role": "assistant",
-                "content": f"I encountered an error during our interaction: {e.message}. Please try again."
-            }]
-        }
-    
-    except Exception as e:
-        # Handle unexpected errors
-        logger.error(f"🤖 [HITL_3FIELD] Unexpected error: {e}")
-        hitl_error = handle_hitl_error(e, {
-            "function": "hitl_node_3field",
-            "hitl_phase": state.get("hitl_phase"),
-            "hitl_context": state.get("hitl_context"),
-            "state_keys": list(state.keys()) if state else []
-        })
-        hitl_logger.log_error(hitl_error)
-        return {
-            **state,
-            "hitl_phase": None,  # REVOLUTIONARY: Clear 3-field HITL state
-            "hitl_prompt": None,
-            "hitl_context": None,
-            "messages": state.get("messages", []) + [{
-                "role": "assistant", 
-                "content": "I encountered an unexpected error. Please try your request again."
+                "content": "I encountered an error. Please try again."
             }]
         }
 
@@ -849,10 +1016,7 @@ def _log_llm_interpretation_result(
 # REVOLUTIONARY: 3-Field HITL Helper Functions
 async def _show_hitl_prompt_3field(state: Dict[str, Any], hitl_prompt: str, hitl_context: Dict[str, Any]) -> Dict[str, Any]:
     """
-    REVOLUTIONARY: Ultra-simple prompt display using 3-field architecture.
-    
-    Shows the exact prompt provided by the tool without complex formatting.
-    Tools are responsible for generating complete, user-friendly prompts.
+    SIMPLIFIED: Add HITL prompt to messages - interrupt() is handled in main hitl_node.
     
     Args:
         state: Current agent state
@@ -860,74 +1024,213 @@ async def _show_hitl_prompt_3field(state: Dict[str, Any], hitl_prompt: str, hitl
         hitl_context: Minimal context for logging/debugging
         
     Returns:
-        Updated state with awaiting_response phase
+        Updated state with prompt added to messages
     """
     try:
         if not hitl_prompt:
             logger.warning("🤖 [HITL_3FIELD] Empty prompt provided, using fallback")
             hitl_prompt = "Please provide your response:"
-            _log_3field_state_transition(
-                operation="prompt_fallback",
-                additional_info={"warning": "Empty prompt", "fallback_used": True}
-            )
-        
-        # REVOLUTIONARY: Enhanced logging for prompt display
-        tool_name = hitl_context.get("source_tool", "system") if hitl_context else "system"
-        _log_3field_state_snapshot(
-            location="before_prompt_display",
-            hitl_phase="needs_prompt",
-            hitl_prompt=hitl_prompt,
-            hitl_context=hitl_context,
-            message_count=len(state.get("messages", []))
-        )
-        
-        # Log the interaction start
-        hitl_logger.log_interaction_start("3field", {"tool": tool_name})
         
         # Add HITL prompt to messages for persistence
         updated_messages = list(state.get("messages", []))
         hitl_prompt_message = {
             "role": "assistant",
             "content": hitl_prompt,
-            "type": "ai"  # Ensure Memory Store recognizes it
+            "type": "ai"
         }
         updated_messages.append(hitl_prompt_message)
         
-        # REVOLUTIONARY: Update to awaiting_response phase
-        updated_state = {
+        # Return state with message added
+        return {
             **state,
             "messages": updated_messages,
-            "hitl_phase": "awaiting_response",  # REVOLUTIONARY: Simple phase transition
-            # hitl_prompt and hitl_context remain unchanged
+            "hitl_phase": "awaiting_response"
         }
         
-        # REVOLUTIONARY: Log successful transition
-        _log_3field_state_transition(
-            operation="prompt_interrupt",
-            before_phase="needs_prompt",
-            after_phase="awaiting_response",
-            prompt_preview=hitl_prompt[:50],
-            additional_info={
-                "tool": tool_name,
-                "message_added": True,
-                "interrupt_triggered": True
-            }
-        )
-        
-        # Interrupt to wait for human input
-        interrupt(hitl_prompt)
-        
-        return updated_state
-        
-    except GraphInterrupt:
-        # GraphInterrupt is expected behavior - let it propagate naturally
-        raise
     except Exception as e:
         hitl_error = handle_hitl_error(e, {
             "function": "_show_hitl_prompt_3field",
             "hitl_context": hitl_context
         })
         raise hitl_error
+
+
+def _get_latest_human_response(messages):
+    """
+    Simple, reliable human response detection.
+    
+    Replaces complex prompt-matching logic with straightforward last-message check.
+    This is more reliable and handles different message formats robustly.
+    
+    Args:
+        messages: List of conversation messages
+        
+    Returns:
+        str or None: Latest human message content, or None if not found
+    """
+    if not messages:
+        return None
+    
+    last_message = messages[-1]
+    
+    # Handle LangChain message objects
+    if hasattr(last_message, 'type') and hasattr(last_message, 'content'):
+        if last_message.type == 'human':
+            content = last_message.content
+            return content.strip() if content else None
+    
+    # Handle dictionary format messages
+    elif isinstance(last_message, dict):
+        is_human = (last_message.get('type') == 'human' or 
+                   last_message.get('role') == 'human')
+        if is_human:
+            content = last_message.get('content', '')
+            return content.strip() if content else None
+    
+    return None
+
+
+def _get_latest_human_response_enhanced(messages):
+    """
+    ENHANCED: Comprehensive human response detection with robust message format handling.
+    
+    Features:
+    - Backward search through last 10 messages to find human responses reliably
+    - Support for both 'human' and 'user' role detection for message format compatibility  
+    - Comprehensive message format detection (LangChain objects, dicts, mixed formats)
+    - Enhanced logging for debugging message parsing failures
+    - Fallback detection for edge cases in message format variations
+    
+    Args:
+        messages: List of conversation messages
+        
+    Returns:
+        str or None: Latest human message content, or None if not found
+    """
+    if not messages:
+        logger.debug("🔍 [ENHANCED_HUMAN_DETECTION] No messages provided")
+        return None
+    
+    # Search backward through last 10 messages maximum for performance
+    search_limit = min(10, len(messages))
+    logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Searching {search_limit} messages backward from index {len(messages)-1}")
+    
+    # Track message format analysis for debugging
+    format_stats = {
+        "langchain_objects": 0,
+        "dict_messages": 0,
+        "unknown_format": 0,
+        "human_candidates": []
+    }
+    
+    # Search backward through recent messages
+    for i in range(len(messages) - 1, max(len(messages) - search_limit - 1, -1), -1):
+        message = messages[i]
+        message_index = i
+        human_content = None
+        message_format = "unknown"
+        
+        try:
+            # ENHANCED: Handle LangChain message objects (BaseMessage subclasses)
+            if hasattr(message, 'type') and hasattr(message, 'content'):
+                message_format = "langchain_object"
+                format_stats["langchain_objects"] += 1
+                
+                # Support both 'human' and 'user' types for compatibility
+                if message.type in ['human', 'user']:
+                    human_content = message.content
+                    logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Found LangChain {message.type} message at index {message_index}")
+                    
+            # ENHANCED: Handle dictionary format messages with comprehensive role detection
+            elif isinstance(message, dict):
+                message_format = "dict_message"
+                format_stats["dict_messages"] += 1
+                
+                # Support multiple role/type field variations
+                role_indicators = [
+                    message.get('type'),
+                    message.get('role'),
+                    message.get('sender_type'),  # Some systems use this
+                    message.get('message_type')  # Alternative format
+                ]
+                
+                # Check if any role indicator suggests human/user
+                human_indicators = ['human', 'user', 'customer', 'person']  # Extended compatibility
+                is_human_message = any(
+                    indicator in human_indicators 
+                    for indicator in role_indicators 
+                    if indicator is not None
+                )
+                
+                if is_human_message:
+                    # Try multiple content field variations
+                    content_fields = ['content', 'text', 'message', 'body']
+                    for field in content_fields:
+                        if field in message and message[field]:
+                            human_content = message[field]
+                            break
+                    
+                    detected_role = next((ind for ind in role_indicators if ind in human_indicators), "unknown")
+                    logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Found dict {detected_role} message at index {message_index}")
+                    
+            # ENHANCED: Handle edge cases - string messages, None, other formats
+            elif message is None:
+                logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Null message at index {message_index}")
+                continue
+            elif isinstance(message, str):
+                # Some systems might store raw strings - treat as potential human input
+                message_format = "raw_string"
+                human_content = message
+                logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Raw string message at index {message_index}")
+            else:
+                message_format = "unknown_format"
+                format_stats["unknown_format"] += 1
+                logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Unknown message format at index {message_index}: {type(message)}")
+                
+                # FALLBACK: Try to extract content from unknown formats
+                if hasattr(message, 'content'):
+                    human_content = getattr(message, 'content', None)
+                elif hasattr(message, 'text'):
+                    human_content = getattr(message, 'text', None)
+                elif hasattr(message, '__str__'):
+                    # Last resort - convert to string
+                    human_content = str(message)
+                    
+        except Exception as e:
+            logger.warning(f"🔍 [ENHANCED_HUMAN_DETECTION] Error processing message at index {message_index}: {e}")
+            continue
+        
+        # If we found human content, validate and return it
+        if human_content:
+            cleaned_content = human_content.strip() if isinstance(human_content, str) else str(human_content).strip()
+            if cleaned_content:
+                format_stats["human_candidates"].append({
+                    "index": message_index,
+                    "format": message_format,
+                    "content_preview": cleaned_content[:50] + "..." if len(cleaned_content) > 50 else cleaned_content
+                })
+                
+                logger.info(f"🔍 [ENHANCED_HUMAN_DETECTION] Found human response at index {message_index} ({message_format}): '{cleaned_content}'")
+                
+                # Log format analysis for debugging
+                logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Format analysis: {format_stats}")
+                
+                return cleaned_content
+    
+    # ENHANCED: Comprehensive logging when no human response found
+    logger.warning(f"🔍 [ENHANCED_HUMAN_DETECTION] No human response found in {search_limit} messages")
+    logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Message format breakdown: {format_stats}")
+    
+    # Log sample of message formats for debugging
+    if messages:
+        sample_size = min(3, len(messages))
+        logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Sample of last {sample_size} message formats:")
+        for i, msg in enumerate(messages[-sample_size:]):
+            msg_type = type(msg).__name__
+            msg_preview = str(msg)[:100] + "..." if len(str(msg)) > 100 else str(msg)
+            logger.debug(f"  [{len(messages)-sample_size+i}] {msg_type}: {msg_preview}")
+    
+    return None
 
 
 async def _process_hitl_response_3field(state: Dict[str, Any], hitl_context: Dict[str, Any]) -> Dict[str, Any]:
@@ -945,9 +1248,10 @@ async def _process_hitl_response_3field(state: Dict[str, Any], hitl_context: Dic
         Updated state with appropriate hitl_phase for routing
     """
     try:
-        # Extract the latest human message
+        # Extract the latest human message AFTER the HITL prompt
         messages = state.get("messages", [])
         latest_human_message = None
+        hitl_prompt = state.get("hitl_prompt", "")
         
         # REVOLUTIONARY: Enhanced message extraction logging
         _log_3field_state_snapshot(
@@ -958,21 +1262,33 @@ async def _process_hitl_response_3field(state: Dict[str, Any], hitl_context: Dic
             message_count=len(messages)
         )
         
-        for msg in reversed(messages):
-            msg_type = getattr(msg, 'type', 'no_type') if hasattr(msg, 'type') else msg.get('type', 'no_type') if isinstance(msg, dict) else 'no_type'
-            msg_content = getattr(msg, 'content', str(msg)) if hasattr(msg, 'content') else str(msg.get('content', msg)) if isinstance(msg, dict) else str(msg)
-            
-            if msg_type == 'human':
-                latest_human_message = msg_content
-                logger.info(f"🤖 [HITL_3FIELD] Found human response: '{latest_human_message}'")
-                break
+        # REVOLUTIONARY: Enhanced human response detection with comprehensive format support
+        latest_human_message = _get_latest_human_response_enhanced(messages)
+        
+        if latest_human_message:
+            logger.info(f"🤖 [HITL_SIMPLE] Found human response: '{latest_human_message}'")
+        else:
+            logger.info(f"🤖 [HITL_SIMPLE] No human response found - staying in awaiting_response state")
         
         if not latest_human_message:
             _log_3field_state_transition(
-                operation="response_error",
-                additional_info={"error": "No human message found", "message_count": len(messages)}
+                operation="awaiting_user_response", 
+                additional_info={"hitl_prompt_preserved": bool(hitl_prompt), "message_count": len(messages), "simple_wait": True}
             )
-            raise HITLResponseError("No human message found in conversation state")
+            
+            # CRITICAL FIX: If no user response, interrupt again to wait for input
+            # This prevents endless routing loops
+            logger.info(f"🤖 [HITL_SIMPLE] No user response found - interrupting again to wait")
+            interrupt("Please provide your response:")
+            
+            # Return state unchanged for when we resume
+            return {
+                **state,
+                "messages": messages,
+                "hitl_phase": "awaiting_response",  # Stay in awaiting_response
+                "hitl_prompt": hitl_prompt,  # Keep the prompt for next iteration
+                "hitl_context": hitl_context,
+            }
         
         # REVOLUTIONARY: Use LLM-driven interpretation with timing
         import time
@@ -998,28 +1314,27 @@ async def _process_hitl_response_3field(state: Dict[str, Any], hitl_context: Dic
             }
             updated_messages.append(response_message)
         
-        # REVOLUTIONARY: Map result to hitl_phase for routing
-        hitl_phase = None
-        approved_context = None
+        # CRITICAL FIX: Always clear HITL state after processing response
+        # This prevents endless loops by ensuring we don't stay in HITL mode
+        result_value = result.get("result") if result.get("success") else "denied"
         
-        if result.get("success") and result.get("result"):
-            result_value = result.get("result")
-            if result_value == "approved":
-                hitl_phase = "approved"
-                # Set approved context for tool execution
-                if hitl_context and hitl_context.get("tool"):
-                    approved_context = hitl_context
-            elif result_value == "denied":
-                hitl_phase = "denied"
-            # For input data, keep the context and let tool handle it
+        if result_value == "approved":
+            # User approved - set approved context for execution
+            approved_context = hitl_context if hitl_context and hitl_context.get("source_tool") else None
+            final_phase = "approved"
+        else:
+            # User denied or unclear response
+            approved_context = None
+            final_phase = "denied"
         
-        # REVOLUTIONARY: Prepare final 3-field state
+        # CRITICAL FIX: Always clear HITL state to prevent loops
         final_state = {
             **state,
             "messages": updated_messages,
-            "hitl_phase": hitl_phase,  # REVOLUTIONARY: Clear phase or set to approved/denied
-            "hitl_prompt": None,  # REVOLUTIONARY: Clear prompt - interaction complete
-            "hitl_context": approved_context or result.get("context"),  # Keep approved context or LLM result context
+            "hitl_phase": None,  # CRITICAL FIX: Always clear to prevent routing loops
+            "hitl_prompt": None,  # CRITICAL FIX: Always clear
+            "hitl_context": None,   # CRITICAL FIX: Always clear
+            "approved_action": approved_context if result_value == "approved" else None  # For agent execution
         }
         
         # REVOLUTIONARY: Enhanced final state logging
@@ -1034,7 +1349,7 @@ async def _process_hitl_response_3field(state: Dict[str, Any], hitl_context: Dic
         _log_3field_state_transition(
             operation="final_state_ready",
             before_phase="awaiting_response",
-            after_phase=hitl_phase,
+            after_phase=final_phase,
             additional_info={
                 "hitl_context_set": bool(approved_context or result.get("context")),
                 "context_cleared": result.get("context") is None,
@@ -1048,6 +1363,7 @@ async def _process_hitl_response_3field(state: Dict[str, Any], hitl_context: Dic
     except HITLError:
         # Re-raise HITL errors
         raise
+    # Removed GraphInterrupt handling - using simple message-based flow instead
     except Exception as e:
         logger.error(f"🤖 [HITL_3FIELD] Error in 3-field response processing: {e}")
         hitl_error = handle_hitl_error(e, {
@@ -1193,7 +1509,7 @@ async def _process_hitl_response_llm_driven(hitl_context: Dict[str, Any], human_
             return {
                 "success": True,
                 "result": "approved",
-                "context": None,  # Clear context - interaction complete
+                "context": hitl_context,  # Preserve context for tool re-calling
                 "response_message": "✅ Approved - proceeding with the action."
             }
         
