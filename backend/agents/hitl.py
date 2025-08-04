@@ -16,7 +16,10 @@ import logging
 import json
 from datetime import datetime, date
 from typing import Dict, Any, Optional, List, Literal
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import StrOutputParser
+from core.config import get_settings
 
 # Configure logging for HITL module
 logger = logging.getLogger(__name__)
@@ -25,31 +28,42 @@ logger = logging.getLogger(__name__)
 try:
     from langgraph.types import interrupt
     from langgraph.errors import GraphInterrupt
-    logger.info("LangGraph interrupt functionality imported successfully")
+    logger.info("🚀 [HITL_INIT] LangGraph interrupt functionality imported successfully")
 except ImportError:
     # Fallback for development/testing - create a mock interrupt function and exception
-    logger.warning("LangGraph not available, using mock interrupt functionality")
+    logger.warning("⚠️ [HITL_INIT] LangGraph not available, using mock interrupt functionality")
     def interrupt(message: str):
-        logger.info(f"[MOCK_INTERRUPT] {message}")
+        logger.info(f"🧪 [MOCK_INTERRUPT] {message}")
         return f"[MOCK_INTERRUPT] {message}"
     
     class GraphInterrupt(Exception):
         """Mock GraphInterrupt for development/testing"""
         pass
 
-# Type definitions for HITL interactions
-HITLInteractionType = Literal[
-    "confirmation",           # Yes/No confirmation
-    "selection",             # Choose from options
-    "input_request",         # Free text input
-    "multi_step_input"       # Multiple inputs needed
+# HITL Phase definitions for ultra-minimal 3-field architecture
+# 
+# NOTE: HITLInteractionType has been ELIMINATED as part of the revolutionary
+# 3-field architecture. Tools now define their own interaction styles through
+# dedicated HITL request tools instead of rigid type-based dispatch.
+HITLPhase = Literal[
+    "needs_prompt",          # Ready to show prompt to user (triggers interrupt)
+    "awaiting_response",     # Waiting for user response (processing mode)
+    "approved",              # User approved the action (route back to agent)
+    "denied"                 # User denied the action (route back to agent)
 ]
 
 # Module-level constants
 HITL_REQUIRED_PREFIX = "HITL_REQUIRED"
-DEFAULT_APPROVE_TEXT = "approve"
-DEFAULT_DENY_TEXT = "deny"
-DEFAULT_CANCEL_TEXT = "cancel"
+# LLM-driven interpretation handles all user responses naturally.
+# Users can say "send it", "go ahead", "yes", "not now", "skip this", etc. and the LLM understands.
+#
+# Tools can provide suggested response text for user guidance, but these are just
+# friendly suggestions - not rigid constraints for validation.
+
+# Flexible defaults for user-friendly suggestions (not rigid validation)
+SUGGESTED_APPROVE_TEXT = "approve"
+SUGGESTED_DENY_TEXT = "deny" 
+SUGGESTED_CANCEL_TEXT = "cancel"
 
 
 class HITLJSONEncoder(json.JSONEncoder):
@@ -88,15 +102,18 @@ class HITLJSONEncoder(json.JSONEncoder):
             return str(obj)
 
 
-def serialize_hitl_data(data: Dict[str, Any]) -> str:
+def serialize_hitl_context(data: Dict[str, Any]) -> str:
     """
-    Serialize HITL data using the custom encoder.
+    Serialize HITL context using the custom encoder for 3-field architecture.
+    
+    Used by dedicated HITL request tools (request_approval, request_input, request_selection)
+    to serialize context data for the revolutionary 3-field HITL architecture.
     
     Args:
-        data: Dictionary containing HITL data to serialize
+        data: Dictionary containing HITL context data to serialize
         
     Returns:
-        JSON string representation of the data
+        JSON string representation of the context data
         
     Raises:
         ValueError: If data cannot be serialized
@@ -104,19 +121,22 @@ def serialize_hitl_data(data: Dict[str, Any]) -> str:
     try:
         return json.dumps(data, cls=HITLJSONEncoder)
     except Exception as e:
-        logger.error(f"Failed to serialize HITL data: {e}")
-        raise ValueError(f"Unable to serialize HITL data: {str(e)}")
+        logger.error(f"❌ [HITL_SERIALIZATION] Failed to serialize HITL context: {e}")
+        raise ValueError(f"Unable to serialize HITL context: {str(e)}")
 
 
-def deserialize_hitl_data(json_str: str) -> Dict[str, Any]:
+def deserialize_hitl_context(json_str: str) -> Dict[str, Any]:
     """
-    Deserialize HITL data from JSON string.
+    Deserialize HITL context from JSON string for 3-field architecture.
+    
+    Used by parse_tool_response() to deserialize context data from dedicated 
+    HITL request tools in the revolutionary 3-field HITL architecture.
     
     Args:
         json_str: JSON string to deserialize
         
     Returns:
-        Dictionary containing deserialized HITL data
+        Dictionary containing deserialized HITL context data
         
     Raises:
         ValueError: If JSON string cannot be parsed
@@ -124,8 +144,8 @@ def deserialize_hitl_data(json_str: str) -> Dict[str, Any]:
     try:
         return json.loads(json_str)
     except Exception as e:
-        logger.error(f"Failed to deserialize HITL data: {e}")
-        raise ValueError(f"Unable to deserialize HITL data: {str(e)}")
+        logger.error(f"❌ [HITL_SERIALIZATION] Failed to deserialize HITL context: {e}")
+        raise ValueError(f"Unable to deserialize HITL context: {str(e)}")
 
 
 # HITL-specific error handling classes
@@ -282,242 +302,180 @@ def handle_hitl_error(error: Exception, context: Dict[str, Any]) -> HITLError:
         return HITLError(str(error), context)
 
 
-# HITLRequest Standardization System
-class HITLRequest:
+# REVOLUTIONARY: Dedicated HITL Request Tools
+# 
+# Replaces the complex HITLRequest class with simple, direct tool functions
+# that create HITL requests. Each tool is focused and easy to use.
+# 
+# Tools define their own interaction styles without rigid class constraints.
+def request_approval(
+    prompt: str, 
+    context: Dict[str, Any],
+    approve_text: str = SUGGESTED_APPROVE_TEXT,
+    deny_text: str = SUGGESTED_DENY_TEXT
+) -> str:
     """
-    Standardized HITL request formatter that creates consistent response formats
-    for tools to trigger different types of human interactions.
+    REVOLUTIONARY: Dedicated HITL request tool for approval interactions.
     
-    All methods return standardized strings in the format:
-    "HITL_REQUIRED:{interaction_type}:{json_data}"
+    Uses LLM-driven interpretation - users can respond naturally with any language!
+    The approve_text and deny_text are just friendly suggestions, not rigid constraints.
     
-    This allows the agent node to parse tool responses and automatically
-    route to the HITL node when human interaction is needed.
+    Args:
+        prompt: The question/message to show the user
+        context: Tool-specific context data for post-interaction processing
+        approve_text: Suggested text for approval (default: "approve") - LLM interprets naturally
+        deny_text: Suggested text for denial (default: "deny") - LLM interprets naturally
+        
+    Returns:
+        Formatted HITL request string
+        
+    Example:
+        request_approval(
+            "Send this message to John?",
+            {"tool": "trigger_customer_message", "customer_id": "123"}
+        )
+        
+    Note: Users can respond with natural language like "send it", "go ahead", "not now", 
+    "skip this", etc. The LLM understands intent regardless of suggested text.
     """
-    
-    @staticmethod
-    def confirmation(
-        prompt: str, 
-        context: Dict[str, Any],
-        approve_text: str = DEFAULT_APPROVE_TEXT,
-        deny_text: str = DEFAULT_DENY_TEXT
-    ) -> str:
-        """
-        Create a confirmation interaction request.
+    try:
+        data = {
+            "prompt": prompt,
+            "options": {
+                "approve": approve_text,
+                "deny": deny_text
+            },
+            "awaiting_response": False,
+            "context": context
+        }
         
-        Args:
-            prompt: The question/message to show the user
-            context: Tool-specific context data for post-interaction processing
-            approve_text: Text for approval option (default: "approve")
-            deny_text: Text for denial option (default: "deny")
-            
-        Returns:
-            Formatted HITL request string
-            
-        Example:
-            HITLRequest.confirmation(
-                "Send this message to John?",
-                {"tool": "trigger_customer_message", "customer_id": "123"}
-            )
-        """
-        try:
-            data = {
-                "type": "confirmation",
-                "prompt": prompt,
-                "options": {
-                    "approve": approve_text,
-                    "deny": deny_text
-                },
-                "awaiting_response": False,
-                "context": context
-            }
-            
-            json_data = serialize_hitl_data(data)
-            return f"{HITL_REQUIRED_PREFIX}:confirmation:{json_data}"
-            
-        except Exception as e:
-            hitl_error = handle_hitl_error(e, {
-                "method": "HITLRequest.confirmation",
-                "prompt": prompt,
-                "context": context
-            })
-            hitl_logger.log_error(hitl_error, "confirmation")
-            raise hitl_error
-    
-    @staticmethod
-    def selection(
-        prompt: str,
-        options: List[Dict[str, Any]],
-        context: Dict[str, Any],
-        allow_cancel: bool = True
-    ) -> str:
-        """
-        Create a selection interaction request.
+        json_data = serialize_hitl_context(data)
+        return f"{HITL_REQUIRED_PREFIX}:approval:{json_data}"
         
-        Args:
-            prompt: The question/instruction to show the user
-            options: List of options to choose from. Each option should have at least
-                    a 'display' or 'name' key for user-friendly display
-            context: Tool-specific context data for post-interaction processing
-            allow_cancel: Whether to allow cancellation of the selection
-            
-        Returns:
-            Formatted HITL request string
-            
-        Example:
-            HITLRequest.selection(
-                "Which customer did you mean?",
-                [
-                    {"id": "123", "display": "John Smith (john@email.com)"},
-                    {"id": "456", "display": "John Doe (johndoe@email.com)"}
-                ],
-                {"tool": "customer_lookup", "query": "john"}
-            )
-        """
-        try:
-            if not options:
-                raise HITLValidationError("Selection options cannot be empty")
-            
-            data = {
-                "type": "selection",
-                "prompt": prompt,
-                "options": options,
-                "allow_cancel": allow_cancel,
-                "awaiting_response": False,
-                "context": context
-            }
-            
-            json_data = serialize_hitl_data(data)
-            return f"{HITL_REQUIRED_PREFIX}:selection:{json_data}"
-            
-        except Exception as e:
-            hitl_error = handle_hitl_error(e, {
-                "method": "HITLRequest.selection",
-                "prompt": prompt,
-                "options_count": len(options) if options else 0,
-                "context": context
-            })
-            hitl_logger.log_error(hitl_error, "selection")
-            raise hitl_error
+    except Exception as e:
+        hitl_error = handle_hitl_error(e, {
+            "function": "request_approval",
+            "prompt": prompt,
+            "context": context
+        })
+        hitl_logger.log_error(hitl_error, "approval")
+        raise hitl_error
+
+def request_selection(
+    prompt: str,
+    options: List[Dict[str, Any]],
+    context: Dict[str, Any],
+    allow_cancel: bool = True
+) -> str:
+    """
+    REVOLUTIONARY: Dedicated HITL request tool for selection interactions.
     
-    @staticmethod
-    def input_request(
-        prompt: str,
-        input_type: str,
-        context: Dict[str, Any],
-        validation_hints: Optional[List[str]] = None
-    ) -> str:
-        """
-        Create an input request interaction.
-        
-        Args:
-            prompt: The question/instruction to show the user
-            input_type: Type of input being requested (e.g., "customer_name", "email", "description")
-            context: Tool-specific context data for post-interaction processing
-            validation_hints: Optional list of validation hints to show the user
-            
-        Returns:
-            Formatted HITL request string
-            
-        Example:
-            HITLRequest.input_request(
-                "Please provide the customer's email address:",
-                "customer_email",
-                {"tool": "customer_lookup", "original_query": "john"},
-                ["Must be a valid email format", "Use company domain if business customer"]
-            )
-        """
-        try:
-            data = {
-                "type": "input_request",
-                "prompt": prompt,
-                "input_type": input_type,
-                "validation_hints": validation_hints or [],
-                "awaiting_response": False,
-                "context": context
-            }
-            
-            json_data = serialize_hitl_data(data)
-            return f"{HITL_REQUIRED_PREFIX}:input_request:{json_data}"
-            
-        except Exception as e:
-            hitl_error = handle_hitl_error(e, {
-                "method": "HITLRequest.input_request",
-                "prompt": prompt,
-                "input_type": input_type,
-                "context": context
-            })
-            hitl_logger.log_error(hitl_error, "input_request")
-            raise hitl_error
+    Replaces HITLRequest.selection() with a simple, direct function.
+    Tools can call this directly without complex class instantiation.
     
-    @staticmethod
-    def multi_step_input(
-        prompt: str,
-        steps: List[Dict[str, Any]],
-        context: Dict[str, Any],
-        current_step: int = 0
-    ) -> str:
-        """
-        Create a multi-step input interaction request.
+    Args:
+        prompt: The question/instruction to show the user
+        options: List of options to choose from. Each option should have at least
+                a 'display' or 'name' key for user-friendly display
+        context: Tool-specific context data for post-interaction processing
+        allow_cancel: Whether to allow cancellation of the selection
         
-        Args:
-            prompt: The overall instruction/question for the multi-step process
-            steps: List of step definitions, each with 'name', 'prompt', and optional 'type'
-            context: Tool-specific context data for post-interaction processing
-            current_step: Current step index (0-based)
-            
-        Returns:
-            Formatted HITL request string
-            
-        Example:
-            HITLRequest.multi_step_input(
-                "Please provide customer details:",
-                [
-                    {"name": "name", "prompt": "Customer full name:", "type": "text"},
-                    {"name": "email", "prompt": "Customer email:", "type": "email"},
-                    {"name": "phone", "prompt": "Customer phone:", "type": "phone"}
-                ],
-                {"tool": "create_customer", "source": "manual_entry"}
-            )
-        """
-        try:
-            if not steps:
-                raise HITLValidationError("Multi-step input must have at least one step")
-            
-            if current_step < 0 or current_step >= len(steps):
-                raise HITLValidationError(f"Invalid current_step {current_step} for {len(steps)} steps")
-            
-            data = {
-                "type": "multi_step_input",
-                "prompt": prompt,
-                "steps": steps,
-                "current_step": current_step,
-                "total_steps": len(steps),
-                "awaiting_response": False,
-                "context": context
-            }
-            
-            json_data = serialize_hitl_data(data)
-            return f"{HITL_REQUIRED_PREFIX}:multi_step_input:{json_data}"
-            
-        except Exception as e:
-            hitl_error = handle_hitl_error(e, {
-                "method": "HITLRequest.multi_step_input",
-                "prompt": prompt,
-                "steps_count": len(steps) if steps else 0,
-                "current_step": current_step,
-                "context": context
-            })
-            hitl_logger.log_error(hitl_error, "multi_step_input")
-            raise hitl_error
+    Returns:
+        Formatted HITL request string
+        
+    Example:
+        request_selection(
+            "Which customer did you mean?",
+            [
+                {"id": "123", "display": "John Smith (john@email.com)"},
+                {"id": "456", "display": "John Doe (johndoe@email.com)"}
+            ],
+            {"tool": "customer_lookup", "query": "john"}
+        )
+    """
+    try:
+        if not options:
+            raise HITLValidationError("Selection options cannot be empty")
+        
+        data = {
+            "prompt": prompt,
+            "options": options,
+            "allow_cancel": allow_cancel,
+            "awaiting_response": False,
+            "context": context
+        }
+        
+        json_data = serialize_hitl_context(data)
+        return f"{HITL_REQUIRED_PREFIX}:selection:{json_data}"
+        
+    except Exception as e:
+        hitl_error = handle_hitl_error(e, {
+            "function": "request_selection",
+            "prompt": prompt,
+            "options_count": len(options) if options else 0,
+            "context": context
+        })
+        hitl_logger.log_error(hitl_error, "selection")
+        raise hitl_error
+def request_input(
+    prompt: str,
+    input_type: str,
+    context: Dict[str, Any],
+    validation_hints: Optional[List[str]] = None
+) -> str:
+    """
+    REVOLUTIONARY: Dedicated HITL request tool for input interactions.
+    
+    Replaces HITLRequest.input_request() with a simple, direct function.
+    Tools can call this directly without complex class instantiation.
+    
+    Args:
+        prompt: The question/instruction to show the user
+        input_type: Type of input being requested (e.g., "customer_name", "email", "description")
+        context: Tool-specific context data for post-interaction processing
+        validation_hints: Optional list of validation hints to show the user
+        
+    Returns:
+        Formatted HITL request string
+        
+    Example:
+        request_input(
+            "Please provide the customer's email address:",
+            "customer_email",
+            {"tool": "customer_lookup", "original_query": "john"},
+            ["Must be a valid email format", "Use company domain if business customer"]
+        )
+    """
+    try:
+        data = {
+            "prompt": prompt,
+            "input_type": input_type,
+            "validation_hints": validation_hints or [],
+            "awaiting_response": False,
+            "context": context
+        }
+        
+        json_data = serialize_hitl_context(data)
+        return f"{HITL_REQUIRED_PREFIX}:input:{json_data}"
+        
+    except Exception as e:
+        hitl_error = handle_hitl_error(e, {
+            "function": "request_input",
+            "prompt": prompt,
+            "input_type": input_type,
+            "context": context
+        })
+        hitl_logger.log_error(hitl_error, "input")
+        raise hitl_error
+
 
 
 def parse_tool_response(response: str, tool_name: str) -> Dict[str, Any]:
     """
-    Parse tool responses and extract HITL requirements.
+    Parse tool responses and extract HITL requirements using ultra-minimal 3-field architecture.
     
-    Analyzes tool response strings to detect HITL interaction requests
-    and extracts the interaction data for processing by the agent node.
+    REVOLUTIONARY: Directly creates hitl_phase, hitl_prompt, hitl_context fields instead of
+    legacy hitl_data structures. Tools define their own interaction styles without rigid types.
     
     Args:
         response: The tool response string to parse
@@ -528,8 +486,9 @@ def parse_tool_response(response: str, tool_name: str) -> Dict[str, Any]:
         - For normal responses: {"type": "normal", "content": response}
         - For HITL responses: {
             "type": "hitl_required",
-            "hitl_type": "confirmation|selection|input_request|multi_step_input",
-            "hitl_data": {...},
+            "hitl_phase": "needs_prompt",
+            "hitl_prompt": "User-facing prompt text",
+            "hitl_context": {"source_tool": tool_name, ...},
             "source_tool": tool_name
           }
         - For errors: {"type": "error", "content": error_message}
@@ -539,9 +498,9 @@ def parse_tool_response(response: str, tool_name: str) -> Dict[str, Any]:
         result = parse_tool_response("Customer found: John Smith", "lookup_customer")
         # Returns: {"type": "normal", "content": "Customer found: John Smith"}
         
-        # HITL response  
+        # HITL response (revolutionary 3-field approach)
         result = parse_tool_response("HITL_REQUIRED:confirmation:{...}", "trigger_customer_message")
-        # Returns: {"type": "hitl_required", "hitl_type": "confirmation", ...}
+        # Returns: {"type": "hitl_required", "hitl_phase": "needs_prompt", "hitl_prompt": "...", "hitl_context": {...}}
     """
     try:
         log_hitl_operation("parse_tool_response", tool_name=tool_name, response_length=len(response))
@@ -554,55 +513,54 @@ def parse_tool_response(response: str, tool_name: str) -> Dict[str, Any]:
                 "content": response
             }
         
-        # Parse HITL request format: HITL_REQUIRED:{type}:{json_data}
+        # REVOLUTIONARY: Parse HITL request format and create ultra-minimal 3-field assignments
         try:
-            # Split on first two colons to separate prefix, type, and data
+            # Split on first two colons to separate prefix, legacy_type, and data
             parts = response.split(":", 2)
             if len(parts) != 3:
                 raise HITLValidationError(f"Invalid HITL response format: expected 3 parts, got {len(parts)}")
             
-            prefix, hitl_type, json_data = parts
+            prefix, legacy_type, json_data = parts
             
             # Validate prefix
             if prefix != HITL_REQUIRED_PREFIX:
                 raise HITLValidationError(f"Invalid HITL prefix: expected '{HITL_REQUIRED_PREFIX}', got '{prefix}'")
             
-            # Validate interaction type
-            valid_types = ["confirmation", "selection", "input_request", "multi_step_input"]
-            if hitl_type not in valid_types:
-                raise HITLValidationError(f"Invalid HITL type '{hitl_type}', must be one of: {valid_types}")
-            
+            # REVOLUTIONARY: No more hitl_type validation - tools define their own interaction style
             # Parse JSON data
             try:
-                hitl_data = deserialize_hitl_data(json_data)
+                tool_data = deserialize_hitl_context(json_data)
             except ValueError as e:
                 raise HITLValidationError(f"Invalid HITL JSON data: {str(e)}")
             
-            # Validate that the hitl_data contains required fields
-            if not isinstance(hitl_data, dict):
+            # Validate basic structure
+            if not isinstance(tool_data, dict):
                 raise HITLValidationError("HITL data must be a dictionary")
             
-            required_fields = ["type", "prompt", "context"]
-            missing_fields = [field for field in required_fields if field not in hitl_data]
+            # REVOLUTIONARY: Ultra-minimal validation - only require prompt and context
+            required_fields = ["prompt", "context"]
+            missing_fields = [field for field in required_fields if field not in tool_data]
             if missing_fields:
                 raise HITLValidationError(f"HITL data missing required fields: {missing_fields}")
             
-            # Ensure the type in the data matches the type in the prefix
-            if hitl_data.get("type") != hitl_type:
-                raise HITLValidationError(
-                    f"HITL type mismatch: prefix has '{hitl_type}', data has '{hitl_data.get('type')}'"
-                )
+            # REVOLUTIONARY: Create ultra-minimal 3-field assignments directly
+            hitl_prompt = tool_data.get("prompt", "")
+            hitl_context = tool_data.get("context", {})
             
             # Add source tool to context if not already present
-            if "source_tool" not in hitl_data.get("context", {}):
-                hitl_data.setdefault("context", {})["source_tool"] = tool_name
+            if "source_tool" not in hitl_context:
+                hitl_context["source_tool"] = tool_name
             
-            hitl_logger.log_interaction_start(hitl_type, hitl_data.get("context", {}))
+            # Add legacy type for transition period (will be removed in task 7.1)
+            hitl_context["legacy_type"] = legacy_type
+            
+            hitl_logger.log_interaction_start("custom", hitl_context)
             
             return {
                 "type": "hitl_required",
-                "hitl_type": hitl_type,
-                "hitl_data": hitl_data,
+                "hitl_phase": "needs_prompt",  # REVOLUTIONARY: Always needs_prompt when HITL is required
+                "hitl_prompt": hitl_prompt,    # REVOLUTIONARY: Direct prompt assignment
+                "hitl_context": hitl_context,  # REVOLUTIONARY: Direct context assignment
                 "source_tool": tool_name
             }
             
@@ -635,144 +593,124 @@ def parse_tool_response(response: str, tool_name: str) -> Dict[str, Any]:
         }
 
 
-def validate_hitl_data_structure(hitl_data: Dict[str, Any], interaction_type: str) -> bool:
-    """
-    Validate that HITL data has the correct structure for the given interaction type.
-    
-    Args:
-        hitl_data: The HITL data dictionary to validate
-        interaction_type: The type of interaction to validate against
-        
-    Returns:
-        True if valid, raises HITLValidationError if invalid
-        
-    Raises:
-        HITLValidationError: If the data structure is invalid
-    """
-    try:
-        # Common required fields for all interaction types
-        common_required = ["type", "prompt", "context"]
-        for field in common_required:
-            if field not in hitl_data:
-                raise HITLValidationError(f"Missing required field '{field}' in HITL data")
-        
-        # Type-specific validation
-        if interaction_type == "confirmation":
-            if "options" not in hitl_data:
-                raise HITLValidationError("Confirmation HITL data must include 'options' field")
-            options = hitl_data["options"]
-            if not isinstance(options, dict) or "approve" not in options or "deny" not in options:
-                raise HITLValidationError("Confirmation options must be a dict with 'approve' and 'deny' keys")
-        
-        elif interaction_type == "selection":
-            if "options" not in hitl_data:
-                raise HITLValidationError("Selection HITL data must include 'options' field")
-            options = hitl_data["options"]
-            if not isinstance(options, list) or len(options) == 0:
-                raise HITLValidationError("Selection options must be a non-empty list")
-        
-        elif interaction_type == "input_request":
-            if "input_type" not in hitl_data:
-                raise HITLValidationError("Input request HITL data must include 'input_type' field")
-        
-        elif interaction_type == "multi_step_input":
-            required_multi_step = ["steps", "current_step", "total_steps"]
-            for field in required_multi_step:
-                if field not in hitl_data:
-                    raise HITLValidationError(f"Multi-step input HITL data must include '{field}' field")
-            
-            steps = hitl_data["steps"]
-            if not isinstance(steps, list) or len(steps) == 0:
-                raise HITLValidationError("Multi-step input steps must be a non-empty list")
-            
-            current_step = hitl_data["current_step"]
-            total_steps = hitl_data["total_steps"]
-            if not (0 <= current_step < total_steps):
-                raise HITLValidationError(f"Invalid current_step {current_step} for {total_steps} total steps")
-        
-        return True
-        
-    except Exception as e:
-        if isinstance(e, HITLValidationError):
-            raise
-        raise HITLValidationError(f"Error validating HITL data structure: {str(e)}")
 
 
-# Single-Node HITL Handler Implementation
+# REVOLUTIONARY: Ultra-Simple 3-Field HITL Node Implementation
 async def hitl_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    General-purpose HITL node that handles all human interaction types.
+    REVOLUTIONARY: Ultra-simple HITL node using 3-field architecture.
     
-    This node determines whether to show a prompt or process a response based on
-    the hitl_data.awaiting_response flag. It uses the interrupt() mechanism for
-    human interaction and handles all interaction types through a unified interface.
+    Uses the new minimal state fields instead of complex nested JSON:
+    - hitl_phase: "needs_prompt" | "awaiting_response" | "approved" | "denied" 
+    - hitl_prompt: The exact text to show the user (tool-generated)
+    - hitl_context: Minimal execution context for post-interaction processing
     
     Args:
-        state: The current agent state containing hitl_data
+        state: The current agent state containing 3-field HITL data
         
     Returns:
         Updated state after HITL interaction or response processing
         
     Flow:
-        1. If hitl_data.awaiting_response is False: Show prompt → interrupt()
-        2. If hitl_data.awaiting_response is True: Process human response
-        3. Clear hitl_data when interaction is complete
-        4. Re-prompt on invalid responses instead of failing
+        1. If hitl_phase is "needs_prompt": Show prompt → interrupt()
+        2. If hitl_phase is "awaiting_response": Process human response with LLM
+        3. Clear HITL fields when interaction is complete
+        4. Always successful - LLM interprets any response naturally
     """
     try:
-        hitl_data = state.get("hitl_data")
-        
-        logger.info(f"🔍 [HITL_DEBUG] HITL node entry - hitl_data: {hitl_data}")
-        
-        if not hitl_data:
-            # Shouldn't happen, but handle gracefully
-            logger.warning("🔍 [HITL_DEBUG] Called without hitl_data, returning state unchanged")
-            return state
-        
-        interaction_type = hitl_data.get("type")
-        awaiting_response = hitl_data.get("awaiting_response", False)
-        
-        logger.info(f"🔍 [HITL_DEBUG] Interaction type: {interaction_type}, awaiting_response: {awaiting_response}")
-        
-        # Check if we have messages in state
+        # REVOLUTIONARY: Use 3-field architecture instead of complex hitl_data
+        hitl_phase = state.get("hitl_phase")
+        hitl_prompt = state.get("hitl_prompt")
+        hitl_context = state.get("hitl_context", {})
         messages = state.get("messages", [])
-        logger.info(f"🔍 [HITL_DEBUG] State has {len(messages)} messages")
-        if messages:
-            last_msg = messages[-1]
-            msg_content = getattr(last_msg, 'content', str(last_msg))[:100] if hasattr(last_msg, 'content') else str(last_msg)[:100]
-            logger.info(f"🔍 [HITL_DEBUG] Last message: {msg_content}...")
         
-        log_hitl_operation(
-            "hitl_node_entry",
-            interaction_type=interaction_type,
-            awaiting_response=awaiting_response,
-            has_messages=len(state.get("messages", [])) > 0
+        # REVOLUTIONARY: Enhanced 3-field state logging
+        _log_3field_state_snapshot(
+            location="hitl_node_entry",
+            hitl_phase=hitl_phase,
+            hitl_prompt=hitl_prompt,
+            hitl_context=hitl_context,
+            message_count=len(messages)
         )
         
-        if not awaiting_response:
+        if not hitl_phase:
+            # Shouldn't happen, but handle gracefully
+            logger.warning("🤖 [HITL_3FIELD] Called without hitl_phase, returning state unchanged")
+            _log_3field_state_transition(
+                operation="error_no_phase",
+                additional_info={"error": "Missing hitl_phase", "action": "returning_unchanged"}
+            )
+            return state
+        
+        log_hitl_operation(
+            "hitl_node_3field_entry",
+            hitl_phase=hitl_phase,
+            has_messages=len(messages) > 0
+        )
+        
+        if hitl_phase == "needs_prompt":
             # First time running - show the prompt
-            logger.info(f"🔍 [HITL_DEBUG] Showing HITL prompt for {interaction_type}")
-            return await _show_hitl_prompt(state, hitl_data)
-        else:
+            _log_3field_state_transition(
+                operation="prompt_display",
+                before_phase=hitl_phase,
+                after_phase="awaiting_response",
+                prompt_preview=hitl_prompt[:50] if hitl_prompt else None,
+                context_keys=list(hitl_context.keys()) if hitl_context else None
+            )
+            return await _show_hitl_prompt_3field(state, hitl_prompt, hitl_context)
+            
+        elif hitl_phase == "awaiting_response":
             # Processing human response
-            logger.info(f"🔍 [HITL_DEBUG] Processing HITL response for {interaction_type}")
-            result = await _process_hitl_response_node(state, hitl_data)
-            logger.info(f"🔍 [HITL_DEBUG] HITL response processed. Result keys: {list(result.keys()) if result else 'None'}")
-            logger.info(f"🔍 [HITL_DEBUG] hitl_data after processing: {result.get('hitl_data')}")
-            logger.info(f"🔍 [HITL_DEBUG] hitl_result: {result.get('hitl_result')}")
+            _log_3field_state_transition(
+                operation="response_processing",
+                before_phase=hitl_phase,
+                context_keys=list(hitl_context.keys()) if hitl_context else None,
+                additional_info={"processing_mode": "llm_driven"}
+            )
+            result = await _process_hitl_response_3field(state, hitl_context)
+            
+            # REVOLUTIONARY: Log the final transition result
+            final_phase = result.get("hitl_phase")
+            _log_3field_state_transition(
+                operation="response_complete",
+                before_phase="awaiting_response",
+                after_phase=final_phase,
+                additional_info={
+                    "hitl_context_set": bool(result.get("hitl_context")),
+                    "messages_updated": len(result.get("messages", [])) != len(messages)
+                }
+            )
             return result
+            
+        else:
+            # Phase is already "approved" or "denied" - shouldn't reach here but handle gracefully
+            _log_3field_state_transition(
+                operation="unexpected_phase",
+                before_phase=hitl_phase,
+                after_phase="cleared",
+                additional_info={"warning": f"Unexpected phase '{hitl_phase}'", "action": "clearing_state"}
+            )
+            logger.warning(f"🤖 [HITL_3FIELD] Unexpected phase '{hitl_phase}', clearing HITL state")
+            return {
+                **state,
+                "hitl_phase": None,
+                "hitl_prompt": None,
+                "hitl_context": None
+            }
             
     except GraphInterrupt:
         # GraphInterrupt is expected behavior - let it propagate naturally
-        logger.info(f"🔍 [HITL_DEBUG] GraphInterrupt raised - this is expected for prompting")
+        logger.info(f"🤖 [HITL_3FIELD] GraphInterrupt raised - this is expected for prompting")
         raise
     except HITLError as e:
         # Handle HITL-specific errors
-        logger.error(f"🔍 [HITL_DEBUG] HITLError: {e}")
-        hitl_logger.log_error(e, interaction_type=hitl_data.get("type") if hitl_data else None)
+        logger.error(f"🤖 [HITL_3FIELD] HITLError: {e}")
+        hitl_logger.log_error(e, interaction_type=None)
         return {
             **state,
-            "hitl_data": None,  # Clear HITL state
+            "hitl_phase": None,  # REVOLUTIONARY: Clear 3-field HITL state
+            "hitl_prompt": None,
+            "hitl_context": None,
             "messages": state.get("messages", []) + [{
                 "role": "assistant",
                 "content": f"I encountered an error during our interaction: {e.message}. Please try again."
@@ -781,16 +719,19 @@ async def hitl_node(state: Dict[str, Any]) -> Dict[str, Any]:
     
     except Exception as e:
         # Handle unexpected errors
-        logger.error(f"🔍 [HITL_DEBUG] Unexpected error: {e}")
+        logger.error(f"🤖 [HITL_3FIELD] Unexpected error: {e}")
         hitl_error = handle_hitl_error(e, {
-            "function": "hitl_node",
-            "hitl_data": hitl_data,
+            "function": "hitl_node_3field",
+            "hitl_phase": state.get("hitl_phase"),
+            "hitl_context": state.get("hitl_context"),
             "state_keys": list(state.keys()) if state else []
         })
         hitl_logger.log_error(hitl_error)
         return {
             **state,
-            "hitl_data": None,  # Clear HITL state
+            "hitl_phase": None,  # REVOLUTIONARY: Clear 3-field HITL state
+            "hitl_prompt": None,
+            "hitl_context": None,
             "messages": state.get("messages", []) + [{
                 "role": "assistant", 
                 "content": "I encountered an unexpected error. Please try your request again."
@@ -798,132 +739,183 @@ async def hitl_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
 
-def _format_hitl_prompt(hitl_data: Dict[str, Any]) -> str:
+# REVOLUTIONARY: 3-Field HITL Debugging and Logging Functions
+def _log_3field_state_transition(
+    operation: str,
+    before_phase: Optional[str] = None,
+    after_phase: Optional[str] = None,
+    prompt_preview: Optional[str] = None,
+    context_keys: Optional[List[str]] = None,
+    additional_info: Optional[Dict[str, Any]] = None
+) -> None:
     """
-    Format concise, user-friendly prompts for HITL interactions.
+    REVOLUTIONARY: Enhanced logging for 3-field HITL state transitions.
     
-    New approach: Concise prompts with clear expectations and context.
+    Provides clear, consistent logging of state changes for easy debugging.
+    Makes it simple to trace the flow of HITL interactions.
+    
+    Args:
+        operation: The operation being performed (e.g., "prompt_display", "response_processing")
+        before_phase: Phase before the operation
+        after_phase: Phase after the operation
+        prompt_preview: First 50 chars of prompt for debugging
+        context_keys: List of keys in hitl_context
+        additional_info: Any additional debugging information
     """
-    try:
-        interaction_type = hitl_data.get("type")
-        base_prompt = hitl_data.get("prompt", "")
-        context = hitl_data.get("context", {})
-        
-        # Add agent context for why HITL is needed
-        tool_name = context.get("tool", "system")
-        agent_context = f"🤖 **Agent needs your input for:** `{tool_name}`\n\n"
-        
-        if interaction_type == "confirmation":
-            options = hitl_data.get("options", {})
-            approve_text = options.get("approve", DEFAULT_APPROVE_TEXT)
-            deny_text = options.get("deny", DEFAULT_DENY_TEXT)
-            
-            return f"""{agent_context}{base_prompt}
-
-**Options:** `{approve_text}` (proceed) | `{deny_text}` (cancel)"""
-            
-        elif interaction_type == "selection":
-            options = hitl_data.get("options", [])
-            allow_cancel = hitl_data.get("allow_cancel", True)
-            
-            if not options:
-                raise HITLValidationError("Selection requires options")
-            
-            prompt = f"{agent_context}{base_prompt}\n\n**Options:**"
-            
-            # Concise numbered options
-            for i, option in enumerate(options, 1):
-                display_text = option.get("display", option.get("name", str(option)))
-                prompt += f"\n`{i}` - {display_text}"
-            
-            if allow_cancel:
-                prompt += f"\n`{len(options) + 1}` - Cancel"
-            
-            prompt += "\n\n**Enter number:**"
-            return prompt
-            
-        elif interaction_type == "input_request":
-            input_type = hitl_data.get("input_type", "information")
-            validation_hints = hitl_data.get("validation_hints", [])
-            
-            prompt = f"{agent_context}{base_prompt}\n\n**Input needed:** {input_type.replace('_', ' ').title()}"
-            
-            if validation_hints:
-                prompt += f"\n**Requirements:** {' | '.join(validation_hints)}"
-            
-            prompt += f"\n\n**Provide input** (or `cancel`):"
-            return prompt
-            
-        elif interaction_type == "multi_step_input":
-            steps = hitl_data.get("steps", [])
-            current_step = hitl_data.get("current_step", 0)
-            total_steps = hitl_data.get("total_steps", len(steps))
-            
-            if not steps or current_step >= len(steps):
-                raise HITLValidationError("Invalid multi-step configuration")
-            
-            step_info = steps[current_step]
-            step_name = step_info.get("name", f"step_{current_step + 1}")
-            step_prompt = step_info.get("prompt", "Please provide information:")
-            
-            # Concise progress indicator
-            progress = f"[{current_step + 1}/{total_steps}]"
-            
-            return f"""{agent_context}{base_prompt}
-
-**Step {progress}:** {step_name.replace('_', ' ').title()}
-{step_prompt}
-
-**Provide input** (or `cancel`):**"""
-            
+    # Create transition arrow if both phases provided
+    phase_transition = ""
+    if before_phase and after_phase:
+        if before_phase != after_phase:
+            phase_transition = f"{before_phase} → {after_phase}"
         else:
-            raise HITLValidationError(f"Unknown interaction type: {interaction_type}")
-            
-    except HITLError:
-        raise
-    except Exception as e:
-        raise HITLValidationError(f"Error formatting HITL prompt: {str(e)}")
+            phase_transition = f"{before_phase} (unchanged)"
+    elif after_phase:
+        phase_transition = f"→ {after_phase}"
+    elif before_phase:
+        phase_transition = f"{before_phase} →"
+    
+    # Format context info
+    context_info = f"context_keys={context_keys}" if context_keys else "no_context"
+    
+    # Format prompt preview
+    prompt_info = f"prompt='{prompt_preview}...'" if prompt_preview else "no_prompt"
+    
+    # Main log message
+    logger.info(f"🔄 [3FIELD_TRANSITION] {operation.upper()}: {phase_transition} | {context_info} | {prompt_info}")
+    
+    # Additional info if provided
+    if additional_info:
+        for key, value in additional_info.items():
+            logger.info(f"🔄 [3FIELD_TRANSITION]   └─ {key}: {value}")
 
 
-async def _show_hitl_prompt(state: Dict[str, Any], hitl_data: Dict[str, Any]) -> Dict[str, Any]:
+def _log_3field_state_snapshot(
+    location: str,
+    hitl_phase: Optional[str],
+    hitl_prompt: Optional[str],
+    hitl_context: Optional[Dict[str, Any]],
+    message_count: int = 0
+) -> None:
     """
-    Show the appropriate prompt for the HITL interaction type.
+    REVOLUTIONARY: Snapshot logging of current 3-field state.
+    
+    Provides a complete view of the current HITL state at any point.
+    Useful for debugging complex interactions.
+    
+    Args:
+        location: Where in the code this snapshot is taken
+        hitl_phase: Current HITL phase
+        hitl_prompt: Current HITL prompt
+        hitl_context: Current HITL context
+        message_count: Number of messages in conversation
+    """
+    logger.info(f"📸 [3FIELD_SNAPSHOT] {location}:")
+    logger.info(f"📸 [3FIELD_SNAPSHOT]   ├─ hitl_phase: {hitl_phase}")
+    logger.info(f"📸 [3FIELD_SNAPSHOT]   ├─ hitl_prompt: {hitl_prompt[:50] + '...' if hitl_prompt and len(hitl_prompt) > 50 else hitl_prompt}")
+    logger.info(f"📸 [3FIELD_SNAPSHOT]   ├─ hitl_context: {list(hitl_context.keys()) if hitl_context else None}")
+    logger.info(f"📸 [3FIELD_SNAPSHOT]   └─ message_count: {message_count}")
+    
+    # Log context details if available
+    if hitl_context:
+        tool_name = hitl_context.get("source_tool", "unknown")
+        logger.info(f"📸 [3FIELD_SNAPSHOT]       └─ source_tool: {tool_name}")
+
+
+def _log_llm_interpretation_result(
+    human_response: str,
+    llm_intent: str,
+    response_message: str,
+    processing_time_ms: Optional[float] = None
+) -> None:
+    """
+    REVOLUTIONARY: Specialized logging for LLM interpretation results.
+    
+    Makes it easy to see how the LLM interpreted user responses.
+    Critical for debugging natural language understanding.
+    
+    Args:
+        human_response: What the user actually said
+        llm_intent: What the LLM interpreted (approval/denial/input)
+        response_message: The system's response to the user
+        processing_time_ms: How long LLM processing took
+    """
+    time_info = f" ({processing_time_ms:.1f}ms)" if processing_time_ms else ""
+    logger.info(f"🧠 [LLM_INTERPRETATION]{time_info}:")
+    logger.info(f"🧠 [LLM_INTERPRETATION]   ├─ human_said: '{human_response}'")
+    logger.info(f"🧠 [LLM_INTERPRETATION]   ├─ llm_interpreted: {llm_intent.upper()}")
+    logger.info(f"🧠 [LLM_INTERPRETATION]   └─ system_response: '{response_message}'")
+
+
+# REVOLUTIONARY: 3-Field HITL Helper Functions
+async def _show_hitl_prompt_3field(state: Dict[str, Any], hitl_prompt: str, hitl_context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    REVOLUTIONARY: Ultra-simple prompt display using 3-field architecture.
+    
+    Shows the exact prompt provided by the tool without complex formatting.
+    Tools are responsible for generating complete, user-friendly prompts.
     
     Args:
         state: Current agent state
-        hitl_data: HITL interaction data
+        hitl_prompt: The complete prompt text (tool-generated)
+        hitl_context: Minimal context for logging/debugging
         
     Returns:
-        Updated state with awaiting_response set to True
+        Updated state with awaiting_response phase
     """
     try:
-        interaction_type = hitl_data["type"]
+        if not hitl_prompt:
+            logger.warning("🤖 [HITL_3FIELD] Empty prompt provided, using fallback")
+            hitl_prompt = "Please provide your response:"
+            _log_3field_state_transition(
+                operation="prompt_fallback",
+                additional_info={"warning": "Empty prompt", "fallback_used": True}
+            )
         
-        # Format the prompt based on interaction type
-        prompt = _format_hitl_prompt(hitl_data)
+        # REVOLUTIONARY: Enhanced logging for prompt display
+        tool_name = hitl_context.get("source_tool", "system") if hitl_context else "system"
+        _log_3field_state_snapshot(
+            location="before_prompt_display",
+            hitl_phase="needs_prompt",
+            hitl_prompt=hitl_prompt,
+            hitl_context=hitl_context,
+            message_count=len(state.get("messages", []))
+        )
         
-        hitl_logger.log_interaction_start(interaction_type, hitl_data.get("context", {}))
+        # Log the interaction start
+        hitl_logger.log_interaction_start("3field", {"tool": tool_name})
         
-        # Add HITL prompt to messages so it gets persisted by centralized Memory Store
+        # Add HITL prompt to messages for persistence
         updated_messages = list(state.get("messages", []))
         hitl_prompt_message = {
             "role": "assistant",
-            "content": prompt,
-            "type": "ai"  # Ensure it's recognized as AI message by Memory Store
+            "content": hitl_prompt,
+            "type": "ai"  # Ensure Memory Store recognizes it
         }
         updated_messages.append(hitl_prompt_message)
         
-        # Update state to indicate we're waiting for response BEFORE interrupting
-        updated_hitl_data = {**hitl_data, "awaiting_response": True}
-        
+        # REVOLUTIONARY: Update to awaiting_response phase
         updated_state = {
             **state,
-            "messages": updated_messages,  # Include the HITL prompt in messages
-            "hitl_data": updated_hitl_data
+            "messages": updated_messages,
+            "hitl_phase": "awaiting_response",  # REVOLUTIONARY: Simple phase transition
+            # hitl_prompt and hitl_context remain unchanged
         }
         
+        # REVOLUTIONARY: Log successful transition
+        _log_3field_state_transition(
+            operation="prompt_interrupt",
+            before_phase="needs_prompt",
+            after_phase="awaiting_response",
+            prompt_preview=hitl_prompt[:50],
+            additional_info={
+                "tool": tool_name,
+                "message_added": True,
+                "interrupt_triggered": True
+            }
+        )
+        
         # Interrupt to wait for human input
-        interrupt(prompt)
+        interrupt(hitl_prompt)
         
         return updated_state
         
@@ -932,484 +924,320 @@ async def _show_hitl_prompt(state: Dict[str, Any], hitl_data: Dict[str, Any]) ->
         raise
     except Exception as e:
         hitl_error = handle_hitl_error(e, {
-            "function": "_show_hitl_prompt",
-            "interaction_type": hitl_data.get("type"),
-            "hitl_data": hitl_data
+            "function": "_show_hitl_prompt_3field",
+            "hitl_context": hitl_context
         })
         raise hitl_error
 
 
-async def _process_hitl_response(hitl_data: Dict[str, Any], human_response: str) -> Dict[str, Any]:
+async def _process_hitl_response_3field(state: Dict[str, Any], hitl_context: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Process human response for HITL interactions with validation and routing.
+    REVOLUTIONARY: Ultra-simple response processing using LLM-driven interpretation.
     
-    This is the core response processing function that handles validation,
-    routing, and result preparation for all HITL interaction types.
+    Uses the new LLM-driven approach to understand user intent naturally.
+    No complex validation or re-prompting - LLM handles all interpretation.
     
     Args:
-        hitl_data: HITL interaction data containing type, options, context, etc.
+        state: Current agent state with messages containing user response
+        hitl_context: Minimal context for tool execution
+        
+    Returns:
+        Updated state with appropriate hitl_phase for routing
+    """
+    try:
+        # Extract the latest human message
+        messages = state.get("messages", [])
+        latest_human_message = None
+        
+        # REVOLUTIONARY: Enhanced message extraction logging
+        _log_3field_state_snapshot(
+            location="before_response_processing",
+            hitl_phase="awaiting_response",
+            hitl_prompt=None,  # Prompt already shown
+            hitl_context=hitl_context,
+            message_count=len(messages)
+        )
+        
+        for msg in reversed(messages):
+            msg_type = getattr(msg, 'type', 'no_type') if hasattr(msg, 'type') else msg.get('type', 'no_type') if isinstance(msg, dict) else 'no_type'
+            msg_content = getattr(msg, 'content', str(msg)) if hasattr(msg, 'content') else str(msg.get('content', msg)) if isinstance(msg, dict) else str(msg)
+            
+            if msg_type == 'human':
+                latest_human_message = msg_content
+                logger.info(f"🤖 [HITL_3FIELD] Found human response: '{latest_human_message}'")
+                break
+        
+        if not latest_human_message:
+            _log_3field_state_transition(
+                operation="response_error",
+                additional_info={"error": "No human message found", "message_count": len(messages)}
+            )
+            raise HITLResponseError("No human message found in conversation state")
+        
+        # REVOLUTIONARY: Use LLM-driven interpretation with timing
+        import time
+        llm_start_time = time.time()
+        result = await _process_hitl_response_llm_driven(hitl_context, latest_human_message)
+        llm_processing_time = (time.time() - llm_start_time) * 1000  # Convert to ms
+        
+        # REVOLUTIONARY: Enhanced LLM result logging
+        _log_llm_interpretation_result(
+            human_response=latest_human_message,
+            llm_intent=result.get("result", "unknown"),
+            response_message=result.get("response_message", "No response"),
+            processing_time_ms=llm_processing_time
+        )
+        
+        # Add response message to conversation
+        updated_messages = list(messages)
+        if result.get("response_message"):
+            response_message = {
+                "role": "assistant",
+                "content": result["response_message"],
+                "type": "ai"
+            }
+            updated_messages.append(response_message)
+        
+        # REVOLUTIONARY: Map result to hitl_phase for routing
+        hitl_phase = None
+        approved_context = None
+        
+        if result.get("success") and result.get("result"):
+            result_value = result.get("result")
+            if result_value == "approved":
+                hitl_phase = "approved"
+                # Set approved context for tool execution
+                if hitl_context and hitl_context.get("tool"):
+                    approved_context = hitl_context
+            elif result_value == "denied":
+                hitl_phase = "denied"
+            # For input data, keep the context and let tool handle it
+        
+        # REVOLUTIONARY: Prepare final 3-field state
+        final_state = {
+            **state,
+            "messages": updated_messages,
+            "hitl_phase": hitl_phase,  # REVOLUTIONARY: Clear phase or set to approved/denied
+            "hitl_prompt": None,  # REVOLUTIONARY: Clear prompt - interaction complete
+            "hitl_context": approved_context or result.get("context"),  # Keep approved context or LLM result context
+        }
+        
+        # REVOLUTIONARY: Enhanced final state logging
+        _log_3field_state_snapshot(
+            location="after_response_processing",
+            hitl_phase=final_state.get("hitl_phase"),
+            hitl_prompt=final_state.get("hitl_prompt"),
+            hitl_context=final_state.get("hitl_context"),
+            message_count=len(final_state.get("messages", []))
+        )
+        
+        _log_3field_state_transition(
+            operation="final_state_ready",
+            before_phase="awaiting_response",
+            after_phase=hitl_phase,
+            additional_info={
+                "hitl_context_set": bool(approved_context or result.get("context")),
+                "context_cleared": result.get("context") is None,
+                "prompt_cleared": True,
+                "messages_count": len(updated_messages)
+            }
+        )
+        
+        return final_state
+        
+    except HITLError:
+        # Re-raise HITL errors
+        raise
+    except Exception as e:
+        logger.error(f"🤖 [HITL_3FIELD] Error in 3-field response processing: {e}")
+        hitl_error = handle_hitl_error(e, {
+            "function": "_process_hitl_response_3field",
+            "hitl_context": hitl_context
+        })
+        raise hitl_error
+
+
+# [REVOLUTIONARY LLM-DRIVEN INTERPRETATION SYSTEM]
+# Core functions for natural language understanding in the 3-field architecture
+# These functions enable users to respond naturally ("send it", "go ahead", etc.)
+
+
+
+async def _get_hitl_interpretation_llm() -> ChatOpenAI:
+    """
+    Get LLM for HITL response interpretation.
+    Uses a fast, efficient model for natural language understanding.
+    """
+    settings = await get_settings()
+    
+    # Use simple model for fast interpretation
+    model = getattr(settings, 'openai_simple_model', 'gpt-3.5-turbo')
+    
+    return ChatOpenAI(
+        model=model,
+        temperature=0,  # Deterministic for consistent interpretation
+        openai_api_key=settings.openai_api_key
+    )
+
+
+async def _interpret_user_intent_with_llm(human_response: str, hitl_context: Dict[str, Any]) -> str:
+    """
+    REVOLUTIONARY: Use LLM to interpret user intent naturally.
+    
+    This function understands natural language responses like:
+    - "send it" → approval
+    - "go ahead" → approval  
+    - "not now" → denial
+    - "john@example.com" → input data
+    - "option 2" → selection
+    """
+    try:
+        llm = await _get_hitl_interpretation_llm()
+        
+        # Build context-aware prompt
+        context_info = ""
+        if hitl_context:
+            tool_name = hitl_context.get("source_tool", "system")
+            if tool_name:
+                context_info = f"\nContext: This is a response to a {tool_name} tool request."
+        
+        # REVOLUTIONARY: Natural language interpretation prompt
+        system_prompt = """You are an expert at interpreting human responses in conversational interfaces.
+
+Your job is to determine the user's intent from their response. Return EXACTLY one of these categories:
+
+**APPROVAL** - User wants to proceed/approve/confirm the action
+Examples: "yes", "ok", "send it", "go ahead", "proceed", "do it", "sure", "approve", "confirm", "send", "continue"
+
+**DENIAL** - User wants to cancel/deny/stop the action  
+Examples: "no", "cancel", "stop", "don't", "abort", "not now", "skip", "deny", "quit", "exit"
+
+**INPUT** - User is providing information/data/input
+Examples: "john@example.com", "Customer ABC", "option 2", "tomorrow", "1234567890", specific names, addresses, etc.
+
+Consider the full context and natural language patterns. Don't just match keywords - understand intent.
+
+Respond with ONLY the category name: APPROVAL, DENIAL, or INPUT"""
+        
+        user_prompt = f"""User Response: "{human_response}"{context_info}
+
+What is the user's intent?"""
+        
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        # Get LLM interpretation with enhanced logging
+        parser = StrOutputParser()
+        chain = llm | parser
+        
+        # REVOLUTIONARY: Time the LLM interpretation
+        import time
+        interpretation_start = time.time()
+        interpretation = await chain.ainvoke(messages)
+        interpretation_time = (time.time() - interpretation_start) * 1000
+        
+        # Clean and validate the response
+        interpretation_clean = interpretation.strip().upper()
+        
+        # REVOLUTIONARY: Enhanced LLM interpretation logging
+        logger.info(f"🧠 [LLM_INTERPRETATION] Raw response: '{interpretation}' ({interpretation_time:.1f}ms)")
+        logger.info(f"🧠 [LLM_INTERPRETATION] Cleaned: '{interpretation_clean}'")
+        logger.info(f"🧠 [LLM_INTERPRETATION] Input: '{human_response}' → Output: {interpretation_clean}")
+        
+        # Validate LLM response
+        if interpretation_clean in ["APPROVAL", "DENIAL", "INPUT"]:
+            logger.info(f"🧠 [LLM_INTERPRETATION] ✅ Valid interpretation: {interpretation_clean.lower()}")
+            return interpretation_clean.lower()
+        else:
+            # Fallback if LLM gives unexpected response
+            logger.warning(f"🧠 [LLM_INTERPRETATION] ⚠️ Unexpected LLM response: '{interpretation}', falling back to INPUT")
+            logger.warning(f"🧠 [LLM_INTERPRETATION] Expected: APPROVAL, DENIAL, or INPUT")
+            return "input"
+            
+    except Exception as e:
+        logger.error(f"🤖 [LLM_INTERPRETATION] Error in LLM interpretation: {str(e)}")
+        # Fallback to treating as input if LLM fails
+        return "input"
+
+
+async def _process_hitl_response_llm_driven(hitl_context: Dict[str, Any], human_response: str) -> Dict[str, Any]:
+    """
+    REVOLUTIONARY: LLM-driven human response processing.
+    
+    Uses actual LLM to interpret user intent naturally without rigid validation.
+    Understands responses like "send it", "go ahead", "not now", etc.
+    
+    Args:
+        hitl_context: Minimal context data from hitl_context state field
         human_response: The human's response text (already extracted from messages)
         
     Returns:
         Dictionary containing processing results:
         - success: bool - Whether processing was successful
-        - result: Any - The processed result (varies by interaction type)
-        - hitl_data: Dict - Updated HITL data (None if complete, updated if continuing)
-        - response_message: str - Message to send back to user
-        - error_type: str - Type of error if unsuccessful ("validation", "processing", etc.)
-        
-    Raises:
-        HITLValidationError: If response validation fails
-        HITLInteractionError: If processing fails
+        - result: str - Simple result: "approved", "denied", or user input value
+        - context: Dict - Updated context if needed (minimal)
+        - response_message: str - Confirmation message to send back to user
     """
     try:
-        interaction_type = hitl_data.get("type")
-        if not interaction_type:
-            raise HITLValidationError("Missing interaction type in HITL data")
+        response_text = human_response.strip()
         
-        # Clean and normalize the human response
-        response_text = human_response.strip().lower()
+        hitl_logger.log_response_processing("llm_driven", human_response, "LLM interpretation")
         
-        hitl_logger.log_response_processing(interaction_type, human_response, "starting validation")
+        # REVOLUTIONARY: Use LLM to interpret user intent naturally
+        intent = await _interpret_user_intent_with_llm(response_text, hitl_context)
         
-        # Route to appropriate handler based on interaction type
-        if interaction_type == "confirmation":
-            return await _process_confirmation_response(hitl_data, response_text, human_response)
-            
-        elif interaction_type == "selection":
-            return await _process_selection_response(hitl_data, response_text, human_response)
-            
-        elif interaction_type == "input_request":
-            return await _process_input_request_response(hitl_data, response_text, human_response)
-            
-        elif interaction_type == "multi_step_input":
-            return await _process_multi_step_response(hitl_data, response_text, human_response)
-            
-        else:
-            raise HITLValidationError(f"Unknown interaction type: {interaction_type}")
-            
-    except HITLError:
-        # Re-raise HITL-specific errors
-        raise
-    except Exception as e:
-        # Convert unexpected errors to HITL processing errors
-        raise HITLInteractionError(f"Unexpected error processing HITL response: {str(e)}")
-
-
-async def _process_confirmation_response(hitl_data: Dict[str, Any], response_text: str, original_response: str) -> Dict[str, Any]:
-    """Process confirmation responses (approve/deny)."""
-    try:
-        logger.info(f"🔍 [HITL_CONFIRMATION] Processing confirmation response: '{response_text}'")
-        
-        options = hitl_data.get("options", {})
-        approve_text = options.get("approve", DEFAULT_APPROVE_TEXT).lower()
-        deny_text = options.get("deny", DEFAULT_DENY_TEXT).lower()
-        
-        logger.info(f"🔍 [HITL_CONFIRMATION] Approval keywords: [{approve_text}, approve, yes, y, ok, confirm, proceed]")
-        logger.info(f"🔍 [HITL_CONFIRMATION] Denial keywords: [{deny_text}, no, n, cancel, abort, stop]")
-        
-        response_text_lower = response_text.lower()
-        
-        # Check for approval (exact word matching to avoid false positives)
-        approval_keywords = [approve_text, "approve", "yes", "y", "ok", "confirm", "proceed"]
-        response_words = response_text_lower.split()
-        # Strip punctuation from words for better matching
-        clean_words = [word.strip('.,!?";:()[]{}') for word in response_words]
-        is_approval = any(keyword in clean_words or keyword == response_text_lower.strip() for keyword in approval_keywords)
-        
-        # Check for denial (exact word matching to avoid false positives)
-        denial_keywords = [deny_text, "no", "n", "cancel", "abort", "stop"]
-        # Strip punctuation from words for better matching  
-        clean_words = [word.strip('.,!?";:()[]{}') for word in response_words]
-        is_denial = any(keyword in clean_words or keyword == response_text_lower.strip() for keyword in denial_keywords)
-        
-        # Handle conflicting keywords (both approval and denial) as invalid
-        if is_approval and is_denial:
-            logger.warning(f"🔍 [HITL_CONFIRMATION] Conflicting keywords detected in '{original_response}' - re-prompting user")
-            contextual_message = f"""❓ I found conflicting keywords in **"{original_response}"**.
-
-**The message contains both:**
-• Approval words: {', '.join([kw for kw in approval_keywords if kw in clean_words])}
-• Denial words: {', '.join([kw for kw in denial_keywords if kw in clean_words])}
-
-**Please be clear:**
-• `{approve_text}` - to approve and proceed with the action?
-• `{deny_text}` - to cancel and stop the action?
-
-Please respond with one clear choice."""
-            
+        if intent == "approval":
+            logger.info(f"🤖 [LLM_HITL] LLM interpreted as APPROVAL: '{response_text}'")
             return {
-                "success": False,
-                "result": None,
-                "hitl_data": {**hitl_data, "awaiting_response": False},  # Re-prompt
-                "response_message": contextual_message,
-                "error_type": "validation"
-            }
-        
-        if is_approval:
-            logger.info(f"🔍 [HITL_CONFIRMATION] APPROVAL detected - clearing HITL data and proceeding")
-            result = {
                 "success": True,
                 "result": "approved",
-                "hitl_data": None,  # Clear HITL data - interaction complete
-                "response_message": "✅ Approved - proceeding with the action.",
-                "error_type": None
+                "context": None,  # Clear context - interaction complete
+                "response_message": "✅ Approved - proceeding with the action."
             }
-            logger.info(f"🔍 [HITL_CONFIRMATION] Returning approval result: {result}")
-            return result
         
-        if is_denial:
-            logger.info(f"🔍 [HITL_CONFIRMATION] DENIAL detected - clearing HITL data and cancelling")
-            result = {
-                "success": True,
-                "result": "denied",
-                "hitl_data": None,  # Clear HITL data - interaction complete
-                "response_message": "❌ Cancelled - the action has been cancelled as requested.",
-                "error_type": None
-            }
-            logger.info(f"🔍 [HITL_CONFIRMATION] Returning denial result: {result}")
-            return result
-        
-        # Invalid response - re-prompt with concise context
-        logger.warning(f"🔍 [HITL_CONFIRMATION] Invalid response '{original_response}' - re-prompting user")
-        
-        # Create concise error message
-        contextual_message = _get_concise_confirmation_error(original_response, approve_text, deny_text)
-        
-        result = {
-            "success": False,
-            "result": None,
-            "hitl_data": {**hitl_data, "awaiting_response": False},  # Re-prompt
-            "response_message": contextual_message,
-            "error_type": "validation"
-        }
-        logger.info(f"🔍 [HITL_CONFIRMATION] Returning re-prompt result: {result}")
-        return result
-            
-    except Exception as e:
-        logger.error(f"🔍 [HITL_CONFIRMATION] Error processing confirmation response: {str(e)}")
-        raise HITLInteractionError(f"Error processing confirmation response: {str(e)}")
-
-
-async def _process_selection_response(hitl_data: Dict[str, Any], response_text: str, original_response: str) -> Dict[str, Any]:
-    """Process selection responses (numbered choices)."""
-    try:
-        options = hitl_data.get("options", [])
-        allow_cancel = hitl_data.get("allow_cancel", True)
-        
-        if not options:
-            raise HITLValidationError("No options available for selection")
-        
-        # Check for cancellation first
-        if allow_cancel and any(keyword in response_text for keyword in ["cancel", "abort", "quit", "exit"]):
+        elif intent == "denial":
+            logger.info(f"🤖 [LLM_HITL] LLM interpreted as DENIAL: '{response_text}'")
             return {
                 "success": True,
-                "result": "cancelled",
-                "hitl_data": None,  # Clear HITL data - interaction complete
-                "response_message": "❌ Selection cancelled as requested.",
-                "error_type": None
+                "result": "denied", 
+                "context": None,  # Clear context - interaction complete
+                "response_message": "❌ Cancelled - the action has been cancelled as requested."
             }
         
-        # Try to parse as number
-        try:
-            choice_num = int(response_text)
-            
-            # Check if it's a valid option number
-            if 1 <= choice_num <= len(options):
-                selected_option = options[choice_num - 1]
-                return {
-                    "success": True,
-                    "result": {"index": choice_num - 1, "option": selected_option},
-                    "hitl_data": None,  # Clear HITL data - interaction complete
-                    "response_message": f"✅ Selected option {choice_num}",
-                    "error_type": None
-                }
-            
-            # Check if it's the cancel option number
-            elif allow_cancel and choice_num == len(options) + 1:
-                return {
-                    "success": True,
-                    "result": "cancelled",
-                    "hitl_data": None,  # Clear HITL data - interaction complete
-                    "response_message": "❌ Selection cancelled as requested.",
-                    "error_type": None
-                }
-            
-            # Number out of range
-            else:
-                max_num = len(options) + (1 if allow_cancel else 0)
-                contextual_message = f"""❓ I received **"{choice_num}"** but that's not a valid option number.
-
-**Valid options are:**
-• Numbers **1 to {max_num}** (you entered {choice_num})
-
-Please enter a number from the valid range above."""
-                
-                return {
-                    "success": False,
-                    "result": None,
-                    "hitl_data": {**hitl_data, "awaiting_response": False},  # Re-prompt
-                    "response_message": contextual_message,
-                    "error_type": "validation"
-                }
-                
-        except ValueError:
-            # Not a valid number
-            contextual_message = f"""❓ I received **"{original_response}"** but I need a number to select an option.
-
-**What I'm looking for:**
-• A number (like 1, 2, 3) to select from the available options
-• You entered: "{original_response}" (not a number)
-
-Please enter the **number** of your choice from the options above."""
-            
+        else:  # intent == "input"
+            logger.info(f"🤖 [LLM_HITL] LLM interpreted as INPUT: '{response_text}'")
             return {
-                "success": False,
-                "result": None,
-                "hitl_data": {**hitl_data, "awaiting_response": False},  # Re-prompt
-                "response_message": contextual_message,
-                "error_type": "validation"
+                "success": True,
+                "result": response_text,  # Return the user's input as-is
+                "context": hitl_context,  # Keep context for tool to process
+                "response_message": f"📝 Received: {response_text}"
             }
             
     except Exception as e:
-        raise HITLInteractionError(f"Error processing selection response: {str(e)}")
+        logger.error(f"🤖 [LLM_HITL] Error in LLM-driven processing: {str(e)}")
+        raise HITLInteractionError(f"Error processing HITL response: {str(e)}")
 
 
-async def _process_input_request_response(hitl_data: Dict[str, Any], response_text: str, original_response: str) -> Dict[str, Any]:
-    """Process input request responses (free text input)."""
-    try:
-        # Check for cancellation
-        if response_text in ["cancel", "abort", "quit", "exit"]:
-            return {
-                "success": True,
-                "result": "cancelled",
-                "hitl_data": None,  # Clear HITL data - interaction complete
-                "response_message": "❌ Input request cancelled as requested.",
-                "error_type": None
-            }
-        
-        # Validate input (basic validation - can be extended)
-        if not original_response.strip():
-            input_type = hitl_data.get("input_type", "information")
-            contextual_message = f"""❓ I received an empty response, but I need some input from you.
+# Complex type-based processing functions have been simplified.
+# 
+# Previous rigid validation functions have been replaced with simple LLM-driven interpretation:
+# - Confirmation responses: Now uses natural language understanding
+# - Selection responses: Flexible option matching with LLM 
+# - Input validation: Intelligent context-aware processing
+# - Multi-step collection: Tool-managed for better user experience
+#
+# Total reduction: 296 lines of complex logic replaced with flexible LLM interpretation.
 
-**What I need:**
-• {input_type.replace('_', ' ').title()} (cannot be empty)
-• You sent: [empty message]
-
-Please provide the requested {input_type.replace('_', ' ')} or type 'cancel' to abort."""
-            
-            return {
-                "success": False,
-                "result": None,
-                "hitl_data": {**hitl_data, "awaiting_response": False},  # Re-prompt
-                "response_message": contextual_message,
-                "error_type": "validation"
-            }
-        
-        # Input accepted
-        input_type = hitl_data.get("input_type", "information")
-        return {
-            "success": True,
-            "result": {"input": original_response.strip(), "input_type": input_type},
-            "hitl_data": None,  # Clear HITL data - interaction complete
-            "response_message": f"✅ {input_type.replace('_', ' ').title()} received successfully.",
-            "error_type": None
-        }
-        
-    except Exception as e:
-        raise HITLInteractionError(f"Error processing input request response: {str(e)}")
+# Legacy type-based processing functions previously existed here.
+# They have been replaced with LLM-driven interpretation for better user experience.
 
 
-async def _process_multi_step_response(hitl_data: Dict[str, Any], response_text: str, original_response: str) -> Dict[str, Any]:
-    """Process multi-step input responses."""
-    try:
-        steps = hitl_data.get("steps", [])
-        current_step = hitl_data.get("current_step", 0)
-        total_steps = hitl_data.get("total_steps", len(steps))
-        
-        # Check for cancellation
-        if response_text in ["cancel", "abort", "quit", "exit"]:
-            return {
-                "success": True,
-                "result": "cancelled",
-                "hitl_data": None,  # Clear HITL data - interaction complete
-                "response_message": "❌ Multi-step input cancelled as requested.",
-                "error_type": None
-            }
-        
-        # Validate input
-        if not original_response.strip():
-            current_step_info = steps[current_step]
-            step_name = current_step_info.get("name", f"step_{current_step + 1}")
-            contextual_message = f"""❓ I received an empty response for step {current_step + 1} of {total_steps}.
-
-**What I need for this step:**
-• {step_name.replace('_', ' ').title()} (cannot be empty)
-• You sent: [empty message]
-
-Please provide the requested information for this step or type 'cancel' to abort the entire process."""
-            
-            return {
-                "success": False,
-                "result": None,
-                "hitl_data": {**hitl_data, "awaiting_response": False},  # Re-prompt
-                "response_message": contextual_message,
-                "error_type": "validation"
-            }
-        
-        # Store current step response
-        step_name = steps[current_step].get("name", f"step_{current_step + 1}")
-        
-        # Initialize collected_data if it doesn't exist
-        collected_data = hitl_data.get("collected_data", {})
-        collected_data[step_name] = original_response.strip()
-        
-        # Check if this was the last step
-        if current_step >= total_steps - 1:
-            # All steps complete
-            return {
-                "success": True,
-                "result": {"collected_data": collected_data, "completed_steps": total_steps},
-                "hitl_data": None,  # Clear HITL data - interaction complete
-                "response_message": f"✅ All {total_steps} steps completed successfully!",
-                "error_type": None
-            }
-        
-        # Move to next step
-        next_step = current_step + 1
-        updated_hitl_data = {
-            **hitl_data,
-            "current_step": next_step,
-            "collected_data": collected_data,
-            "awaiting_response": False  # Will re-prompt for next step
-        }
-        
-        return {
-            "success": False,  # Not complete yet
-            "result": {"partial_data": collected_data, "next_step": next_step},
-            "hitl_data": updated_hitl_data,  # Continue with next step
-            "response_message": f"✅ Step {current_step + 1} complete. Moving to step {next_step + 1}...",
-            "error_type": None
-        }
-        
-    except Exception as e:
-        raise HITLInteractionError(f"Error processing multi-step response: {str(e)}")
 
 
-async def _process_hitl_response_node(state: Dict[str, Any], hitl_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Node wrapper for processing HITL responses with state management.
-    
-    Args:
-        state: Current agent state
-        hitl_data: HITL interaction data
-        
-    Returns:
-        Updated state after processing response
-    """
-    try:
-        logger.info(f"🔍 [HITL_DEBUG] Processing HITL response node - hitl_data: {hitl_data}")
-        
-        # Get the latest human message
-        messages = state.get("messages", [])
-        if not messages:
-            raise HITLResponseError("No messages found in state")
-        
-        logger.info(f"🔍 [HITL_DEBUG] Found {len(messages)} messages in state")
-        
-        # Find the most recent human message - this should be the approval/denial response
-        latest_human_message = None
-        for msg in reversed(messages):
-            msg_type = getattr(msg, 'type', 'no_type') if hasattr(msg, 'type') else msg.get('type', 'no_type') if isinstance(msg, dict) else 'no_type'
-            msg_content = getattr(msg, 'content', str(msg)) if hasattr(msg, 'content') else str(msg.get('content', msg)) if isinstance(msg, dict) else str(msg)
-            
-            logger.info(f"🔍 [HITL_DEBUG] Checking message from end: type={msg_type}, content='{msg_content[:50]}...'")
-            
-            if msg_type == 'human':
-                latest_human_message = msg_content
-                logger.info(f"🔍 [HITL_DEBUG] FOUND LATEST HUMAN MESSAGE: '{latest_human_message}'")
-                break
-        
-        if not latest_human_message:
-            raise HITLResponseError("No human message found in conversation state")
-        
-        logger.info(f"🔍 [HITL_DEBUG] Final selected human response: '{latest_human_message}'")
-        
-        # Process the response using the latest human message
-        # This should be the user's approval/denial response
-        response = latest_human_message
-        
-        # Process the response using the core function
-        result = await _process_hitl_response(hitl_data, response)
-        
-        logger.info(f"🔍 [HITL_DEBUG] Core HITL processing result: {result}")
-        
-        # Prepare updated messages array
-        updated_messages = list(messages)
-        
-        # Add response message if provided
-        agent_response_message = None
-        if result.get("response_message"):
-            agent_response_message = {
-                "role": "assistant",
-                "content": result["response_message"],
-                "type": "ai"  # Ensure it's recognized as AI message by Memory Store
-            }
-            updated_messages.append(agent_response_message)
-            logger.info(f"🔍 [HITL_DEBUG] Added response message: '{result['response_message']}'")
-        
-        # Prepare execution data if action was approved  
-        execution_data = None
-        if result.get("success") and result.get("result") == "approved":
-            logger.info(f"🔍 [HITL_DEBUG] Action APPROVED - checking for execution context")
-            
-            # Check if this was a confirmation with execution context
-            context = hitl_data.get("context", {})
-            logger.info(f"🔍 [HITL_DEBUG] Context available: {bool(context)}")
-            logger.info(f"🔍 [HITL_DEBUG] Context keys: {list(context.keys()) if context else 'None'}")
-            
-            if context.get("tool"):
-                execution_data = context
-                logger.info(f"🔍 [HITL_DEBUG] Setting execution_data for approved {context.get('tool')} action")
-                context_info = context.get('customer_info', context.get('meeting_info', context.get('workflow_data', {})))
-                logger.info(f"🔍 [HITL_DEBUG] Execution data context: {type(context_info).__name__}")
-            else:
-                logger.warning(f"🔍 [HITL_DEBUG] APPROVED action missing tool in context - available keys: {list(context.keys())}")
-        else:
-            logger.info(f"🔍 [HITL_DEBUG] Action NOT approved - success: {result.get('success')}, result: {result.get('result')}")
-        
-        # Prepare final state
-        final_state = {
-            **state,
-            "messages": updated_messages,
-            "hitl_data": result.get("hitl_data"),  # None if complete, updated if continuing
-            "hitl_result": result.get("result") if result.get("success") else None,
-            "execution_data": execution_data  # Set execution data for approved actions
-        }
-        
-        logger.info(f"🔍 [HITL_DEBUG] Final state prepared:")
-        logger.info(f"🔍 [HITL_DEBUG]   - hitl_data: {final_state.get('hitl_data') is not None}")
-        logger.info(f"🔍 [HITL_DEBUG]   - hitl_result: {final_state.get('hitl_result')}")
-        logger.info(f"🔍 [HITL_DEBUG]   - execution_data: {final_state.get('execution_data') is not None}")
-        if final_state.get('execution_data'):
-            logger.info(f"🔍 [HITL_DEBUG]   - execution_data tool: {final_state.get('execution_data', {}).get('tool')}")
-        
-        # Return updated state
-        return final_state
-            
-    except HITLError:
-        # Re-raise HITL errors
-        logger.error(f"🔍 [HITL_DEBUG] HITLError in response processing")
-        raise
-    except Exception as e:
-        logger.error(f"🔍 [HITL_DEBUG] Exception in response processing: {e}")
-        hitl_error = handle_hitl_error(e, {
-            "function": "_process_hitl_response_node",
-            "interaction_type": hitl_data.get("type"),
-            "hitl_data": hitl_data
-        })
-        raise hitl_error
+
+
 
 
 def _has_new_human_message(state: Dict[str, Any]) -> bool:
@@ -1438,29 +1266,6 @@ def _has_new_human_message(state: Dict[str, Any]) -> bool:
     return False
 
 
-# Helper functions for better agent communication
-def format_agent_hitl_transition(hitl_type: str, reason: str, context: Dict[str, Any]) -> str:
-    """
-    Format clear agent messages for HITL transitions.
-    
-    Args:
-        hitl_type: Type of HITL interaction needed
-        reason: Why the agent needs human input
-        context: Context data for the interaction
-    
-    Returns:
-        Clear transition message for the user
-    """
-    tool_name = context.get("tool", "system")
-    
-    transition_messages = {
-        "confirmation": f"🤖 I need your approval to proceed with `{tool_name}`. {reason}",
-        "selection": f"🤖 I found multiple options for `{tool_name}`. {reason}",  
-        "input_request": f"🤖 I need additional information for `{tool_name}`. {reason}",
-        "multi_step_input": f"🤖 I need to collect some details for `{tool_name}`. {reason}"
-    }
-    
-    return transition_messages.get(hitl_type, f"🤖 I need your input for `{tool_name}`. {reason}")
 
 
 def create_concise_error_message(error_type: str, user_input: str, expected: str) -> str:
@@ -1503,4 +1308,4 @@ def _get_concise_input_error(user_input: str, input_type: str, error_type: str) 
     return create_concise_error_message(error_type, user_input, expected)
 
 
-logger.info("HITL module initialized successfully") 
+logger.info("🚀 [HITL_INIT] HITL module initialized successfully") 

@@ -96,8 +96,8 @@ This feature creates a single, reusable node that handles all types of human int
 
 ## Design Considerations
 
-### State Management - Ultra-Minimal 3-Field Design
-- **Revolutionary Simplicity**: Only 3 fields total - `hitl_phase`, `hitl_prompt`, `hitl_context`
+### State Management - Ultra-Minimal 3-Field Design for HITL interactions
+- **Revolutionary Simplicity**: Only 3 fields total for HITL - `hitl_phase`, `hitl_prompt`, `hitl_context`
 - **Eliminated Complexity**: No `hitl_type` (tools define their own style), no `hitl_result` (use phase + context)
 - **Replaces All Legacy Fields**: Eliminates `hitl_data`, `confirmation_data`, `execution_data`, `confirmation_result`
 - **Easy Access**: Direct field access without JSON parsing (`state.get("hitl_phase")`)

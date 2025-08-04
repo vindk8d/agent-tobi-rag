@@ -48,39 +48,25 @@ class AgentState(TypedDict):
     # Optional conversation summary (for very long conversations)
     conversation_summary: Optional[str]
 
-    # HITL (Human-in-the-Loop) unified interaction state - SINGLE NODE DESIGN
+    # HITL (Human-in-the-Loop) Ultra-Minimal 3-Field Architecture
+    # Revolutionary simplicity: Only 3 fields total, no complex JSON structures
     # 
-    # hitl_data: When present, triggers routing to general-purpose HITL node
-    # Contains all HITL interaction data in a single, self-contained structure:
-    # {
-    #   "type": "confirmation" | "selection" | "input_request" | "multi_step_input",
-    #   "prompt": "User-facing prompt text",
-    #   "options": {...},  # Interaction-specific options (buttons, choices, etc.)
-    #   "awaiting_response": bool,  # Internal state tracking
-    #   "context": {  # Tool-specific context for post-interaction processing
-    #     "source_tool": "tool_name",
-    #     "original_args": {...},
-    #     "customer_info": {...},
-    #     ...
-    #   }
-    # }
-    hitl_data: Optional[Dict[str, Any]]
-
-    # Legacy HITL fields (to be deprecated after migration)
-    # PHASE 1: Employee Agent → Confirmation Node
-    # confirmation_data: When present, triggers routing to confirmation node for user approval
-    # Contains customer message details: customer_id, message_content, message_type, customer_name
-    confirmation_data: Optional[Dict[str, Any]]
+    # hitl_phase: Lifecycle phase for HITL interactions
+    # - "needs_prompt": Ready to show prompt to user (triggers interrupt)
+    # - "awaiting_response": Waiting for user response (processing mode)  
+    # - "approved": User approved the action (route back to agent)
+    # - "denied": User denied the action (route back to agent)
+    hitl_phase: Optional[str]
     
-    # PHASE 2: Confirmation Node → Execution Node  
-    # execution_data: When present, triggers routing to execution node for message delivery
-    # Contains approved delivery details: customer_id, message_content, message_type, customer_info
-    execution_data: Optional[Dict[str, Any]]
+    # hitl_prompt: The actual text to show the user
+    # Tools generate completely custom prompts without rigid format constraints
+    # Examples: "Send this message to John?", "What's the customer's email?", etc.
+    hitl_prompt: Optional[str]
     
-    # PHASE 3: Execution Node → END
-    # confirmation_result: When present, indicates completion (prevents re-execution)
-    # Contains delivery status: 'delivered', 'cancelled', 'failed' with optional details
-    confirmation_result: Optional[str]
+    # hitl_context: Minimal execution context when needed
+    # Contains only essential data for tool re-calling and execution
+    # Examples: {"source_tool": "tool_name", "customer_id": "123", "collected_data": {...}}
+    hitl_context: Optional[Dict[str, Any]]
 
 
 class ConversationMemory(TypedDict):

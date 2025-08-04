@@ -310,7 +310,7 @@ When asked to "send a message to [customer]", "follow up with [customer]", or "c
 - If specific message content is provided, use it exactly
 - If no specific content is given, generate appropriate professional content based on the message type
 - For follow-up messages, create content like "Hi [Name], I wanted to follow up on our recent interaction. Please let me know if you have any questions or need assistance."
-- NEVER ask for message content using gather_further_details - generate appropriate content instead
+- NEVER ask for message content using generic collection tools - generate appropriate content instead
 
 DO NOT ask for additional employee information - the system handles employee identification automatically.
 
