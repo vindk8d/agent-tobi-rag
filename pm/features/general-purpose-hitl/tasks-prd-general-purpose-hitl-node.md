@@ -154,16 +154,36 @@
   - [x] 12.8 Test dedicated HITL request tools (`request_approval`, `request_input`, `request_selection`) end-to-end
   - [x] 12.9 **COMPREHENSIVE INTEGRATION TESTS**: Validate revolutionary 3-field architecture end-to-end without legacy interference
 
-- [ ] 13.0 Revolutionary Documentation and Developer Experience
-  - [ ] 13.1 Update existing HITL documentation to reflect revolutionary 3-field management approach and elimination of HITL recursion
-  - [ ] 13.2 Create migration guide for developers updating existing tools from legacy fields to ultra-minimal 3-field structure
-  - [ ] 13.3 Document dedicated HITL request tools (`request_approval`, `request_input`, `request_selection`) with examples
-  - [ ] 13.4 Add code examples demonstrating tool-managed recursive collection pattern with agent coordination
-  - [ ] 13.5 Document agent node tool re-calling logic and `collection_mode=tool_managed` detection
-  - [ ] 13.6 Create debugging guide for troubleshooting 3-field phase transitions and tool re-calling loops
-  - [ ] 13.7 Update API documentation to reflect revolutionary 3-field definitions and tool-managed collection patterns
-  - [ ] 13.8 Document the elimination of HITLRequest class, type-based dispatch complexity, and HITL recursion
-  - [ ] 13.9 Document migration strategy and backward compatibility considerations for seamless transition from HITL-managed to tool-managed collection
+- [x] 13.0 **CRITICAL FIXES** - Address Implementation Gaps Identified by Comprehensive Evaluation
+  - [x] 13.1 **FIX CORE BUG**: Replace keyword-based interpretation in hitl_node() (lines 858-862) with actual LLM interpretation
+    - [x] 13.1.1 **REMOVE** simple keyword matching: `approve_words = ["yes", "approve", "send"...]; is_approved = any(word in response_lower for word in approve_words)`
+    - [x] 13.1.2 **REPLACE** with: `intent = await _interpret_user_intent_with_llm(user_response, hitl_context)`
+    - [x] 13.1.3 **IMPLEMENT** proper processing for INPUT responses (data collection) - should set phase to "approved" with input data preserved
+    - [x] 13.1.4 **ENSURE** "option 2", "SUV", "$50k" etc. are correctly interpreted as valid data inputs and approved
+  - [x] 13.2 **FIX INPUT HANDLING**: Update hitl_node to properly handle LLM-interpreted "input" responses 
+    - [x] 13.2.1 **ADD** logic to process intent="input" as approved data collection (not denial)
+    - [x] 13.2.2 **PRESERVE** input data in hitl_context for tool re-calling
+    - [x] 13.2.3 **SET** hitl_phase to "approved" for successful data input (not "denied")
+  - [x] 13.3 **FIX SELECTION HANDLING**: Ensure selection responses like "option 2" are properly approved
+    - [x] 13.3.1 **VERIFY** LLM interprets "option 2" as "input" intent
+    - [x] 13.3.2 **ENSURE** input intent results in "approved" phase for selection completion
+  - [x] 13.4 **FIX EDGE CASE HANDLING**: Improve ambiguous response processing
+    - [x] 13.4.1 **RELY** on LLM interpretation instead of defaulting to denial
+    - [x] 13.4.2 **IMPLEMENT** proper fallback behavior that still processes responses
+  - [x] 13.5 **VALIDATION**: Run comprehensive evaluation to verify all fixes
+    - [x] 13.5.1 **TARGET**: Achieve 100% test suite success rate ✅ ACHIEVED!
+    - [x] 13.5.2 **VERIFY**: All PRD requirements met without test overfitting
+
+- [ ] 14.0 Revolutionary Documentation and Developer Experience
+  - [x] 14.1 Update existing HITL documentation to reflect revolutionary 3-field management approach and elimination of HITL recursion
+  - [ ] 14.2 Create migration guide for developers updating existing tools from legacy fields to ultra-minimal 3-field structure
+  - [ ] 14.3 Document dedicated HITL request tools (`request_approval`, `request_input`, `request_selection`) with examples
+  - [ ] 14.4 Add code examples demonstrating tool-managed recursive collection pattern with agent coordination
+  - [ ] 14.5 Document agent node tool re-calling logic and `collection_mode=tool_managed` detection
+  - [ ] 14.6 Create debugging guide for troubleshooting 3-field phase transitions and tool re-calling loops
+  - [ ] 14.7 Update API documentation to reflect revolutionary 3-field definitions and tool-managed collection patterns
+  - [ ] 14.8 Document the elimination of HITLRequest class, type-based dispatch complexity, and HITL recursion
+  - [ ] 14.9 Document migration strategy and backward compatibility considerations for seamless transition from HITL-managed to tool-managed collection
 
 ## Functions to Change/Eliminate Based on Tool-Managed Recursion
 

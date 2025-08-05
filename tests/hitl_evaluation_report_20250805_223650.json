@@ -1,0 +1,63 @@
+{
+  "evaluation_metadata": {
+    "test_suite": "Comprehensive HITL Robustness Evaluation",
+    "prd_reference": "prd-general-purpose-hitl-node.md",
+    "execution_timestamp": "2025-08-05T22:36:50.316886",
+    "execution_time_seconds": 32.93
+  },
+  "summary": {
+    "execution_time_seconds": 32.93,
+    "total_test_suites": 8,
+    "passed_test_suites": 3,
+    "failed_test_suites": 5,
+    "success_rate_percent": 37.5,
+    "timestamp": "2025-08-05T22:36:50.316886",
+    "detailed_results": {
+      "approval_flow": "\u2705 PASSED",
+      "input_collection": "\u2705 PASSED",
+      "selection_flow": "\u274c FAILED: <module 'agents.tools' from '/Users/vinperez/Desktop/agent-tobi-rag/backend/agents/tools.py'> does not have the attribute 'customer_lookup'",
+      "edge_cases": "\u274c FAILED: Should clear phase even for invalid responses",
+      "nlp_interpretation": "\u2705 PASSED",
+      "state_consistency": "\u274c FAILED: Should clear phase after processing",
+      "performance": "\u274c FAILED: Request 1 should clear phase",
+      "complex_integration": "\u274c FAILED: <module 'agents.tools' from '/Users/vinperez/Desktop/agent-tobi-rag/backend/agents/tools.py'> does not have the attribute 'customer_lookup'"
+    }
+  },
+  "detailed_results": {
+    "approval_flow": "\u2705 PASSED",
+    "input_collection": "\u2705 PASSED",
+    "selection_flow": "\u274c FAILED: <module 'agents.tools' from '/Users/vinperez/Desktop/agent-tobi-rag/backend/agents/tools.py'> does not have the attribute 'customer_lookup'",
+    "edge_cases": "\u274c FAILED: Should clear phase even for invalid responses",
+    "nlp_interpretation": "\u2705 PASSED",
+    "state_consistency": "\u274c FAILED: Should clear phase after processing",
+    "performance": "\u274c FAILED: Request 1 should clear phase",
+    "complex_integration": "\u274c FAILED: <module 'agents.tools' from '/Users/vinperez/Desktop/agent-tobi-rag/backend/agents/tools.py'> does not have the attribute 'customer_lookup'"
+  },
+  "test_scenarios_covered": [
+    "Customer Message Approval Flow (trigger_customer_message)",
+    "Multi-Step Input Collection (collect_sales_requirements)",
+    "Customer Selection Flow (customer_lookup)",
+    "Edge Cases and Error Handling",
+    "Natural Language Interpretation (LLM-driven)",
+    "State Consistency and Routing Logic",
+    "Performance and Stress Testing",
+    "Complex Multi-Tool Workflow Integration"
+  ],
+  "state_variables_validated": [
+    "hitl_phase transitions (None \u2192 needs_prompt \u2192 awaiting_response \u2192 approved/denied \u2192 None)",
+    "hitl_prompt lifecycle (None \u2192 prompt_text \u2192 preserved \u2192 None)",
+    "hitl_context management (None \u2192 tool_context \u2192 preserved/cleared \u2192 None)",
+    "Message history growth and conversation flow",
+    "Node routing decisions (employee_agent \u2194 hitl_node \u2192 ea_memory_store)"
+  ],
+  "critical_features_tested": [
+    "3-Field Architecture (hitl_phase, hitl_prompt, hitl_context)",
+    "LLM-Driven Natural Language Interpretation",
+    "Tool-Managed Recursive Collection Pattern",
+    "Non-Recursive HITL Routing (no self-loops)",
+    "Dedicated HITL Request Tools (request_approval, request_input, request_selection)",
+    "Interrupt/Resume State Preservation",
+    "Error Handling and Edge Cases",
+    "Performance and Stress Robustness"
+  ]
+}
