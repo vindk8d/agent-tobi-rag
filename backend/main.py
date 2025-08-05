@@ -21,6 +21,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Explicitly set agents.tools logger to INFO level for debugging customer lookup issues
+logging.getLogger('agents.tools').setLevel(logging.INFO)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

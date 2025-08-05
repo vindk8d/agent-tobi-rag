@@ -42,6 +42,10 @@ class ChatResponse(BaseModel):
     confirmation_id: Optional[str] = Field(None, description="Confirmation ID if interrupted")
     error: bool = Field(default=False, description="Whether an error occurred during processing")
     error_type: Optional[str] = Field(None, description="Type of error for client-side handling")
+    # REVOLUTIONARY 3-FIELD HITL ARCHITECTURE
+    hitl_phase: Optional[str] = Field(None, description="HITL interaction phase (needs_prompt, awaiting_response, approved, denied)")
+    hitl_prompt: Optional[str] = Field(None, description="HITL prompt text for user interaction")
+    hitl_context: Optional[Dict[str, Any]] = Field(None, description="HITL context data for interaction")
 
 class PendingConfirmation(BaseModel):
     """Simplified ephemeral confirmation model"""
@@ -110,29 +114,35 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
             "configurable": {"thread_id": conversation_id}
         })
         
-        # Extract HITL state information
-        hitl_data = None
+        # Extract HITL state information using REVOLUTIONARY 3-field architecture
+        hitl_phase = None
+        hitl_prompt = None
+        hitl_context = None
         is_awaiting_hitl = False
         
         if current_state and hasattr(current_state, 'values'):
             state_values = current_state.values or {}
-            hitl_data = state_values.get('hitl_data')
-            # Agent is awaiting HITL response when hitl_data exists and awaiting_response is True
-            is_awaiting_hitl = hitl_data and isinstance(hitl_data, dict) and hitl_data.get('awaiting_response', False)
+            hitl_phase = state_values.get('hitl_phase')
+            hitl_prompt = state_values.get('hitl_prompt')
+            hitl_context = state_values.get('hitl_context')
+            # Agent is awaiting HITL response when hitl_phase indicates waiting for user input
+            is_awaiting_hitl = hitl_phase in ["awaiting_response", "needs_confirmation", "needs_prompt"]
             
-        logger.info(f"🔍 [CHAT_DEBUG] HITL state check: hitl_data={bool(hitl_data)}, awaiting_hitl={is_awaiting_hitl}")
-        if hitl_data:
-            logger.info(f"🔍 [CHAT_DEBUG] HITL data type: {hitl_data.get('type')}, awaiting_response: {hitl_data.get('awaiting_response')}")
-            logger.info(f"🔍 [CHAT_DEBUG] HITL data keys: {list(hitl_data.keys())}")
-            logger.info(f"🔍 [CHAT_DEBUG] HITL context: {hitl_data.get('context', {})}")
+        logger.info(f"🔍 [CHAT_DEBUG] HITL 3-field state check: phase={hitl_phase}, awaiting_hitl={is_awaiting_hitl}")
+        if hitl_phase:
+            logger.info(f"🔍 [CHAT_DEBUG] HITL phase: {hitl_phase}")
+            logger.info(f"🔍 [CHAT_DEBUG] HITL prompt: {hitl_prompt[:50] if hitl_prompt else None}...")
+            logger.info(f"🔍 [CHAT_DEBUG] HITL context: {hitl_context}")
             
     except Exception as e:
         logger.warning(f"🔍 [CHAT_DEBUG] Could not check agent HITL state: {e}")
-        hitl_data = None
+        hitl_phase = None
+        hitl_prompt = None
+        hitl_context = None
         is_awaiting_hitl = False
 
     # Detect approval messages when agent is waiting for HITL response
-    approval_keywords = ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'proceed']
+    approval_keywords = ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'proceed', 'go ahead', 'send', 'send it', 'do it']
     is_approval_message = any(keyword in request.message.lower().strip() for keyword in approval_keywords)
     
     logger.info(f"🔍 [CHAT_DEBUG] State-based approval detection: message='{request.message}', is_approval={is_approval_message}, awaiting_hitl={is_awaiting_hitl}")
@@ -201,7 +211,7 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
     if processed_result.get("is_interrupted", False):
         logger.info(f"🔍 [CHAT_DEBUG] ✅ HITL INTERRUPT: Agent requires human interaction, returning prompt directly")
         
-        # Return HITL prompt directly - no additional confirmation creation needed
+        # Return HITL prompt directly with full 3-field architecture - no additional confirmation creation needed
         hitl_prompt = processed_result.get("message", "Confirmation required")
         return ChatResponse(
             message=hitl_prompt,
@@ -209,7 +219,11 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
             is_interrupted=True,
             conversation_id=processed_result.get("conversation_id", conversation_id),
             error=False,  # HITL interactions are not errors
-            error_type=None
+            error_type=None,
+            # REVOLUTIONARY 3-FIELD HITL ARCHITECTURE - pass through to frontend
+            hitl_phase=processed_result.get("hitl_phase"),
+            hitl_prompt=processed_result.get("hitl_prompt"),
+            hitl_context=processed_result.get("hitl_context")
         )
     
     # Normal conversation response (no interruption)

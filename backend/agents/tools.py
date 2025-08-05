@@ -1,5 +1,5 @@
 """
-Tools for RAG agents - Simplified and consolidated approach.
+Tools for Sales Copilot
 
 This module provides:
 1. User context management (consolidated from user_context.py)
@@ -10,13 +10,14 @@ This module provides:
 Following the principle: Use LLM intelligence rather than keyword matching or complex logic.
 """
 
+import asyncio
 import logging
 import contextvars
 import json
 import uuid
 from datetime import datetime, date
 from enum import Enum
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from langchain_core.tools import tool
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -28,11 +29,11 @@ from langsmith import traceable
 from sqlalchemy import create_engine, text
 from rag.retriever import SemanticRetriever
 from core.config import get_settings
-from agents.hitl import HITLRequest
+from agents.hitl import request_approval, request_input, request_selection
 import re
 
 # NOTE: LangGraph interrupt functionality is now handled by the centralized HITL system in hitl.py
-# No direct interrupt handling needed in individual tools - they use HITLRequest format instead
+# No direct interrupt handling needed in individual tools - they use dedicated HITL request tools instead
 
 
 
@@ -744,10 +745,11 @@ async def _get_rag_llm():
 # =============================================================================
 
 # =============================================================================
-# LEGACY FUNCTIONS - DEPRECATED (Replaced by new HITL system)
+# LEGACY FUNCTIONS - DEPRECATED (Replaced by revolutionary 3-field HITL system)
 # =============================================================================
 # The following functions were part of the old confirmation system and have been
-# replaced by the new HITLRequest-based system with _handle_confirmation_approved(),
+# replaced by the revolutionary 3-field HITL architecture (hitl_phase, hitl_prompt, hitl_context)
+# using dedicated HITL request tools with _handle_confirmation_approved(),
 # _handle_confirmation_denied(), and _deliver_customer_message().
 # 
 # These functions are kept temporarily for test compatibility but should not be
@@ -990,6 +992,12 @@ async def trigger_customer_message(customer_id: str, message_content: str, messa
     try:
         # Check if user is an employee by verifying employee_id is available
         sender_employee_id = await get_current_employee_id()
+        
+        # DEBUG: Log context during tool execution
+        logger.info(f"🔍 [TRIGGER_CUSTOMER_MESSAGE_CONTEXT] customer_id param: {customer_id}")
+        logger.info(f"🔍 [TRIGGER_CUSTOMER_MESSAGE_CONTEXT] sender_employee_id: {sender_employee_id}")
+        logger.info(f"🔍 [TRIGGER_CUSTOMER_MESSAGE_CONTEXT] current context: {get_user_context()}")
+        
         if not sender_employee_id:
             logger.warning("[CUSTOMER_MESSAGE] Non-employee user attempted to use customer messaging tool")
             return "I apologize, but customer messaging is only available to employees. Please contact your administrator if you need assistance."
@@ -1052,8 +1060,8 @@ Just share whatever comes to mind - any detail could help me find them."""
             
             logger.info(f"[CUSTOMER_MESSAGE] Customer '{customer_id}' not found - requesting additional information via HITL")
             
-            # Use HITLRequest.input_request() for customer lookup clarification
-            return HITLRequest.input_request(
+            # REVOLUTIONARY: Use dedicated request_input() tool for customer lookup clarification
+            return request_input(
                 prompt=not_found_prompt,
                 input_type="customer_identifier", 
                 context=context_data,
@@ -1101,8 +1109,8 @@ Do you want to send this message to the customer?"""
         
         logger.info(f"[CUSTOMER_MESSAGE] Message prepared for HITL confirmation - Customer: {customer_name}")
         
-        # Use HITLRequest.confirmation() for standardized HITL interaction
-        return HITLRequest.confirmation(
+        # REVOLUTIONARY: Use dedicated request_approval() tool for standardized HITL interaction
+        return request_approval(
             prompt=confirmation_prompt,
             context=context_data,
             approve_text="send",
@@ -1114,158 +1122,357 @@ Do you want to send this message to the customer?"""
         return f"Sorry, I encountered an error while preparing your customer message request. Please try again or contact support if the issue persists."
 
 
-class GatherFurtherDetailsParams(BaseModel):
-    """Parameters for gathering additional information from the user."""
-    information_needed: str = Field(..., description="Description of what information is needed from the user")
-    context: str = Field(default="", description="Context about why this information is needed")
-    input_type: str = Field(default="information", description="Type of input being requested (information, details, clarification, etc.)")
-    validation_hints: List[str] = Field(default_factory=list, description="Optional hints to help the user provide the right information")
+# [ELIMINATED] gather_further_details and related functions removed due to redundancy
+# These functions have been replaced by business-specific recursive collection tools
+# that use the revolutionary 3-field HITL architecture (hitl_phase, hitl_prompt, hitl_context)
+# and manage their own collection state with better context-aware validation.
 
+# ============================================================================= 
+# REVOLUTIONARY UNIVERSAL CONVERSATION ANALYSIS UTILITY (Task 9.2)
+# =============================================================================
 
-@tool(args_schema=GatherFurtherDetailsParams)
-@traceable(name="gather_further_details")
-async def gather_further_details(
-    information_needed: str, 
-    context: str = "", 
-    input_type: str = "information",
-    validation_hints: List[str] = None
-) -> str:
+async def extract_fields_from_conversation(
+    state: Dict[str, Any],
+    field_definitions: Dict[str, str],
+    tool_name: str = "unknown"
+) -> Dict[str, str]:
     """
-    Request additional information from the user through a HITL interaction.
+    REVOLUTIONARY: Universal LLM-powered function to extract already-provided information from conversation.
     
-    This tool allows agents to gather specific details, clarifications, or information
-    from users when the current context is insufficient to proceed. It uses the
-    standardized HITL input request format for consistency.
+    This universal helper eliminates redundant questions by intelligently analyzing conversation
+    context to identify information customers have already provided. Can be used by ANY tool
+    that needs to collect information from users.
+    
+    ARCHITECTURE: Directly pulls from agent state (messages + conversation_summary) for uniform
+    integration with agents' context window and memory management system.
+    
+    Key Benefits:
+    - Eliminates frustrating redundant questions
+    - Improves user experience dramatically  
+    - Reusable across all collection tools
+    - Uses fast/cheap models for cost effectiveness
+    - Consistent LLM-powered analysis
+    - Uniform with agents' memory management
+    - Handles complex natural language expressions
     
     Args:
-        information_needed: Clear description of what information is needed
-        context: Optional context explaining why this information is required
-        input_type: Type of input being requested (information, details, clarification, etc.)
-        validation_hints: Optional list of hints to help the user provide the right information
+        state: Agent state containing messages and conversation_summary
+        field_definitions: Dict mapping field names to descriptions
+                          e.g., {"budget": "Budget range or maximum amount", 
+                                "timeline": "When they need the vehicle"}
+        tool_name: Name of calling tool for logging purposes
         
     Returns:
-        HITL input request for the user to provide the needed information
+        Dictionary of extracted fields and their values from conversation
         
     Examples:
-        - gather_further_details("the customer's preferred contact method", "to send them updates", "contact_preference")
-        - gather_further_details("more details about the issue", "to better assist you", "problem_description") 
-        - gather_further_details("the specific vehicle model you're interested in", "to show you accurate pricing and availability", "vehicle_preference")
+        State: {"messages": [...], "conversation_summary": "Customer interested in SUV..."}
+        Fields: {"budget": "Budget range", "vehicle_type": "Type of vehicle", "primary_use": "How they'll use it"}
+        Returns: {"budget": "under $50,000", "vehicle_type": "SUV", "primary_use": "daily commuting"}
     """
     try:
-        # Validate required input
-        if not information_needed or not information_needed.strip():
-            return "Error: Please specify what information is needed from the user."
+        # REVOLUTIONARY: Extract conversation context directly from agent state
+        messages = state.get("messages", [])
+        conversation_summary = state.get("conversation_summary", "")
         
-        # Check user type for appropriate language
-        user_type = get_current_user_type()
-        user_id = get_current_user_id()
+        # Build conversation context from messages + summary
+        conversation_parts = []
         
-        logger.info(f"[GATHER_FURTHER_DETAILS] Requesting information from {user_type} user: {information_needed}")
+        # Add conversation summary if available (provides long-term context)
+        if conversation_summary:
+            conversation_parts.append(f"CONVERSATION SUMMARY: {conversation_summary}")
         
-        # Create user-friendly prompt
-        if context:
-            prompt = f"""ℹ️ **Additional Information Needed**
-
-I need {information_needed} {context}.
-
-Please provide this information so I can better assist you."""
-        else:
-            prompt = f"""ℹ️ **Additional Information Needed**
-
-Could you please provide {information_needed}?
-
-This will help me give you the most accurate and helpful response."""
+        # Add recent messages (provides immediate context)
+        if messages:
+            recent_messages = messages[-10:]  # Last 10 messages for context
+            for msg in recent_messages:
+                if hasattr(msg, 'type') and hasattr(msg, 'content'):
+                    if msg.type == 'human':
+                        conversation_parts.append(f"USER: {msg.content}")
+                    elif msg.type == 'ai':
+                        conversation_parts.append(f"ASSISTANT: {msg.content}")
         
-        # Prepare context data for handling the response
-        context_data = {
-            "tool": "gather_further_details",
-            "information_needed": information_needed,
-            "original_context": context,
-            "input_type": input_type,
-            "requested_by": user_id,
-            "user_type": user_type,
-            "timestamp": datetime.now().isoformat()
-        }
+        conversation_context = "\n".join(conversation_parts)
         
-        # Default validation hints if none provided
-        if validation_hints is None:
-            validation_hints = [
-                "Please be as specific as possible",
-                "Any additional details you can provide will be helpful"
-            ]
+        if not conversation_context or len(conversation_context.strip()) < 10:
+            logger.info(f"[CONVERSATION_EXTRACT] No meaningful context for {tool_name}")
+            return {}
+            
+        if not field_definitions:
+            logger.warning(f"[CONVERSATION_EXTRACT] No field definitions provided for {tool_name}")
+            return {}
+            
+        logger.info(f"[CONVERSATION_EXTRACT] 🧠 Analyzing conversation for {tool_name} with {len(field_definitions)} fields")
+        logger.info(f"[CONVERSATION_EXTRACT] Context sources: {len(messages)} messages, summary: {'yes' if conversation_summary else 'no'}")
         
-        # Add context-specific hints
-        if user_type == "customer":
-            validation_hints.append("Don't worry if you're not sure about technical details - just describe it in your own words")
-        elif user_type in ["employee", "admin"]:
-            validation_hints.append("Include any relevant IDs, names, or system references if applicable")
+        # REVOLUTIONARY: Use fast/cheap model for cost-effective analysis
+        settings = await get_settings()
+        # Use simple model (gpt-3.5-turbo) instead of expensive models for extraction
+        model = getattr(settings, 'openai_simple_model', 'gpt-3.5-turbo')
         
-        logger.info(f"[GATHER_FURTHER_DETAILS] Created HITL input request for: {information_needed}")
-        
-        # Use HITLRequest.input_request() for standardized interaction
-        return HITLRequest.input_request(
-            prompt=prompt,
-            input_type=input_type,
-            context=context_data,
-            validation_hints=validation_hints
+        llm = ChatOpenAI(
+            model=model,
+            temperature=0.1,  # Low temperature for precise extraction
+            api_key=settings.openai_api_key
         )
         
+        logger.info(f"[CONVERSATION_EXTRACT] Using cost-effective model: {model}")
+        
+        # Build dynamic field descriptions for the prompt
+        field_descriptions = "\n".join([
+            f"- {field}: {description}" 
+            for field, description in field_definitions.items()
+        ])
+        
+        # Universal extraction prompt that works for any tool/fields
+        extraction_prompt = ChatPromptTemplate.from_template("""
+You are an expert at extracting specific information from customer conversations.
+
+Analyze the following conversation and extract any information that relates to the specified fields.
+
+FIELDS TO EXTRACT:
+{field_descriptions}
+
+CONVERSATION:
+{conversation_context}
+
+INSTRUCTIONS:
+- Extract ONLY information that was clearly stated by the customer
+- Use the customer's exact wording when possible
+- If a field wasn't mentioned or implied clearly, don't include it
+- Look for natural language expressions (e.g., "under $50k" for budget, "ASAP" for timeline)
+- Be conservative - only extract what you're confident about
+
+Return your response as a JSON object with only the fields that were clearly provided:
+{{
+  "field_name": "extracted value if clearly mentioned",
+  "another_field": "another extracted value if clearly mentioned"
+}}
+
+If no clear information was found for any fields, return: {{}}
+""")
+        
+        # Execute the extraction
+        chain = extraction_prompt | llm | StrOutputParser()
+        result = await chain.ainvoke({
+            "conversation_context": conversation_context,
+            "field_descriptions": field_descriptions
+        })
+        
+        # Parse and validate the JSON response
+        try:
+            extracted_data = json.loads(result.strip())
+            if isinstance(extracted_data, dict):
+                # Filter out empty values and validate against field definitions
+                filtered_data = {}
+                for field, value in extracted_data.items():
+                    if field in field_definitions and value and str(value).strip():
+                        filtered_data[field] = str(value).strip()
+                
+                if filtered_data:
+                    logger.info(f"[CONVERSATION_EXTRACT] ✅ Extracted for {tool_name}: {list(filtered_data.keys())}")
+                    for field, value in filtered_data.items():
+                        logger.info(f"[CONVERSATION_EXTRACT]   └─ {field}: '{value}'")
+                else:
+                    logger.info(f"[CONVERSATION_EXTRACT] ℹ️ No clear information found for {tool_name}")
+                
+                return filtered_data
+            else:
+                logger.warning(f"[CONVERSATION_EXTRACT] ⚠️ LLM returned non-dict for {tool_name}")
+                return {}
+                
+        except json.JSONDecodeError as e:
+            logger.warning(f"[CONVERSATION_EXTRACT] ⚠️ Failed to parse JSON for {tool_name}: {e}")
+            logger.debug(f"[CONVERSATION_EXTRACT] Raw response: {result[:200]}...")
+            return {}
+            
     except Exception as e:
-        logger.error(f"Error in gather_further_details: {e}")
-        return f"Sorry, I encountered an error while requesting additional information. Please try rephrasing your request or contact support if the issue persists."
+        logger.error(f"[CONVERSATION_EXTRACT] ❌ Error analyzing conversation for {tool_name}: {e}")
+        return {}
 
 
-async def _handle_information_gathered(context_data: dict, user_input: str) -> str:
+# ============================================================================= 
+# REVOLUTIONARY TOOL-MANAGED RECURSIVE COLLECTION IMPLEMENTATION (Task 9.1)
+# =============================================================================
+
+class CollectSalesRequirementsParams(BaseModel):
+    """Parameters for collecting comprehensive sales requirements from customers."""
+    customer_identifier: str = Field(..., description="Customer name, ID, email, or phone to identify the customer")
+    collected_data: Dict[str, Any] = Field(default_factory=dict, description="Previously collected requirements data")
+    collection_mode: str = Field(default="tool_managed", description="Collection mode - always 'tool_managed' for this revolutionary approach")
+    current_field: str = Field(default="", description="Current field being collected (used for recursive calls)")
+    user_response: str = Field(default="", description="User's response to the current field request (used for recursive calls)")
+    conversation_context: str = Field(default="", description="Recent conversation messages for intelligent pre-population (REVOLUTIONARY: Task 9.2)")
+
+
+@tool(args_schema=CollectSalesRequirementsParams)
+@traceable(name="collect_sales_requirements")
+async def collect_sales_requirements(
+    customer_identifier: str,
+    collected_data: Dict[str, Any] = None,
+    collection_mode: str = "tool_managed",
+    current_field: str = "",
+    user_response: str = "",
+    conversation_context: str = ""
+) -> str:
     """
-    Process information gathered from the user via gather_further_details tool.
+    REVOLUTIONARY: Example tool-managed recursive collection for sales requirements.
     
-    This function handles the response when users provide additional information
-    through the gather_further_details HITL interaction.
+    This tool demonstrates the new approach where tools manage their own collection 
+    state, determine completion themselves, and get re-called by the agent with user responses.
+    
+    KEY REVOLUTIONARY FEATURES (Task 9.2):
+    - Intelligent conversation analysis to pre-populate already-provided information
+    - Avoids redundant questions by extracting data from conversation history
+    - Only asks for genuinely missing information
+    - Provides user feedback about pre-populated data
+    
+    Required Fields: budget, timeline, vehicle_type, primary_use, financing_preference
     
     Args:
-        context_data: Context data from the original gather_further_details request
-        user_input: The information provided by the user
+        customer_identifier: Customer name, ID, email, or phone
+        collected_data: Previously collected data (managed by tool)
+        collection_mode: Always "tool_managed" for this approach
+        current_field: Current field being collected (for recursive calls)
+        user_response: User response (for recursive calls)
+        conversation_context: Recent conversation messages for intelligent pre-population
         
     Returns:
-        Confirmation message with the gathered information
+        Either complete requirements data or HITL_REQUIRED for next field
+        
+    Examples:
+        Initial call with conversation context:
+        collect_sales_requirements("john.doe@email.com", conversation_context="I'm looking for an SUV under $50,000")
+        -> Pre-populates budget and vehicle_type, only asks for remaining fields
+        
+        Recursive call:
+        collect_sales_requirements("john.doe@email.com", collected_data={...}, current_field="timeline", user_response="within 2 weeks")
     """
     try:
-        information_needed = context_data.get("information_needed", "information")
-        original_context = context_data.get("original_context", "")
-        input_type = context_data.get("input_type", "information")
-        user_type = context_data.get("user_type", "unknown")
+        if collected_data is None:
+            collected_data = {}
+            
+        logger.info(f"[COLLECT_SALES_REQUIREMENTS] Starting collection for customer: {customer_identifier}")
+        logger.info(f"[COLLECT_SALES_REQUIREMENTS] Current field: '{current_field}', User response: '{user_response}'")
+        logger.info(f"[COLLECT_SALES_REQUIREMENTS] Collected so far: {list(collected_data.keys())}")
         
-        logger.info(f"[HANDLE_INFORMATION_GATHERED] Processing gathered {input_type} from {user_type} user")
+        # REVOLUTIONARY: Intelligent conversation analysis for pre-population (Task 9.2)
+        # Only analyze on first call (when no data collected yet)
+        if not collected_data:
+            logger.info("[COLLECT_SALES_REQUIREMENTS] 🧠 Analyzing conversation for already-provided information...")
+            
+            # Define what fields this tool needs
+            field_definitions = {
+                "budget": "Budget range or maximum amount (e.g., 'under $50,000', '$40k-60k', 'around 45000')",
+                "timeline": "When they need the vehicle (e.g., 'within a month', 'by summer', 'ASAP', 'no rush')",
+                "vehicle_type": "Type of vehicle (e.g., 'SUV', 'sedan', 'pickup truck', 'convertible')",
+                "primary_use": "How they plan to use it (e.g., 'family trips', 'daily commuting', 'work hauling')",
+                "financing_preference": "Payment method (e.g., 'cash', 'financing', 'lease', 'loan')"
+            }
+            
+            # SIMPLIFIED: For now, get conversation context from the conversation_context parameter
+            # TODO: In the future, this will be automatically extracted from agent state
+            if conversation_context:
+                # Build a simple state-like dict for the helper function
+                mock_state = {
+                    "messages": [],  # This would come from agent state
+                    "conversation_summary": conversation_context  # Use provided context as summary
+                }
+                
+                # Use the universal helper to extract already-provided information
+                pre_populated_data = await extract_fields_from_conversation(
+                    mock_state, 
+                    field_definitions, 
+                    "collect_sales_requirements"
+                )
+                
+                if pre_populated_data:
+                    collected_data.update(pre_populated_data)
+                    logger.info(f"[COLLECT_SALES_REQUIREMENTS] ✅ Pre-populated from conversation: {list(pre_populated_data.keys())}")
+            else:
+                logger.info("[COLLECT_SALES_REQUIREMENTS] ℹ️ No conversation context provided - skipping pre-population")
         
-        # Validate input
-        if not user_input or not user_input.strip():
-            return f"""❓ **No Information Provided**
-
-I still need {information_needed} to help you properly.
-
-Please provide this information, or let me know if you'd like to approach this differently."""
+        # REVOLUTIONARY: Handle user response for recursive collection
+        if current_field and user_response:
+            logger.info(f"[COLLECT_SALES_REQUIREMENTS] 🔄 Processing user response for field: {current_field}")
+            collected_data[current_field] = user_response.strip()
         
-        # Create confirmation response
-        response_message = f"""✅ **Information Received**
-
-Thank you for providing {information_needed}.
-
-**You provided:** {user_input.strip()}
-
-I now have the information I need to better assist you. Let me help you with that."""
+        # Define required fields and check completion
+        required_fields = {
+            "budget": "Budget range for the purchase",
+            "timeline": "When you need the vehicle", 
+            "vehicle_type": "Type of vehicle you're interested in",
+            "primary_use": "How you plan to use the vehicle",
+            "financing_preference": "Preferred payment method"
+        }
         
-        logger.info(f"[HANDLE_INFORMATION_GATHERED] Successfully processed user input for: {information_needed}")
-        return response_message
+        # Find next missing field
+        missing_fields = [field for field in required_fields.keys() if field not in collected_data]
+        
+        if not missing_fields:
+            # REVOLUTIONARY: Collection complete with intelligent pre-population awareness
+            logger.info("[COLLECT_SALES_REQUIREMENTS] 🎉 Collection COMPLETE - all requirements gathered")
+            
+            # Check if any data was pre-populated from conversation analysis
+            pre_populated_count = len([f for f in required_fields.keys() if f in collected_data and not current_field])
+            
+            if pre_populated_count > 0 and conversation_context:
+                acknowledgment = f"\n\n💡 I noticed you already mentioned {pre_populated_count} requirement{'s' if pre_populated_count > 1 else ''} in our conversation, so I didn't need to ask again!"
+            else:
+                acknowledgment = ""
+            
+            requirements_summary = f"""✅ **Sales Requirements Collected Successfully**
+
+**Customer:** {customer_identifier}
+
+**Requirements:**
+• **Budget:** {collected_data['budget']}
+• **Timeline:** {collected_data['timeline']}
+• **Vehicle Type:** {collected_data['vehicle_type']}
+• **Primary Use:** {collected_data['primary_use']}
+• **Financing:** {collected_data['financing_preference']}{acknowledgment}
+
+I now have all the information needed to provide you with personalized recommendations and pricing."""
+
+            return requirements_summary
+        
+        # Request next missing field using dedicated HITL request tool
+        next_field = missing_fields[0]
+        logger.info(f"[COLLECT_SALES_REQUIREMENTS] Requesting field: {next_field} ({len(missing_fields)} remaining)")
+        
+        field_prompts = {
+            "budget": "What's your budget range for this purchase? (e.g., '$50,000 - $70,000')",
+            "timeline": "When do you need the vehicle? (e.g., 'within 2 weeks', 'by summer')",
+            "vehicle_type": "What type of vehicle are you looking for? (e.g., 'SUV', 'sedan', 'pickup truck')",
+            "primary_use": "How do you plan to use this vehicle? (e.g., 'daily commuting', 'family trips')",
+            "financing_preference": "How would you prefer to pay? (e.g., 'cash', 'financing', 'lease')"
+        }
+        
+        field_prompt = field_prompts.get(next_field, f"Please provide information about {next_field}")
+        progress_info = f"({len(collected_data)}/{len(required_fields)} requirements collected)"
+        
+        return request_input(
+            prompt=f"""📋 **Sales Requirements Collection** {progress_info}
+
+{field_prompt}
+
+This helps me find vehicles that perfectly match your needs.""",
+            input_type="sales_requirement",
+            context={
+                "source_tool": "collect_sales_requirements",
+                "collection_mode": "tool_managed",
+                "customer_identifier": customer_identifier,
+                "collected_data": collected_data,
+                "current_field": next_field,
+                "required_fields": required_fields,
+                "missing_fields": missing_fields
+            },
+            validation_hints=["Please provide as much detail as you're comfortable sharing"]
+        )
 
     except Exception as e:
-        error_msg = f"Error processing gathered information: {str(e)}"
-        logger.error(f"[HANDLE_INFORMATION_GATHERED] {error_msg}")
-        
-        return f"""✅ **Information Received**
-
-Thank you for providing the additional information. I'll use this to help you better.
-
-If you have any other questions or need further assistance, please let me know."""
+        logger.error(f"[COLLECT_SALES_REQUIREMENTS] Error: {e}")  
+        return f"Sorry, I encountered an error while collecting your requirements. Please try again or let me know if you need assistance."
 
 
 async def _handle_confirmation_approved(context_data: dict) -> str:
@@ -1277,7 +1484,7 @@ async def _handle_confirmation_approved(context_data: dict) -> str:
     structured feedback to the user.
     
     Args:
-        context_data: Context data from the HITLRequest containing all message details
+        context_data: Context data from the HITL request containing all message details
         
     Returns:
         String response with delivery results and feedback
@@ -1579,7 +1786,7 @@ async def _handle_confirmation_denied(context_data: dict) -> str:
     performing any message delivery.
     
     Args:
-        context_data: Context data from the HITLRequest containing message details
+        context_data: Context data from the HITL request containing message details
         
     Returns:
         String response with cancellation confirmation and details
@@ -1633,7 +1840,7 @@ async def _handle_input_received(context_data: dict, user_input: str) -> str:
     or requests more details.
     
     Args:
-        context_data: Context data from the HITLRequest containing original request details
+        context_data: Context data from the HITL request containing original request details
         user_input: Additional customer information provided by the user
         
     Returns:
@@ -1704,8 +1911,8 @@ Do you want to send this message to the customer?"""
                 "timestamp": datetime.now().isoformat()
             }
             
-            # Return new confirmation request using HITLRequest
-            return HITLRequest.confirmation(
+            # REVOLUTIONARY: Return new confirmation request using dedicated request_approval() tool
+            return request_approval(
                 prompt=confirmation_prompt,
                 context=context_data_new,
                 approve_text="send",
@@ -1772,12 +1979,24 @@ async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
         
         logger.info(f"[CUSTOMER_LOOKUP] Searching with: '{search_terms}'")
         
+        # DEBUG: Test database connection during agent execution
+        logger.info(f"🔍 [DATABASE_DEBUG] db_client type: {type(db_client)}")
+        logger.info(f"🔍 [DATABASE_DEBUG] db_client._client before init: {type(db_client._client)}")
+        
         # Ensure client is initialized
         client = db_client.client
+        
+        # DEBUG: Test basic connectivity with async wrapper
+        logger.info(f"🔍 [DATABASE_DEBUG] client after init: {type(client)}")
+        try:
+            test_query = await asyncio.to_thread(lambda: client.table("customers").select("count").execute())
+            logger.info(f"🔍 [DATABASE_DEBUG] Basic connectivity test successful, customer table accessible")
+        except Exception as e:
+            logger.error(f"🔍 [DATABASE_DEBUG] Basic connectivity test FAILED: {e}")
         # Strategy 1: Check if input looks like a UUID first
         if len(search_terms.replace("-", "")) == 32 and search_terms.count("-") == 4:
             try:
-                result = client.table("customers").select("*").eq("id", customer_identifier).execute()
+                result = await asyncio.to_thread(lambda: client.table("customers").select("*").eq("id", customer_identifier).execute())
                 if result.data:
                     customer_data = result.data[0]
                     customer = _format_customer_data(customer_data)
@@ -1796,13 +2015,22 @@ async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
         
         for field, pattern in search_strategies:
             try:
-                result = client.table("customers").select("*").filter(field, "ilike", pattern).limit(1).execute()
+                logger.info(f"🔍 [DATABASE_DEBUG] Searching {field} with pattern: {pattern}")
+                # Wrap synchronous database call with asyncio.to_thread for LangGraph compatibility
+                result = await asyncio.to_thread(
+                    lambda: client.table("customers").select("*").filter(field, "ilike", pattern).limit(1).execute()
+                )
+                logger.info(f"🔍 [DATABASE_DEBUG] Query result: {len(result.data)} records found")
                 if result.data:
+                    logger.info(f"🔍 [DATABASE_DEBUG] Found customer data: {result.data[0]}")
                     customer_data = result.data[0]
                     customer = _format_customer_data(customer_data)
                     logger.info(f"[CUSTOMER_LOOKUP] Found customer via {field}: {customer.get('name')}")
                     return customer
+                else:
+                    logger.info(f"🔍 [DATABASE_DEBUG] No results for {field} search with pattern {pattern}")
             except Exception as e:
+                logger.error(f"🔍 [DATABASE_DEBUG] Search by {field} failed: {e}")
                 logger.debug(f"[CUSTOMER_LOOKUP] Search by {field} failed: {e}")
                 continue
         
@@ -1812,7 +2040,9 @@ async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
             for word in words:
                 if len(word) >= 3:  # Only search meaningful words
                     try:
-                        result = client.table("customers").select("*").filter("name", "ilike", f"%{word}%").limit(1).execute()
+                        result = await asyncio.to_thread(
+                            lambda: client.table("customers").select("*").filter("name", "ilike", f"%{word}%").limit(1).execute()
+                        )
                         if result.data:
                             customer_data = result.data[0]
                             customer = _format_customer_data(customer_data)
@@ -1827,7 +2057,9 @@ async def _lookup_customer(customer_identifier: str) -> Optional[dict]:
             domain = search_terms.split("@")[-1] if "@" in search_terms else ""
             if domain:
                 try:
-                    result = client.table("customers").select("*").filter("email", "ilike", f"%@{domain}").limit(1).execute()
+                    result = await asyncio.to_thread(
+                        lambda: client.table("customers").select("*").filter("email", "ilike", f"%@{domain}").limit(1).execute()
+                    )
                     if result.data:
                         customer_data = result.data[0]
                         customer = _format_customer_data(customer_data)
@@ -1886,7 +2118,7 @@ def _generate_search_suggestions(user_input: str, original_id: str) -> str:
 
 
 # DEPRECATED: Use _handle_confirmation_approved() and _handle_confirmation_denied() instead
-# async def _handle_customer_message_confirmation(confirmation_data: dict, human_response: str) -> str:
+# async def _handle_customer_message_confirmation(hitl_context: dict, human_response: str) -> str:
 #     """DEPRECATED: Legacy confirmation handler. Use _handle_confirmation_approved() and _handle_confirmation_denied() instead."""
 
 
@@ -1991,9 +2223,8 @@ def get_all_tools():
         simple_query_crm_data,
         simple_rag,
         trigger_customer_message,
-        gather_further_details,
-        get_detailed_schema,
-        get_recent_conversation_context
+        collect_sales_requirements,  # REVOLUTIONARY: Tool-managed recursive collection with 3-field HITL architecture (Task 9.1)
+        # gather_further_details ELIMINATED - replaced by business-specific tools using revolutionary 3-field approach
     ]
 
 
@@ -2004,8 +2235,8 @@ def get_tools_for_user_type(user_type: str = "employee"):
         return [
             simple_query_crm_data,  # Will be internally filtered for table access
             simple_rag,  # Full access
-            gather_further_details,  # General information gathering
-            get_detailed_schema  # Can get vehicle schema details
+            collect_sales_requirements,  # REVOLUTIONARY: Tool-managed recursive collection with 3-field HITL architecture
+            # gather_further_details ELIMINATED - replaced by business-specific tools using revolutionary 3-field approach
         ]
     elif user_type in ["employee", "admin"]:
         # Employees get full access to all tools including customer messaging
@@ -2013,9 +2244,8 @@ def get_tools_for_user_type(user_type: str = "employee"):
             simple_query_crm_data,  # Full access
             simple_rag,  # Full access  
             trigger_customer_message,  # Employee only - customer outreach tool
-            gather_further_details,  # General information gathering
-            get_detailed_schema,  # Can get detailed schema
-            get_recent_conversation_context  # Can access conversation history
+            collect_sales_requirements,  # REVOLUTIONARY: Tool-managed recursive collection with 3-field HITL architecture
+            # gather_further_details ELIMINATED - replaced by business-specific tools using revolutionary 3-field approach
         ]
     else:
         # Unknown users get no tools

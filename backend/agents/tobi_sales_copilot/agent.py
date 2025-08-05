@@ -146,7 +146,7 @@ class UnifiedToolCallingRAGAgent:
         # Employee workflow: memory prep → agent → (hitl_node or ea_memory_store)
         graph.add_edge("ea_memory_prep", "employee_agent")
         
-        # Route from employee agent to HITL or employee memory store based on hitl_data
+        # REVOLUTIONARY: Route from employee agent to HITL or employee memory store based on hitl_phase
         graph.add_conditional_edges(
             "employee_agent",
             self.route_from_employee_agent,
@@ -160,13 +160,13 @@ class UnifiedToolCallingRAGAgent:
         graph.add_edge("ca_memory_prep", "customer_agent")
         graph.add_edge("customer_agent", "ca_memory_store")
         
-        # HITL workflow: hitl_node loops back to employee_agent only
+        # REVOLUTIONARY: HITL workflow NEVER routes back to itself - always goes to employee_agent
+        # This eliminates all HITL recursion and implements tool-managed collection pattern
         graph.add_conditional_edges(
             "hitl_node",
             self.route_from_hitl,
             {
-                "hitl_node": "hitl_node",  # Re-prompts for invalid responses
-                "employee_agent": "employee_agent"  # Back to employee agent for processing
+                "employee_agent": "employee_agent"  # ALWAYS back to employee agent (no self-routing)
             },
         )
         
@@ -509,10 +509,8 @@ This context from previous conversations may be relevant to the current query.
                 "long_term_context": long_term_context,
                 "employee_id": employee_id,  # Keep employee_id
                 "customer_id": state.get("customer_id"),  # Keep customer_id
-                "confirmation_data": state.get("confirmation_data"),
-                "execution_data": state.get("execution_data"),
-                "confirmation_result": state.get("confirmation_result"),
-                "hitl_data": state.get("hitl_data"),
+                # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
+
             }
             
         except Exception as e:
@@ -675,10 +673,8 @@ This information from your past interactions may help me better assist you.
                 "long_term_context": long_term_context,
                 "customer_id": customer_id,  # Keep customer_id
                 "employee_id": state.get("employee_id"),  # Keep employee_id
-                "confirmation_data": state.get("confirmation_data"),
-                "execution_data": state.get("execution_data"),
-                "confirmation_result": state.get("confirmation_result"),
-                "hitl_data": state.get("hitl_data"),
+                # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
+
             }
             
         except Exception as e:
@@ -838,7 +834,7 @@ This information from your past interactions may help me better assist you.
             
             logger.info("[EA_MEMORY_STORE] Employee memory storage completed successfully")
             
-            # Return state with any updates
+            # Return state with any updates - CRITICAL: Clear HITL state after successful execution
             return {
                 "messages": messages,
                 "sources": state.get("sources", []),
@@ -849,10 +845,10 @@ This information from your past interactions may help me better assist you.
                 "long_term_context": state.get("long_term_context", []),
                 "employee_id": employee_id,  # Keep employee_id
                 "customer_id": state.get("customer_id"),  # Keep customer_id
-                "confirmation_data": state.get("confirmation_data"),
-                "execution_data": state.get("execution_data"),
-                "confirmation_result": state.get("confirmation_result"),
-                "hitl_data": state.get("hitl_data"),
+                # CRITICAL: Clear HITL state after successful execution to prevent action reuse
+                "hitl_phase": None,
+                "hitl_prompt": None, 
+                "hitl_context": None
             }
             
         except Exception as e:
@@ -992,10 +988,8 @@ This information from your past interactions may help me better assist you.
                 "long_term_context": state.get("long_term_context", []),
                 "customer_id": customer_id,  # Keep customer_id
                 "employee_id": state.get("employee_id"),  # Keep employee_id
-                "hitl_data": state.get("hitl_data"),
-                "confirmation_data": state.get("confirmation_data"),
-                "execution_data": state.get("execution_data"),
-                "confirmation_result": state.get("confirmation_result"),
+                # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
+
             }
             
         except Exception as e:
@@ -1195,89 +1189,271 @@ This information from your past interactions may help me better assist you.
 
     def route_from_employee_agent(self, state: Dict[str, Any]) -> str:
         """
-        Route from employee_agent to HITL node or employee memory storage based on HITL requirements.
+        REVOLUTIONARY: Ultra-simple routing using 3-field HITL architecture.
         
+        Route from employee_agent to HITL node or employee memory storage based on hitl_phase.
         This function serves as a conditional edge after the employee_agent node to determine
         if HITL interaction is needed or if processing can continue to memory storage.
         
         Args:
-            state: Current agent state containing possible hitl_data
+            state: Current agent state containing possible hitl_phase
             
         Returns:
             str: Node name to route to:
-                - "hitl_node" if HITL interaction is required
+                - "hitl_node" if HITL interaction is required (hitl_phase exists)
                 - "ea_memory_store" if no HITL needed
         """
         employee_id = state.get("employee_id")
         user_id = state.get("user_id", "unknown")
-        hitl_data = state.get("hitl_data")
+        
+        # REVOLUTIONARY: Use ultra-simple 3-field architecture
+        hitl_phase = state.get("hitl_phase")
+        hitl_prompt = state.get("hitl_prompt")
+        hitl_context = state.get("hitl_context")
         
         logger.info(f"[EMPLOYEE_ROUTING] Routing from employee_agent for employee_id: {employee_id}, user_id: {user_id}")
+        logger.info(f"[EMPLOYEE_ROUTING] 3-field state: hitl_phase={hitl_phase}, prompt={bool(hitl_prompt)}, context={bool(hitl_context)}")
         
         # Validate this is actually an employee user (safety check)
         if not employee_id:
             logger.warning(f"[EMPLOYEE_ROUTING] No employee_id found in employee routing - this should not happen")
         
-        # Check if HITL interaction is required
-        if hitl_data and isinstance(hitl_data, dict):
-            hitl_type = hitl_data.get("type", hitl_data.get("interaction_type", "unknown"))
-            logger.info(f"[EMPLOYEE_ROUTING] HITL interaction required - type: {hitl_type}, routing to hitl_node")
+        # ULTRA-SIMPLE: Route to hitl_node if prompt exists, or back to agent if approved/denied
+        if hitl_prompt:
+            # Need to show prompt and get user response
+            source_tool = hitl_context.get("source_tool", "unknown") if hitl_context else "unknown"
+            logger.info(f"[EMPLOYEE_ROUTING] ✅ HITL prompt needed - tool: {source_tool}")
             return "hitl_node"
-        elif hitl_data:
-            # Malformed HITL data - log warning and route safely
-            logger.warning(f"[EMPLOYEE_ROUTING] Malformed HITL data: {type(hitl_data)}, routing to memory store")
+        elif hitl_phase in ["approved", "denied"]:
+            # HITL completed, route to memory storage to finish
+            logger.info(f"[EMPLOYEE_ROUTING] ✅ HITL completed: {hitl_phase} - routing to memory store")
             return "ea_memory_store"
         
         # No HITL needed, route to employee memory storage
-        logger.info(f"[EMPLOYEE_ROUTING] No HITL needed - routing to ea_memory_store")
+        logger.info(f"[EMPLOYEE_ROUTING] ✅ No HITL needed - routing to ea_memory_store")
         return "ea_memory_store"
 
     def route_from_hitl(self, state: Dict[str, Any]) -> str:
         """
-        Route from HITL node back to employee_agent or continue HITL interaction.
+        REVOLUTIONARY: Ultra-simple non-recursive HITL routing using 3-field architecture.
         
-        This function serves as a conditional edge after the hitl_node to determine
-        if HITL interaction is complete and processing can continue back to employee_agent,
-        or if additional HITL rounds are needed (re-prompts for invalid responses).
+        Route from HITL node ALWAYS back to employee_agent - NEVER routes back to itself.
+        This eliminates all HITL recursion complexity and implements the tool-managed
+        recursion pattern where tools handle multi-step collection.
         
-        Simplified logic: HITL is only used by employee workflows, so we only route
-        back to employee_agent or continue HITL loops.
+        Key principle: HITL node NEVER routes back to itself. All recursion is eliminated.
+        The employee_agent will detect tool-managed collection and re-call tools as needed.
         
         Args:
             state: Current agent state after HITL processing
             
         Returns:
-            str: Node name to route to:
-                - "hitl_node" if additional HITL interaction needed (re-prompts)
-                - "employee_agent" if HITL interaction is complete
+            str: Always "employee_agent" - HITL never routes to itself
         """
         employee_id = state.get("employee_id")
         user_id = state.get("user_id", "unknown")
-        hitl_data = state.get("hitl_data")
+        
+        # REVOLUTIONARY: Use ultra-simple 3-field architecture for logging
+        hitl_phase = state.get("hitl_phase")
+        hitl_context = state.get("hitl_context")
+        # REVOLUTIONARY: Using ultra-minimal 3-field architecture - no execution_data needed
         
         logger.info(f"[HITL_ROUTING] Routing from HITL for employee_id: {employee_id}, user_id: {user_id}")
+        logger.info(f"[HITL_ROUTING] 3-field state: hitl_phase={hitl_phase}, context={bool(hitl_context)}")
         
         # Validate this is an employee user (safety check)
         if not employee_id:
             logger.warning(f"[HITL_ROUTING] No employee_id found in HITL routing - this should not happen")
         
-        # Check if HITL interaction is still ongoing (re-prompts needed)
-        if hitl_data and isinstance(hitl_data, dict) and hitl_data.get("awaiting_response", False):
-            hitl_type = hitl_data.get("type", hitl_data.get("interaction_type", "unknown"))
-            logger.info(f"[HITL_ROUTING] HITL still awaiting response - type: {hitl_type}, continuing with hitl_node")
-            return "hitl_node"
-        elif hitl_data and not isinstance(hitl_data, dict):
-            # Malformed HITL data - log warning and route back to agent
-            logger.warning(f"[HITL_ROUTING] Malformed HITL data: {type(hitl_data)}, routing back to employee_agent")
-            return "employee_agent"
+        # REVOLUTIONARY: HITL NEVER routes back to itself - always goes to employee_agent
+        # This eliminates all recursion complexity and implements tool-managed collection
+        source_tool = hitl_context.get("source_tool", "unknown") if hitl_context else "unknown"
+        logger.info(f"[HITL_ROUTING] ✅ HITL interaction processed - phase: {hitl_phase}, tool: {source_tool}")
+        logger.info(f"[HITL_ROUTING] ✅ ALWAYS routing to employee_agent (no HITL recursion)")
         
-        # HITL interaction complete - route back to employee_agent for continued processing
-        # The employee_agent will then decide whether to go to memory storage or not
-        logger.info(f"[HITL_ROUTING] HITL interaction complete - routing back to employee_agent")
+        # The employee_agent will:
+        # 1. Detect if tool-managed collection is needed and re-call tools
+        # 2. Execute approved actions using ultra-minimal hitl_context
+        # 3. Continue normal processing flow
         return "employee_agent"
 
+    def _is_tool_managed_collection_needed(self, hitl_context: Dict[str, Any], state: Dict[str, Any]) -> bool:
+        """
+        REVOLUTIONARY: Detect if tool-managed collection is needed (Task 8.4).
+        
+        Check if we're coming back from HITL with a context that indicates
+        a tool needs to be re-called with user response for collection.
+        
+        Args:
+            hitl_context: Context from HITL interaction
+            state: Current agent state
+            
+        Returns:
+            bool: True if tool should be re-called with user response
+        """
+        try:
+            # Check if we have the necessary components for tool re-calling
+            if not hitl_context:
+                return False
+            
+            # Look for indicators that this is tool-managed collection
+            source_tool = hitl_context.get("source_tool")
+            collection_mode = hitl_context.get("collection_mode")
+            required_fields = hitl_context.get("required_fields")
+            collected_data = hitl_context.get("collected_data")
+            
+            # Tool-managed collection indicators:
+            # 1. Has source_tool (which tool to re-call)
+            # 2. Has collection_mode="tool_managed" OR has required_fields structure
+            # 3. We're coming back from HITL (hitl_phase exists)
+            hitl_phase = state.get("hitl_phase")
+            
+            is_tool_managed = (
+                source_tool and 
+                (collection_mode == "tool_managed" or required_fields) and
+                hitl_phase in ["approved", "denied"]  # Coming back from HITL processing
+            )
+            
+            if is_tool_managed:
+                logger.info(f"[TOOL_COLLECTION_DETECT] ✅ Tool-managed collection needed:")
+                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ source_tool: {source_tool}")
+                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ collection_mode: {collection_mode}")
+                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ required_fields: {list(required_fields.keys()) if required_fields else None}")
+                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ collected_data: {list(collected_data.keys()) if collected_data else None}")
+                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ hitl_phase: {hitl_phase}")
+            
+            return is_tool_managed
+            
+        except Exception as e:
+            logger.error(f"[TOOL_COLLECTION_DETECT] Error detecting tool collection need: {e}")
+            return False
+
+    async def _handle_tool_managed_collection(self, hitl_context: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        REVOLUTIONARY: Handle tool-managed collection by re-calling tools with user response (Task 8.5).
+        
+        Re-call the specified tool with updated context including user response,
+        allowing tools to manage their own collection state and determine completion.
+        
+        Args:
+            hitl_context: Context from HITL interaction with collection info
+            state: Current agent state
+            
+        Returns:
+            Updated state after tool re-calling
+        """
+        try:
+            source_tool = hitl_context.get("source_tool")
+            hitl_phase = state.get("hitl_phase")
+            messages = state.get("messages", [])
+            
+            logger.info(f"[TOOL_COLLECTION_RECALL] 🔄 Re-calling tool: {source_tool}")
+            logger.info(f"[TOOL_COLLECTION_RECALL] HITL phase: {hitl_phase}")
+            
+            # Extract the latest human response from messages
+            user_response = None
+            for msg in reversed(messages):
+                if hasattr(msg, 'type') and msg.type == 'human':
+                    user_response = msg.content
+                    break
+                elif isinstance(msg, dict) and msg.get('type') == 'human':
+                    user_response = msg.get('content')
+                    break
+            
+            if not user_response:
+                logger.warning("[TOOL_COLLECTION_RECALL] No user response found in messages")
+                user_response = ""
+            
+            logger.info(f"[TOOL_COLLECTION_RECALL] User response: '{user_response}'")
+            
+            # Create updated context with user response
+            updated_context = {
+                **hitl_context,
+                "user_response": user_response,  # Add user response to context
+                "hitl_phase": hitl_phase,        # Include HITL result (approved/denied)
+                "recall_attempt": hitl_context.get("recall_attempt", 0) + 1  # Track recall attempts
+            }
+            
+            # Get the tool function
+            available_tools = get_all_tools()
+            tool_func = None
+            for tool in available_tools:
+                if tool.name == source_tool:
+                    tool_func = tool.func
+                    break
+            
+            if not tool_func:
+                logger.error(f"[TOOL_COLLECTION_RECALL] Tool '{source_tool}' not found")
+                return self._create_tool_recall_error_state(state, f"Tool '{source_tool}' not found")
+            
+            # Re-call the tool with updated context
+            logger.info(f"[TOOL_COLLECTION_RECALL] Calling {source_tool} with updated context")
+            tool_result = await tool_func(**updated_context)
+            
+            # Process the tool result - it might return HITL_REQUIRED again for more collection
+            # or return normal results indicating collection is complete
+            parsed_response = parse_tool_response(tool_result, source_tool)
+            
+            if parsed_response["type"] == "hitl_required":
+                # Tool still needs more information - set up for another HITL round
+                logger.info(f"[TOOL_COLLECTION_RECALL] Tool still needs more info - setting up next HITL round")
+                return {
+                    **state,
+                    "hitl_phase": "needs_prompt",  # Set up for HITL prompt display
+                    "hitl_prompt": parsed_response["hitl_prompt"],
+                    "hitl_context": parsed_response["hitl_context"],
+                    # REVOLUTIONARY: No execution_data needed - hitl_context is cleared when phase changes
+                }
+            else:
+                # Tool collection complete - proceed with normal result
+                logger.info(f"[TOOL_COLLECTION_RECALL] ✅ Tool collection complete - processing result")
+                # Add tool result to messages and continue normal processing
+                tool_message = {
+                    "role": "assistant", 
+                    "content": tool_result,
+                    "type": "ai"
+                }
+                updated_messages = list(messages) + [tool_message]
+                
+                return {
+                    **state,
+                    "messages": updated_messages,
+                    "hitl_phase": None,      # Clear HITL state
+                    "hitl_prompt": None,
+                    "hitl_context": None,
+                    # REVOLUTIONARY: No execution_data needed - using 3-field architecture
+                }
+                
+        except Exception as e:
+            logger.error(f"[TOOL_COLLECTION_RECALL] Error in tool re-calling: {e}")
+            return self._create_tool_recall_error_state(state, str(e))
+
+    def _create_tool_recall_error_state(self, state: Dict[str, Any], error_message: str) -> Dict[str, Any]:
+        """
+        REVOLUTIONARY: Create error state for tool recall failures.
+        
+        Helper function to create a clean error state when tool re-calling fails.
+        """
+        error_response = f"I encountered an error while processing your request: {error_message}. Please try again."
+        
+        messages = list(state.get("messages", []))
+        messages.append({
+            "role": "assistant",
+            "content": error_response,
+            "type": "ai"
+        })
+        
+        return {
+            **state,
+            "messages": messages,
+            "hitl_phase": None,
+            "hitl_prompt": None,
+            "hitl_context": None,
+                            # REVOLUTIONARY: No execution_data needed - using 3-field architecture
+        }
+
     async def _handle_customer_message_execution(
-        self, state: AgentState, execution_data: Dict[str, Any]
+        self, state: AgentState, hitl_context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Handle customer message execution after confirmation approval.
@@ -1286,14 +1462,14 @@ This information from your past interactions may help me better assist you.
         """
         try:
             logger.info(f"🔍 [MESSAGE_EXECUTION] Starting approved message execution")
-            logger.info(f"🔍 [MESSAGE_EXECUTION] Execution data keys: {list(execution_data.keys())}")
+            logger.info(f"🔍 [MESSAGE_EXECUTION] HITL context keys: {list(hitl_context.keys())}")
             
-            # Extract execution information
-            customer_info = execution_data.get("customer_info", {})
+            # Extract execution information from HITL context
+            customer_info = hitl_context.get("customer_info", {})
             customer_name = customer_info.get("name", "Unknown Customer")
             customer_email = customer_info.get("email", "no-email")
-            message_content = execution_data.get("message_content", "")
-            message_type = execution_data.get("message_type", "follow_up")
+            message_content = hitl_context.get("message_content", "")
+            message_type = hitl_context.get("message_type", "follow_up")
             
             logger.info(f"[EMPLOYEE_AGENT_NODE] Executing delivery for {customer_name} ({customer_email})")
             logger.info(f"🔍 [MESSAGE_EXECUTION] Message type: {message_type}")
@@ -1302,7 +1478,7 @@ This information from your past interactions may help me better assist you.
             # Execute the delivery
             logger.info(f"🔍 [MESSAGE_EXECUTION] Calling _execute_customer_message_delivery")
             delivery_success = await self._execute_customer_message_delivery(
-                customer_id=execution_data.get("customer_id"),
+                customer_id=hitl_context.get("customer_id"),
                 message_content=message_content,
                 message_type=message_type,
                 customer_info=customer_info
@@ -1361,10 +1537,10 @@ Failed to deliver your message to {customer_name}.
                 "long_term_context": state.get("long_term_context", []),
                 "employee_id": state.get("employee_id"),  # Keep employee_id
                 "customer_id": state.get("customer_id"),  # Keep customer_id
-                "confirmation_data": None,  # Clear all HITL-related state
-                "execution_data": None,     # Clear execution state
-                "confirmation_result": result_status,  # Set final result
-                "hitl_data": None,         # Clear HITL state completely
+                # CRITICAL: Clear HITL state after successful execution to prevent loops
+                "hitl_phase": None,
+                "hitl_prompt": None,
+                "hitl_context": None
             }
             
         except Exception as e:
@@ -1380,10 +1556,10 @@ Failed to deliver your message to {customer_name}.
                 "long_term_context": state.get("long_term_context", []),
                 "employee_id": state.get("employee_id"),  # Keep employee_id
                 "customer_id": state.get("customer_id"),  # Keep customer_id
-                "confirmation_data": None,  # Clear all HITL-related state
-                "execution_data": None,     # Clear execution state  
-                "confirmation_result": "error",
-                "hitl_data": None,         # Clear HITL state completely
+                # CRITICAL: Clear HITL state even on error to prevent loops
+                "hitl_phase": None,
+                "hitl_prompt": None,
+                "hitl_context": None
             }
 
     @traceable(name="employee_agent_node")
@@ -1402,21 +1578,32 @@ Failed to deliver your message to {customer_name}.
         try:
             logger.info("[EMPLOYEE_AGENT_NODE] Processing employee user request")
             
-            # Check if executing approved customer message (from HITL completion)
-            execution_data = state.get("execution_data")
-            if execution_data:
-                logger.info("[EMPLOYEE_AGENT_NODE] 🎯 EXECUTING APPROVED ACTION - bypassing normal tool calling loop")
-                logger.info(f"🔍 [EXECUTION_DATA] Found execution_data with keys: {list(execution_data.keys())}")
-                logger.info(f"🔍 [EXECUTION_DATA] Tool: {execution_data.get('tool')}")
-                logger.info(f"🔍 [EXECUTION_DATA] Customer: {execution_data.get('customer_info', {}).get('name', 'Unknown')}")
+            # ULTRA-SIMPLE: Check for approved HITL actions
+            hitl_phase = state.get("hitl_phase")
+            hitl_context = state.get("hitl_context")
+            
+            if hitl_phase == "approved" and hitl_context:
+                tool_name = hitl_context.get("source_tool")
+                logger.info(f"[EMPLOYEE_AGENT_NODE] 🎯 EXECUTING APPROVED ACTION - tool: {tool_name}")
                 
-                # CRITICAL: Execute and return immediately - do NOT continue to tool calling loop
-                # This prevents the LLM from seeing the original request again and re-executing
-                execution_result = await self._handle_customer_message_execution(state, execution_data)
-                logger.info("[EMPLOYEE_AGENT_NODE] ✅ EXECUTION COMPLETE - returning without further processing")
-                return execution_result
+                if tool_name == "trigger_customer_message":
+                    # Execute the approved action and return immediately
+                    execution_result = await self._handle_customer_message_execution(state, hitl_context)
+                    logger.info("[EMPLOYEE_AGENT_NODE] ✅ EXECUTION COMPLETE")
+                    return execution_result
+                else:
+                    logger.warning(f"[EMPLOYEE_AGENT_NODE] Unknown approved tool: {tool_name}")
+            
             else:
-                logger.info("[EMPLOYEE_AGENT_NODE] No execution_data found - processing as regular employee request")
+                logger.info("[EMPLOYEE_AGENT_NODE] No approved actions - processing as regular request")
+
+            # REVOLUTIONARY: Check for tool-managed collection mode (Task 8.4)
+            # Detect if we need to re-call a tool with user response from HITL
+            # (hitl_context already retrieved above)
+            if hitl_context and self._is_tool_managed_collection_needed(hitl_context, state):
+                logger.info("[EMPLOYEE_AGENT_NODE] 🔄 TOOL-MANAGED COLLECTION detected - re-calling tool with user response")
+                tool_recall_result = await self._handle_tool_managed_collection(hitl_context, state)
+                return tool_recall_result
 
             # Get messages and validate this is an employee user
             messages = state.get("messages", [])
@@ -1519,6 +1706,15 @@ Failed to deliver your message to {customer_name}.
                                 user_id = state.get("user_id")
                                 conversation_id = state.get("conversation_id")
                                 employee_id = state.get("employee_id")
+                                
+                                # DEBUG: Log context values during agent execution
+                                logger.info(f"🔍 [EMPLOYEE_AGENT_CONTEXT] Tool: {tool_name}")
+                                logger.info(f"🔍 [EMPLOYEE_AGENT_CONTEXT] user_id: {user_id}")
+                                logger.info(f"🔍 [EMPLOYEE_AGENT_CONTEXT] employee_id: {employee_id}")
+                                logger.info(f"🔍 [EMPLOYEE_AGENT_CONTEXT] conversation_id: {conversation_id}")
+                                
+                                if not employee_id:
+                                    logger.error(f"🚨 [EMPLOYEE_AGENT_ERROR] employee_id is None during tool execution! State: {state}")
 
                                 with UserContext(
                                     user_id=user_id, 
@@ -1527,7 +1723,7 @@ Failed to deliver your message to {customer_name}.
                                     employee_id=employee_id
                                 ):
                                     # Execute tool based on type
-                                    if tool_name in ["simple_rag", "simple_query_crm_data", "trigger_customer_message", "gather_further_details"]:
+                                    if tool_name in ["simple_rag", "simple_query_crm_data", "trigger_customer_message", "collect_sales_requirements"]:
                                         tool_result = await tool.ainvoke(tool_args)
                                     else:
                                         tool_result = tool.invoke(tool_args)
@@ -1539,18 +1735,18 @@ Failed to deliver your message to {customer_name}.
                                 logger.info(f"🚨 [HITL_DEBUG] Parsed response keys: {list(parsed_response.keys())}")
                                 
                                 if parsed_response["type"] == "hitl_required":
-                                    # HITL interaction required - store hitl_data and prepare for routing
-                                    logger.info(f"🚨 [HITL_DEBUG] ✅ HITL DETECTED! Tool {tool_name} requires HITL interaction: {parsed_response.get('hitl_type')}")
+                                    # ULTRA-SIMPLE: Set HITL state for routing to hitl_node
+                                    logger.info(f"[HITL_SIMPLE] ✅ HITL DETECTED! Tool {tool_name} requires HITL")
                                     
-                                    # Store HITL data in state for routing to hitl_node
-                                    # CRITICAL FIX: Set awaiting_response=True since hitl_node never runs due to interrupt_before
-                                    hitl_data_with_awaiting = {**parsed_response["hitl_data"], "awaiting_response": True}
-                                    state["hitl_data"] = hitl_data_with_awaiting
-                                    logger.info(f"🚨 [HITL_DEBUG] ✅ Set hitl_data in state with keys: {list(hitl_data_with_awaiting.keys())}")
-                                    logger.info(f"🚨 [HITL_DEBUG] ✅ CRITICAL FIX: Set awaiting_response=True before interrupt")
+                                    # Just set prompt and context - hitl_node will handle the rest
+                                    state["hitl_prompt"] = parsed_response["hitl_prompt"] 
+                                    state["hitl_context"] = parsed_response["hitl_context"]
+                                    state["hitl_phase"] = "needs_confirmation"  # Simple flag for routing
+                                    
+                                    logger.info(f"[HITL_SIMPLE] Set HITL state - routing to hitl_node")
                                     
                                     # Create user-friendly tool response message
-                                    tool_response = parsed_response["hitl_data"].get("prompt", "Human interaction required")
+                                    tool_response = parsed_response["hitl_prompt"] or "Human interaction required"
                                     
                                     # Add tool message
                                     tool_message = ToolMessage(
@@ -1623,17 +1819,16 @@ Failed to deliver your message to {customer_name}.
                 "long_term_context": state.get("long_term_context", []),
                 "employee_id": employee_id,  # Keep employee_id
                 "customer_id": state.get("customer_id"),  # Keep customer_id
+                # CRITICAL FIX: Include HITL fields in return state for proper routing
+                "hitl_phase": state.get("hitl_phase"),
+                "hitl_prompt": state.get("hitl_prompt"),
+                "hitl_context": state.get("hitl_context"),
             }
 
-            # Include hitl_data if set during tool execution
-            return_state["hitl_data"] = state.get("hitl_data")
-            
-            # HITL system now handles confirmation data automatically
-            return_state["confirmation_data"] = None
+            # HITL system now handles data automatically using 3-field architecture
             
             # Always clear execution state for clean routing    
-            return_state["execution_data"] = None
-            return_state["confirmation_result"] = None
+
 
             logger.info(f"[EMPLOYEE_AGENT_NODE] Complete workflow finished successfully for {user_type}")
             return return_state
@@ -1662,10 +1857,8 @@ Failed to deliver your message to {customer_name}.
             "long_term_context": state.get("long_term_context", []),
             "employee_id": state.get("employee_id"),  # Keep employee_id
             "customer_id": state.get("customer_id"),  # Keep customer_id
-            "confirmation_data": None,
-            "execution_data": None,
-            "confirmation_result": None,
-            "hitl_data": state.get("hitl_data"),
+            # REVOLUTIONARY: No execution_data needed - using 3-field architecture,
+            
         }
 
 
@@ -1710,10 +1903,8 @@ Failed to deliver your message to {customer_name}.
                     "long_term_context": state.get("long_term_context", []),
                     "customer_id": state.get("customer_id"),  # Keep customer_id
                     "employee_id": state.get("employee_id"),  # Keep employee_id
-                    "hitl_data": state.get("hitl_data"),
-                    "confirmation_data": state.get("confirmation_data"),
-                    "execution_data": state.get("execution_data"),
-                    "confirmation_result": state.get("confirmation_result"),
+                    # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
+    
                 }
 
             # Messages are already prepared by ca_memory_prep node
@@ -1827,7 +2018,8 @@ Failed to deliver your message to {customer_name}.
                                         "simple_rag",
                                         "simple_query_crm_data",
                                         "trigger_customer_message",
-                                        "gather_further_details",
+                                        "collect_sales_requirements",  # REVOLUTIONARY: Tool-managed recursive collection (Task 9.1)
+                                        # "gather_further_details", # ELIMINATED - replaced by business-specific recursive collection tools
                                     ]:
                                         tool_result = await tool.ainvoke(tool_args)
                                     else:
@@ -1904,7 +2096,7 @@ Failed to deliver your message to {customer_name}.
             # Memory storage will be handled by ca_memory_store node
             logger.info(f"[CUSTOMER_AGENT_NODE] Agent processing completed successfully")
 
-            # Return final state (no hitl_data since customers don't use HITL)
+            # Return final state (customers don't use HITL)
             return {
                 "messages": updated_messages,
                 "sources": sources,
@@ -1915,10 +2107,8 @@ Failed to deliver your message to {customer_name}.
                 "long_term_context": state.get("long_term_context", []),
                 "customer_id": customer_id,  # Keep customer_id
                 "employee_id": state.get("employee_id"),  # Keep employee_id
-                "hitl_data": state.get("hitl_data"),
-                "confirmation_data": state.get("confirmation_data"),
-                "execution_data": state.get("execution_data"),
-                "confirmation_result": state.get("confirmation_result"),
+                # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
+
             }
 
         # NOTE: GraphInterrupt handling removed since customers don't use HITL
@@ -1949,10 +2139,8 @@ Failed to deliver your message to {customer_name}.
                 "long_term_context": state.get("long_term_context", []),
                 "customer_id": state.get("customer_id"),  # Keep customer_id
                 "employee_id": state.get("employee_id"),  # Keep employee_id
-                "hitl_data": state.get("hitl_data"),
-                "confirmation_data": state.get("confirmation_data"),
-                "execution_data": state.get("execution_data"),
-                "confirmation_result": state.get("confirmation_result"),
+                # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
+
             }
 
     # NOTE: _confirmation_node() method removed - replaced with imported hitl_node from hitl.py
@@ -2188,20 +2376,25 @@ Failed to deliver your message to {customer_name}.
         integration with the existing chat system.
         """
         try:
+            import asyncio
             from core.database import db_client
             import uuid
             
-            # Look for existing active conversations for this user
-            existing_conversations = db_client.client.table("conversations").select("id").eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
+            # Look for existing active conversations for this user (async)
+            existing_conversations = await asyncio.to_thread(
+                lambda: db_client.client.table("conversations").select("id").eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
+            )
             
             if existing_conversations.data:
                 conversation_id = existing_conversations.data[0]["id"]
                 logger.info(f"[CONVERSATION] Using existing conversation {conversation_id} for customer {customer_info.get('name', user_id)}")
                 
-                # Update the conversation timestamp
-                db_client.client.table("conversations").update({
-                    "updated_at": datetime.now().isoformat()
-                }).eq("id", conversation_id).execute()
+                # Update the conversation timestamp (async)
+                await asyncio.to_thread(
+                    lambda: db_client.client.table("conversations").update({
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", conversation_id).execute()
+                )
                 
                 return conversation_id
             
@@ -2221,7 +2414,10 @@ Failed to deliver your message to {customer_name}.
                 }
             }
             
-            result = db_client.client.table("conversations").insert(conversation_data).execute()
+            # Insert new conversation (async)
+            result = await asyncio.to_thread(
+                lambda: db_client.client.table("conversations").insert(conversation_data).execute()
+            )
             
             if result.data:
                 logger.info(f"[CONVERSATION] Created new conversation {conversation_id} for customer {customer_info.get('name', user_id)}")
@@ -2372,10 +2568,13 @@ Failed to deliver your message to {customer_name}.
             The user_id (UUID) if successful, None otherwise
         """
         try:
+            import asyncio
             from core.database import db_client
             
-            # First, try to find an existing user for this customer
-            existing_user = db_client.client.table("users").select("id").eq("customer_id", customer_id).execute()
+            # First, try to find an existing user for this customer (async)
+            existing_user = await asyncio.to_thread(
+                lambda: db_client.client.table("users").select("id").eq("customer_id", customer_id).execute()
+            )
             
             if existing_user.data:
                 # User already exists, return the user_id
@@ -2400,8 +2599,10 @@ Failed to deliver your message to {customer_name}.
                 }
             }
             
-            # Create the user record
-            user_result = db_client.client.table("users").insert(user_data).execute()
+            # Create the user record (async)
+            user_result = await asyncio.to_thread(
+                lambda: db_client.client.table("users").insert(user_data).execute()
+            )
             
             if user_result.data:
                 user_id = user_result.data[0]["id"]
@@ -2930,10 +3131,8 @@ Important: Use the tools to help you provide the best possible assistance to the
                 existing_state.get("summary") if existing_state else None
             ),
             long_term_context=[],  # Initialize empty, will be populated by nodes
-            hitl_data=None,  # Initialize empty
-            confirmation_data=None,  # Initialize empty
-            execution_data=None,  # Initialize empty
-            confirmation_result=None,  # Initialize empty
+            # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
+            
         )
 
         # Execute the graph with execution-scoped connection management
@@ -3022,12 +3221,58 @@ Important: Use the tools to help you provide the best possible assistance to the
                 # CRITICAL FIX: Update the state with the new messages and resume properly
                 # Instead of calling ainvoke() which restarts the graph, we need to:
                 # 1. Update the state with the human response
-                # 2. Resume with stream(None, config) to continue from where we left off
+                # 2. Clear HITL state to process approval
+                # 3. Resume with stream(None, config) to continue from where we left off
                 
-                # Update the state to include the human response
+                # Process the approval and clear HITL state
+                response_lower = user_response.lower()
+                approve_words = ["yes", "approve", "send", "go ahead", "confirm", "ok", "proceed", "send it", "do it"]
+                is_approved = any(word in response_lower for word in approve_words)
+                
+                # Update the state to include the human response and process approval
+                hitl_update = {"messages": [human_response_msg]}
+                
+                if is_approved:
+                    logger.info(f"🔄 [AGENT_RESUME] ✅ Processing approval: '{user_response}'")
+                    
+                    # EXECUTE APPROVED ACTION DIRECTLY
+                    hitl_context = current_state.values.get("hitl_context")
+                    if hitl_context and hitl_context.get("source_tool") == "trigger_customer_message":
+                        logger.info(f"🔄 [AGENT_RESUME] 🎯 EXECUTING APPROVED ACTION - tool: trigger_customer_message")
+                        
+                        # Execute the customer message directly
+                        execution_result = await self._handle_customer_message_execution(current_state.values, hitl_context)
+                        
+                        # CRITICAL: Clear HITL state in conversation state to prevent persistence
+                        await self.graph.aupdate_state(
+                            {"configurable": {"thread_id": conversation_id}},
+                            {
+                                "hitl_phase": None,
+                                "hitl_prompt": None,
+                                "hitl_context": None
+                            }
+                        )
+                        
+                        # Return the execution result directly (includes success message and cleared HITL state)
+                        logger.info(f"🔄 [AGENT_RESUME] ✅ APPROVED ACTION EXECUTED - clearing conversation state")
+                        return execution_result
+                    
+                    hitl_update.update({
+                        "hitl_phase": "approved",
+                        "hitl_prompt": None,
+                        # Keep hitl_context for tool execution
+                    })
+                else:
+                    logger.info(f"🔄 [AGENT_RESUME] ❌ Processing denial: '{user_response}'")
+                    hitl_update.update({
+                        "hitl_phase": "denied", 
+                        "hitl_prompt": None,
+                        "hitl_context": None
+                    })
+                
                 await self.graph.aupdate_state(
                     {"configurable": {"thread_id": conversation_id}},
-                    {"messages": [human_response_msg]}
+                    hitl_update
                 )
                 
                 logger.info(f"🔄 [AGENT_RESUME] ✅ UPDATED state with human response")
@@ -3076,7 +3321,7 @@ Important: Use the tools to help you provide the best possible assistance to the
             - message: Final message content
             - sources: Document sources if any
             - is_interrupted: Boolean indicating if human interaction is needed
-            - confirmation_data: Confirmation details if interrupted
+            - hitl_phase/hitl_prompt/hitl_context: HITL interaction data if interrupted (3-field architecture)
         """
         try:
             logger.info(f"🔍 [RESULT_PROCESSING] Processing agent result for API response")
@@ -3086,29 +3331,29 @@ Important: Use the tools to help you provide the best possible assistance to the
             api_response = {
                 "message": "I apologize, but I encountered an issue processing your request.",
                 "sources": [],
-                "is_interrupted": False,
-                "confirmation_data": None
+                "is_interrupted": False
             }
             
             if not result:
                 return api_response
             
             # =================================================================
-            # STEP 1: Check for HITL (Human-in-the-Loop) interactions
+            # STEP 1: Check for HITL (Human-in-the-Loop) interactions - REVOLUTIONARY 3-FIELD ARCHITECTURE
             # =================================================================
-            hitl_data = result.get('hitl_data')
-            if hitl_data and isinstance(hitl_data, dict):
-                logger.info(f"🔍 [RESULT_PROCESSING] 🎯 HITL STATE DETECTED! Type: {hitl_data.get('type')}")
+            hitl_phase = result.get('hitl_phase')
+            hitl_prompt = result.get('hitl_prompt')
+            hitl_context = result.get('hitl_context')
+            
+            if hitl_phase and hitl_prompt:
+                logger.info(f"🔍 [RESULT_PROCESSING] 🎯 HITL STATE DETECTED! Phase: {hitl_phase}")
                 
                 # Return HITL prompt with clean interface - no LangGraph details
                 api_response.update({
-                    "message": hitl_data.get('prompt', 'Confirmation required'),
+                    "message": hitl_prompt,
                     "is_interrupted": True,
-                    "confirmation_data": {
-                        "type": hitl_data.get('type', 'confirmation'),
-                        "prompt": hitl_data.get('prompt', 'Confirmation required'),
-                        "context": hitl_data.get('context', {})
-                    }
+                    "hitl_phase": hitl_phase,
+                    "hitl_prompt": hitl_prompt,
+                    "hitl_context": hitl_context or {}
                 })
                 return api_response
             
@@ -3141,11 +3386,9 @@ Important: Use the tools to help you provide the best possible assistance to the
                 api_response.update({
                     "message": interrupt_message,
                     "is_interrupted": True,
-                    "confirmation_data": {
-                        "type": "legacy_confirmation",
-                        "prompt": interrupt_message,
-                        "context": {"legacy": True}
-                    }
+                    "hitl_phase": "awaiting_response",
+                    "hitl_prompt": interrupt_message,
+                    "hitl_context": {"legacy": True}
                 })
                 return api_response
             
@@ -3255,8 +3498,7 @@ Important: Use the tools to help you provide the best possible assistance to the
                 "sources": [],
                 "is_interrupted": False,
                 "error": True,
-                "error_details": str(e),
-                "confirmation_data": None
+                "error_details": str(e)
             }
 
     async def process_user_message(
@@ -3283,7 +3525,7 @@ Important: Use the tools to help you provide the best possible assistance to the
             - message: Final response message
             - sources: Document sources if any
             - is_interrupted: Boolean indicating if human interaction needed
-            - confirmation_data: Confirmation details if interrupted
+            - hitl_phase/hitl_prompt/hitl_context: HITL interaction data if interrupted (3-field architecture)
             - conversation_id: Conversation ID for persistence
         """
         try:
@@ -3313,7 +3555,6 @@ Important: Use the tools to help you provide the best possible assistance to the
                 "message": "I apologize, but I encountered an error while processing your request.",
                 "sources": [],
                 "is_interrupted": False,
-                "confirmation_data": None,
                 "conversation_id": conversation_id
             }
 
