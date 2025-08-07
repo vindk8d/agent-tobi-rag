@@ -1,0 +1,448 @@
+/* 
+ * Professional Quotation Styles
+ * Print-optimized CSS for vehicle quotations
+ * Complements inline styles in quotation_template.html
+ */
+
+/* Print-specific page setup */
+@page {
+    size: A4 portrait;
+    margin: 20mm 15mm 20mm 15mm;
+    
+    @top-left {
+        content: element(header-left);
+        font-size: 9pt;
+        color: #666;
+    }
+    
+    @top-right {
+        content: element(header-right);
+        font-size: 9pt;
+        color: #666;
+    }
+    
+    @bottom-left {
+        content: "Generated: " date();
+        font-size: 8pt;
+        color: #999;
+    }
+    
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 8pt;
+        color: #999;
+    }
+    
+    @bottom-right {
+        content: "Confidential";
+        font-size: 8pt;
+        color: #999;
+    }
+}
+
+/* Root variables for consistent theming */
+:root {
+    --primary-color: #2c5aa0;
+    --secondary-color: #f8f9fa;
+    --accent-color: #28a745;
+    --danger-color: #dc3545;
+    --text-color: #333;
+    --muted-color: #666;
+    --border-color: #dee2e6;
+    --shadow-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Enhanced typography */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    color: var(--text-color);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Heading hierarchy */
+h1, h2, h3, h4, h5, h6 {
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    line-height: 1.2;
+    color: var(--primary-color);
+}
+
+h1 { font-size: 2.5rem; }
+h2 { font-size: 2rem; }
+h3 { font-size: 1.75rem; }
+h4 { font-size: 1.5rem; }
+h5 { font-size: 1.25rem; }
+h6 { font-size: 1rem; }
+
+/* Enhanced table styling */
+.pricing-table {
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 2px 4px var(--shadow-color);
+}
+
+.pricing-table thead th {
+    background: linear-gradient(135deg, var(--primary-color), #3d6bb3);
+    color: white;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10pt;
+    letter-spacing: 0.5px;
+}
+
+.pricing-table tbody tr:nth-child(even) {
+    background-color: #fafbfc;
+}
+
+.pricing-table tbody tr:hover {
+    background-color: #f1f3f4;
+}
+
+/* Enhanced info grid styling */
+.info-grid {
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.info-row:nth-child(even) {
+    background-color: #fafbfc;
+}
+
+.info-label {
+    background-color: var(--secondary-color);
+    font-weight: 600;
+    color: var(--primary-color);
+    border-right: 1px solid var(--border-color);
+}
+
+/* Enhanced vehicle specs styling */
+.vehicle-specs {
+    background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+    border-left: 5px solid var(--primary-color);
+    border-radius: 0 4px 4px 0;
+    position: relative;
+    overflow: hidden;
+}
+
+.vehicle-specs::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--primary-color), #3d6bb3);
+}
+
+/* Status badges */
+.status-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 9pt;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-draft { background-color: #ffc107; color: #856404; }
+.status-pending { background-color: #17a2b8; color: white; }
+.status-sent { background-color: #007bff; color: white; }
+.status-viewed { background-color: #6f42c1; color: white; }
+.status-accepted { background-color: #28a745; color: white; }
+.status-rejected { background-color: #dc3545; color: white; }
+.status-expired { background-color: #6c757d; color: white; }
+
+/* Currency formatting */
+.currency {
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.currency.positive {
+    color: var(--accent-color);
+}
+
+.currency.negative {
+    color: var(--danger-color);
+}
+
+/* Enhanced signature boxes */
+.signature-box {
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    background: white;
+    box-shadow: 0 2px 8px var(--shadow-color);
+    position: relative;
+}
+
+.signature-box::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--primary-color), #3d6bb3);
+    border-radius: 6px 6px 0 0;
+}
+
+.signature-line {
+    border-bottom: 2px solid var(--primary-color);
+    margin: 20px 0 10px 0;
+    position: relative;
+}
+
+.signature-line::after {
+    content: 'X';
+    position: absolute;
+    left: 10px;
+    bottom: -15px;
+    color: var(--muted-color);
+    font-size: 8pt;
+}
+
+/* Print optimizations */
+@media print {
+    /* Ensure proper page breaks */
+    .section {
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+    
+    .pricing-table {
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+    
+    .signature-section {
+        page-break-before: auto;
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+    
+    /* Hide interactive elements */
+    button, .btn, .no-print {
+        display: none !important;
+    }
+    
+    /* Ensure proper colors for print */
+    * {
+        -webkit-print-color-adjust: exact !important;
+        color-adjust: exact !important;
+    }
+    
+    /* Optimize fonts for print */
+    body {
+        font-size: 10pt;
+        line-height: 1.4;
+    }
+    
+    .quotation-title {
+        font-size: 18pt;
+    }
+    
+    .section-title {
+        font-size: 12pt;
+    }
+    
+    /* Ensure table borders print correctly */
+    .pricing-table,
+    .pricing-table th,
+    .pricing-table td {
+        border: 1px solid #333 !important;
+    }
+    
+    /* Optimize spacing for print */
+    .section {
+        margin-bottom: 20px;
+    }
+    
+    .header {
+        margin-bottom: 25px;
+    }
+}
+
+/* Screen-only enhancements */
+@media screen {
+    .quotation-container {
+        max-width: 210mm;
+        margin: 20px auto;
+        padding: 20px;
+        background: white;
+        box-shadow: 0 4px 20px var(--shadow-color);
+        border-radius: 8px;
+    }
+    
+    /* Interactive elements */
+    .hover-highlight:hover {
+        background-color: #f1f3f4;
+        transition: background-color 0.2s ease;
+    }
+    
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .quotation-container {
+            margin: 10px;
+            padding: 15px;
+        }
+        
+        .company-logo,
+        .quotation-info {
+            float: none;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+        
+        .info-grid {
+            display: block;
+        }
+        
+        .info-row {
+            display: block;
+            border-bottom: 1px solid var(--border-color);
+            padding: 10px 0;
+        }
+        
+        .info-label,
+        .info-value {
+            display: block;
+            width: 100%;
+            padding: 5px 0;
+        }
+        
+        .pricing-table {
+            font-size: 10pt;
+        }
+        
+        .signature-section {
+            display: block;
+        }
+        
+        .signature-box {
+            display: block;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+    }
+}
+
+/* Accessibility enhancements */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    :root {
+        --primary-color: #000080;
+        --text-color: #000;
+        --border-color: #000;
+    }
+    
+    .pricing-table,
+    .info-grid,
+    .signature-box {
+        border: 2px solid #000;
+    }
+}
+
+/* Dark mode support (for screen preview) */
+@media (prefers-color-scheme: dark) and (not (print)) {
+    :root {
+        --primary-color: #4a90e2;
+        --secondary-color: #2d3748;
+        --text-color: #e2e8f0;
+        --muted-color: #a0aec0;
+        --border-color: #4a5568;
+        --shadow-color: rgba(0, 0, 0, 0.3);
+    }
+    
+    body {
+        background-color: #1a202c;
+        color: var(--text-color);
+    }
+    
+    .quotation-container {
+        background-color: #2d3748;
+        color: var(--text-color);
+    }
+    
+    .pricing-table th {
+        background: var(--primary-color);
+    }
+    
+    .pricing-table tbody tr:nth-child(even) {
+        background-color: #374151;
+    }
+    
+    .vehicle-specs {
+        background: linear-gradient(135deg, #374151, #4a5568);
+    }
+}
+
+/* Utility classes */
+.text-primary { color: var(--primary-color); }
+.text-muted { color: var(--muted-color); }
+.text-success { color: var(--accent-color); }
+.text-danger { color: var(--danger-color); }
+
+.bg-primary { background-color: var(--primary-color); }
+.bg-secondary { background-color: var(--secondary-color); }
+.bg-success { background-color: var(--accent-color); }
+.bg-danger { background-color: var(--danger-color); }
+
+.border { border: 1px solid var(--border-color); }
+.border-primary { border-color: var(--primary-color); }
+.border-success { border-color: var(--accent-color); }
+.border-danger { border-color: var(--danger-color); }
+
+.rounded { border-radius: 4px; }
+.rounded-lg { border-radius: 8px; }
+
+.shadow { box-shadow: 0 2px 4px var(--shadow-color); }
+.shadow-lg { box-shadow: 0 4px 20px var(--shadow-color); }
+
+.mb-0 { margin-bottom: 0; }
+.mb-1 { margin-bottom: 0.25rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+.mb-3 { margin-bottom: 1rem; }
+.mb-4 { margin-bottom: 1.5rem; }
+.mb-5 { margin-bottom: 3rem; }
+
+.mt-0 { margin-top: 0; }
+.mt-1 { margin-top: 0.25rem; }
+.mt-2 { margin-top: 0.5rem; }
+.mt-3 { margin-top: 1rem; }
+.mt-4 { margin-top: 1.5rem; }
+.mt-5 { margin-top: 3rem; }
+
+.p-0 { padding: 0; }
+.p-1 { padding: 0.25rem; }
+.p-2 { padding: 0.5rem; }
+.p-3 { padding: 1rem; }
+.p-4 { padding: 1.5rem; }
+.p-5 { padding: 3rem; }
+
+.text-center { text-align: center; }
+.text-left { text-align: left; }
+.text-right { text-align: right; }
+
+.font-weight-normal { font-weight: 400; }
+.font-weight-bold { font-weight: 600; }
+.font-weight-bolder { font-weight: 700; }
+
+.font-size-sm { font-size: 0.875rem; }
+.font-size-lg { font-size: 1.125rem; }
+.font-size-xl { font-size: 1.25rem; }

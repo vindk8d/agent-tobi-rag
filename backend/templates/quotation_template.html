@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Quotation - {{ quotation_number }}</title>
+    <link rel="stylesheet" href="quotation_styles.css">
+    <style>
+        /* Inline critical styles for PDF generation */
+        @page {
+            size: A4;
+            margin: 20mm;
+            @top-center {
+                content: "{{ company_name }} - Vehicle Quotation";
+                font-size: 10pt;
+                color: #666;
+            }
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 10pt;
+                color: #666;
+            }
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 11pt;
+            line-height: 1.4;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .quotation-container {
+            max-width: 100%;
+            margin: 0 auto;
+            background: white;
+        }
+        
+        .header {
+            border-bottom: 3px solid #2c5aa0;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .company-logo {
+            float: left;
+            width: 150px;
+            height: 60px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #2c5aa0;
+        }
+        
+        .quotation-info {
+            float: right;
+            text-align: right;
+        }
+        
+        .quotation-title {
+            font-size: 24pt;
+            font-weight: bold;
+            color: #2c5aa0;
+            margin: 0;
+        }
+        
+        .quotation-number {
+            font-size: 14pt;
+            color: #666;
+            margin: 5px 0;
+        }
+        
+        .quotation-date {
+            font-size: 11pt;
+            color: #666;
+        }
+        
+        .clearfix::after {
+            content: "";
+            display: table;
+            clear: both;
+        }
+        
+        .section {
+            margin-bottom: 25px;
+            page-break-inside: avoid;
+        }
+        
+        .section-title {
+            font-size: 14pt;
+            font-weight: bold;
+            color: #2c5aa0;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .info-grid {
+            display: table;
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .info-row {
+            display: table-row;
+        }
+        
+        .info-label {
+            display: table-cell;
+            width: 30%;
+            font-weight: bold;
+            padding: 8px 0;
+            vertical-align: top;
+        }
+        
+        .info-value {
+            display: table-cell;
+            padding: 8px 0;
+            vertical-align: top;
+        }
+        
+        .pricing-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        .pricing-table th,
+        .pricing-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .pricing-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            color: #2c5aa0;
+        }
+        
+        .pricing-table .amount {
+            text-align: right;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .total-row {
+            font-weight: bold;
+            background-color: #f8f9fa;
+        }
+        
+        .total-row td {
+            border-top: 2px solid #2c5aa0;
+            border-bottom: 2px solid #2c5aa0;
+        }
+        
+        .vehicle-specs {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-left: 4px solid #2c5aa0;
+            margin: 15px 0;
+        }
+        
+        .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #e9ecef;
+            font-size: 10pt;
+            color: #666;
+        }
+        
+        .terms {
+            margin-top: 20px;
+            font-size: 10pt;
+            line-height: 1.3;
+        }
+        
+        .terms h4 {
+            color: #2c5aa0;
+            margin-bottom: 10px;
+        }
+        
+        .signature-section {
+            margin-top: 40px;
+            display: table;
+            width: 100%;
+        }
+        
+        .signature-box {
+            display: table-cell;
+            width: 45%;
+            padding: 20px;
+            border: 1px solid #dee2e6;
+            vertical-align: top;
+        }
+        
+        .signature-box + .signature-box {
+            margin-left: 10%;
+        }
+        
+        .signature-line {
+            border-bottom: 1px solid #333;
+            height: 40px;
+            margin-bottom: 10px;
+        }
+        
+        .print-only {
+            display: none;
+        }
+        
+        @media print {
+            .print-only {
+                display: block;
+            }
+            .no-print {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="quotation-container">
+        <!-- Header Section -->
+        <div class="header clearfix">
+            <div class="company-logo">
+                {% if company_logo %}
+                <img src="{{ company_logo }}" alt="{{ company_name }}" style="max-width: 100%; max-height: 100%;">
+                {% else %}
+                {{ company_name }}
+                {% endif %}
+            </div>
+            <div class="quotation-info">
+                <h1 class="quotation-title">VEHICLE QUOTATION</h1>
+                <div class="quotation-number">{{ quotation_number }}</div>
+                <div class="quotation-date">Date: {{ quotation_date }}</div>
+                <div class="quotation-date">Valid Until: {{ expiry_date }}</div>
+            </div>
+        </div>
+
+        <!-- Customer Information -->
+        <div class="section">
+            <h2 class="section-title">Customer Information</h2>
+            <div class="info-grid">
+                <div class="info-row">
+                    <div class="info-label">Name:</div>
+                    <div class="info-value">{{ customer.name }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Company:</div>
+                    <div class="info-value">{{ customer.company or 'N/A' }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Email:</div>
+                    <div class="info-value">{{ customer.email }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Phone:</div>
+                    <div class="info-value">{{ customer.phone }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Address:</div>
+                    <div class="info-value">{{ customer.address or 'N/A' }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vehicle Information -->
+        <div class="section">
+            <h2 class="section-title">Vehicle Details</h2>
+            <div class="info-grid">
+                <div class="info-row">
+                    <div class="info-label">Make & Model:</div>
+                    <div class="info-value">{{ vehicle.make }} {{ vehicle.model }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Type:</div>
+                    <div class="info-value">{{ vehicle.type | title }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Color:</div>
+                    <div class="info-value">{{ vehicle.color or 'To be selected' }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Year:</div>
+                    <div class="info-value">{{ vehicle.year or 'Current Model' }}</div>
+                </div>
+            </div>
+            
+            {% if vehicle.specifications %}
+            <div class="vehicle-specs">
+                <h4 style="margin-top: 0; color: #2c5aa0;">Technical Specifications</h4>
+                <div class="info-grid">
+                    {% if vehicle.specifications.engine %}
+                    <div class="info-row">
+                        <div class="info-label">Engine:</div>
+                        <div class="info-value">{{ vehicle.specifications.engine }}</div>
+                    </div>
+                    {% endif %}
+                    {% if vehicle.specifications.power %}
+                    <div class="info-row">
+                        <div class="info-label">Power:</div>
+                        <div class="info-value">{{ vehicle.specifications.power }} HP</div>
+                    </div>
+                    {% endif %}
+                    {% if vehicle.specifications.torque %}
+                    <div class="info-row">
+                        <div class="info-label">Torque:</div>
+                        <div class="info-value">{{ vehicle.specifications.torque }} Nm</div>
+                    </div>
+                    {% endif %}
+                    {% if vehicle.specifications.fuel_type %}
+                    <div class="info-row">
+                        <div class="info-label">Fuel Type:</div>
+                        <div class="info-value">{{ vehicle.specifications.fuel_type | title }}</div>
+                    </div>
+                    {% endif %}
+                    {% if vehicle.specifications.transmission %}
+                    <div class="info-row">
+                        <div class="info-label">Transmission:</div>
+                        <div class="info-value">{{ vehicle.specifications.transmission | title }}</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Pricing Breakdown -->
+        <div class="section">
+            <h2 class="section-title">Pricing Details</h2>
+            <table class="pricing-table">
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Description</th>
+                        <th class="amount">Amount (₱)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Base Price</td>
+                        <td>{{ vehicle.make }} {{ vehicle.model }} - Base Unit</td>
+                        <td class="amount">{{ "{:,.2f}".format(pricing.base_price) }}</td>
+                    </tr>
+                    
+                    {% if pricing.add_ons %}
+                    {% for addon in pricing.add_ons %}
+                    <tr>
+                        <td>{{ addon.name }}</td>
+                        <td>{{ addon.description }}</td>
+                        <td class="amount">{{ "{:,.2f}".format(addon.price) }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% endif %}
+                    
+                    <tr>
+                        <td>Insurance</td>
+                        <td>Comprehensive Insurance Coverage</td>
+                        <td class="amount">{{ "{:,.2f}".format(pricing.insurance) }}</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>LTO Registration</td>
+                        <td>Land Transport Office Registration Fees</td>
+                        <td class="amount">{{ "{:,.2f}".format(pricing.lto_fees) }}</td>
+                    </tr>
+                    
+                    {% if pricing.discounts and pricing.discounts > 0 %}
+                    <tr style="color: #28a745;">
+                        <td>Discount</td>
+                        <td>{{ pricing.discount_description or 'Special Discount' }}</td>
+                        <td class="amount">-{{ "{:,.2f}".format(pricing.discounts) }}</td>
+                    </tr>
+                    {% endif %}
+                    
+                    <tr class="total-row">
+                        <td><strong>TOTAL AMOUNT</strong></td>
+                        <td><strong>All Inclusive Price</strong></td>
+                        <td class="amount"><strong>₱ {{ "{:,.2f}".format(pricing.total_amount) }}</strong></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Sales Representative -->
+        <div class="section">
+            <h2 class="section-title">Sales Representative</h2>
+            <div class="info-grid">
+                <div class="info-row">
+                    <div class="info-label">Name:</div>
+                    <div class="info-value">{{ employee.name }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Position:</div>
+                    <div class="info-value">{{ employee.position | title | replace('_', ' ') }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Email:</div>
+                    <div class="info-value">{{ employee.email }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Phone:</div>
+                    <div class="info-value">{{ employee.phone }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Branch:</div>
+                    <div class="info-value">{{ employee.branch_name }} - {{ employee.branch_region | title }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Terms and Conditions -->
+        <div class="section terms">
+            <h4>Terms and Conditions</h4>
+            <ul style="margin: 0; padding-left: 20px;">
+                <li>This quotation is valid for {{ validity_days or 30 }} days from the date of issue.</li>
+                <li>Prices are subject to change without prior notice.</li>
+                <li>A reservation fee of ₱{{ "{:,.2f}".format(reservation_fee or 50000) }} is required to secure your unit.</li>
+                <li>Full payment is required before vehicle delivery.</li>
+                <li>Vehicle delivery time is approximately {{ delivery_time or '4-6 weeks' }} from order confirmation.</li>
+                <li>All vehicles come with manufacturer's warranty as specified.</li>
+                <li>Registration and insurance processing will be handled by our team.</li>
+                <li>This quotation does not constitute a binding contract until signed by both parties.</li>
+            </ul>
+        </div>
+
+        <!-- Signature Section -->
+        <div class="signature-section">
+            <div class="signature-box">
+                <h4 style="margin-top: 0;">Customer Acceptance</h4>
+                <div class="signature-line"></div>
+                <p style="margin: 5px 0;"><strong>{{ customer.name }}</strong></p>
+                <p style="margin: 0; font-size: 9pt;">Customer Signature & Date</p>
+            </div>
+            <div class="signature-box">
+                <h4 style="margin-top: 0;">Sales Representative</h4>
+                <div class="signature-line"></div>
+                <p style="margin: 5px 0;"><strong>{{ employee.name }}</strong></p>
+                <p style="margin: 0; font-size: 9pt;">Sales Representative & Date</p>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div style="text-align: center;">
+                <p><strong>{{ company_name }}</strong></p>
+                <p>{{ company_address }}</p>
+                <p>Phone: {{ company_phone }} | Email: {{ company_email }} | Website: {{ company_website }}</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
