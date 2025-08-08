@@ -30,6 +30,8 @@ from sqlalchemy import create_engine, text
 from rag.retriever import SemanticRetriever
 from core.config import get_settings
 from agents.hitl import request_approval, request_input, request_selection
+from core.pdf_generator import generate_quotation_pdf
+from core.storage import upload_quotation_pdf, create_signed_quotation_url
 import re
 
 # NOTE: LangGraph interrupt functionality is now handled by the centralized HITL system in hitl.py
@@ -2117,9 +2119,975 @@ def _generate_search_suggestions(user_input: str, original_id: str) -> str:
     return "\n".join(suggestions)
 
 
+# =============================================================================
+# VEHICLE LOOKUP HELPER (Task 4.2)
+# =============================================================================
+
+async def _lookup_vehicle_by_criteria(criteria: Dict[str, Any], limit: int = 20) -> List[dict]:
+    """
+    Lookup vehicles using flexible criteria.
+
+    Supported keys in criteria:
+      - make (maps to 'brand')
+      - model
+      - type
+      - year (int or str)
+      - color
+      - is_available (bool)
+      - min_stock (int) → stock_quantity >= min_stock
+
+    Returns a list of vehicles with key fields for quotation building.
+    """
+    try:
+        # Basic validation and normalization
+        if criteria is None or not isinstance(criteria, dict):
+            logger.warning("[VEHICLE_LOOKUP] Invalid criteria provided; returning empty result")
+            return []
+        if not isinstance(limit, int) or limit <= 0:
+            limit = 20
+        from core.database import db_client
+
+        client = db_client.client
+
+        # Start base query
+        def build_query():
+            q = client.table("vehicles").select(
+                "id, brand, model, year, type, color, is_available, stock_quantity"
+            )
+
+            # Map and normalize filters
+            make = criteria.get("make") or criteria.get("brand")
+            if make:
+                q = q.filter("brand", "ilike", f"%{str(make).strip()}%")
+
+            if criteria.get("model"):
+                q = q.filter("model", "ilike", f"%{str(criteria['model']).strip()}%")
+
+            if criteria.get("type"):
+                q = q.filter("type", "ilike", f"%{str(criteria['type']).strip()}%")
+
+            if criteria.get("year"):
+                # Accept numeric or string year; cast to string for ilike for tolerance (exact preferred when int)
+                year_val = criteria["year"]
+                if isinstance(year_val, int):
+                    q = q.eq("year", year_val)
+                else:
+                    q = q.filter("year", "ilike", f"%{str(year_val).strip()}%")
+
+            if criteria.get("color"):
+                q = q.filter("color", "ilike", f"%{str(criteria['color']).strip()}%")
+
+            if "is_available" in criteria and criteria["is_available"] is not None:
+                q = q.eq("is_available", bool(criteria["is_available"]))
+
+            if criteria.get("min_stock") is not None:
+                try:
+                    min_stock = int(criteria["min_stock"])
+                    q = q.gte("stock_quantity", min_stock)
+                except Exception:
+                    # Ignore invalid min_stock values
+                    pass
+
+            # Prefer available and in-stock items first, then most recent year
+            # Note: desc=True for booleans puts True values first
+            q = q.order("is_available", desc=True).order("stock_quantity", desc=True).order("year", desc=True)
+
+            # Apply a sane limit
+            q = q.limit(max(1, min(limit, 100)))
+            return q
+
+        # Execute synchronously in a thread
+        result = await asyncio.to_thread(lambda: build_query().execute())
+
+        vehicles: List[dict] = []
+        for row in result.data or []:
+            vehicles.append(
+                {
+                    "id": row.get("id"),
+                    "brand": row.get("brand"),
+                    "model": row.get("model"),
+                    "year": row.get("year"),
+                    "type": row.get("type"),
+                    "color": row.get("color"),
+                    "is_available": row.get("is_available"),
+                    "stock_quantity": row.get("stock_quantity"),
+                    # Convenience display field
+                    "display_name": f"{row.get('brand','')} {row.get('model','')} {row.get('year','')}".strip(),
+                }
+            )
+
+        logger.info(f"[VEHICLE_LOOKUP] Criteria={criteria} → {len(vehicles)} result(s)")
+        return vehicles
+
+    except Exception as e:
+        logger.error(f"[VEHICLE_LOOKUP] Error looking up vehicles: {e}")
+        return []
+
 # DEPRECATED: Use _handle_confirmation_approved() and _handle_confirmation_denied() instead
 # async def _handle_customer_message_confirmation(hitl_context: dict, human_response: str) -> str:
 #     """DEPRECATED: Legacy confirmation handler. Use _handle_confirmation_approved() and _handle_confirmation_denied() instead."""
+
+
+# =============================================================================
+# VEHICLE REQUIREMENTS PARSING HELPERS (Task 5.8)
+# =============================================================================
+
+async def _parse_vehicle_requirements_with_llm(
+    requirements: str, 
+    extracted_context: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Parse vehicle requirements using LLM intelligence instead of hard-coded rules.
+    
+    This approach is scalable, flexible, and can handle any brand/model without code changes.
+    Follows the project principle: "Use LLM intelligence rather than keyword matching or complex logic."
+    
+    Args:
+        requirements: Natural language vehicle requirements
+        extracted_context: Additional context from conversation
+    
+    Returns:
+        Dict with structured vehicle criteria for database lookup
+    """
+    try:
+        settings = await get_settings()
+        llm = ChatOpenAI(
+            model=settings.openai_simple_model,
+            temperature=0.1
+        )
+        
+        # Create parsing prompt that extracts structured vehicle criteria
+        parsing_prompt = ChatPromptTemplate.from_template("""
+You are a vehicle requirements parser. Extract structured search criteria from the user's requirements.
+
+Requirements: {requirements}
+Additional Context: {context}
+
+Extract the following information and return ONLY a JSON object:
+{{
+    "make": "exact brand name if mentioned (e.g., Toyota, Honda, Ford, BMW, Mercedes-Benz, etc.)",
+    "model": "exact model name if mentioned (e.g., Camry, Civic, F-150, X5, etc.)",
+    "type": "vehicle type if mentioned (e.g., SUV, Sedan, Pickup, Hatchback, Coupe, Crossover, etc.)",
+    "year": "year or year range if mentioned (e.g., 2023, 2022-2024)",
+    "color": "color preference if mentioned",
+    "transmission": "transmission type if mentioned (Manual, Automatic, CVT)",
+    "fuel_type": "fuel type if mentioned (Gasoline, Diesel, Hybrid, Electric)",
+    "price_range": "budget or price range if mentioned",
+    "quantity": "number of vehicles needed if mentioned",
+    "special_features": "any special features or requirements mentioned"
+}}
+
+Rules:
+- Only include fields that are actually mentioned or can be inferred
+- Use null for fields not mentioned
+- Be flexible with brand names (handle variations like "Benz" -> "Mercedes-Benz", "Beemer" -> "BMW")
+- Normalize vehicle types to standard categories
+- Extract quantity even if written as text ("two cars" -> 2)
+- Handle abbreviations (CR-V, F-150, etc.)
+- Consider context from previous conversation
+
+Return only the JSON object, no other text.
+""")
+        
+        # Execute the parsing
+        chain = parsing_prompt | llm | StrOutputParser()
+        result = await chain.ainvoke({
+            "requirements": requirements,
+            "context": json.dumps(extracted_context, default=str)
+        })
+        
+        # Parse the JSON response
+        try:
+            criteria = json.loads(result.strip())
+            # Clean up null values and empty strings
+            criteria = {k: v for k, v in criteria.items() if v is not None and v != "" and v != "null"}
+            logger.info(f"[VEHICLE_PARSING] Extracted criteria: {criteria}")
+            return criteria
+        except json.JSONDecodeError:
+            logger.warning(f"[VEHICLE_PARSING] Failed to parse LLM response as JSON: {result}")
+            return {}
+            
+    except Exception as e:
+        logger.error(f"[VEHICLE_PARSING] Error parsing vehicle requirements: {e}")
+        return {}
+
+
+async def _get_available_makes_and_models() -> Dict[str, Any]:
+    """
+    Dynamically fetch available makes and models from the database.
+    This ensures we can handle any brand/model in our inventory without code changes.
+    
+    Returns:
+        Dict mapping makes to their available models and types
+    """
+    try:
+        engine = await _get_sql_engine()
+        
+        query = """
+        SELECT DISTINCT 
+            make,
+            model,
+            type,
+            COUNT(*) as available_count
+        FROM vehicles 
+        WHERE stock_quantity > 0 
+        GROUP BY make, model, type
+        ORDER BY make, model
+        """
+        
+        with engine.connect() as conn:
+            result = conn.execute(text(query))
+            inventory = {}
+            
+            for row in result:
+                make = row.make
+                if make not in inventory:
+                    inventory[make] = {"models": set(), "types": set()}
+                
+                inventory[make]["models"].add(row.model)
+                inventory[make]["types"].add(row.type)
+            
+            # Convert sets to lists for JSON serialization
+            for make in inventory:
+                inventory[make]["models"] = list(inventory[make]["models"])
+                inventory[make]["types"] = list(inventory[make]["types"])
+            
+            logger.info(f"[INVENTORY_LOOKUP] Found {len(inventory)} makes in inventory")
+            return inventory
+            
+    except Exception as e:
+        logger.error(f"[INVENTORY_LOOKUP] Error fetching available inventory: {e}")
+        return {}
+
+
+async def _enhance_vehicle_criteria_with_fuzzy_matching(
+    criteria: Dict[str, Any], 
+    available_inventory: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Use fuzzy matching to handle variations in brand/model names.
+    This helps match user input like "honda" to "Honda" or "crv" to "CR-V".
+    
+    Args:
+        criteria: Original criteria from LLM parsing
+        available_inventory: Available makes/models from database
+    
+    Returns:
+        Enhanced criteria with corrected make/model names
+    """
+    enhanced_criteria = criteria.copy()
+    
+    if criteria.get("make") and available_inventory:
+        # Find closest matching make
+        available_makes = list(available_inventory.keys())
+        make_match = _find_closest_match(criteria["make"], available_makes)
+        if make_match:
+            enhanced_criteria["make"] = make_match
+            logger.info(f"[FUZZY_MATCHING] Matched make '{criteria['make']}' -> '{make_match}'")
+            
+            # If we found a make match, try to match the model
+            if criteria.get("model") and make_match in available_inventory:
+                available_models = available_inventory[make_match]["models"]
+                model_match = _find_closest_match(criteria["model"], available_models)
+                if model_match:
+                    enhanced_criteria["model"] = model_match
+                    logger.info(f"[FUZZY_MATCHING] Matched model '{criteria['model']}' -> '{model_match}'")
+    
+    return enhanced_criteria
+
+
+def _find_closest_match(target: str, options: List[str], threshold: int = 70) -> Optional[str]:
+    """
+    Simple fuzzy matching using string similarity.
+    
+    Args:
+        target: String to match
+        options: List of possible matches
+        threshold: Minimum similarity score (0-100)
+    
+    Returns:
+        Best matching option or None if no good match found
+    """
+    from difflib import SequenceMatcher
+    
+    if not target or not options:
+        return None
+    
+    best_match = None
+    best_score = 0
+    
+    target_lower = target.lower().strip()
+    
+    for option in options:
+        option_lower = option.lower().strip()
+        
+        # Exact match gets priority
+        if target_lower == option_lower:
+            return option
+        
+        # Calculate similarity score
+        score = SequenceMatcher(None, target_lower, option_lower).ratio() * 100
+        
+        # Also check if target is contained in option (for abbreviations)
+        if target_lower in option_lower or option_lower in target_lower:
+            score = max(score, 85)  # Boost score for substring matches
+        
+        if score > threshold and score > best_score:
+            best_score = score
+            best_match = option
+    
+    return best_match
+
+
+def _generate_inventory_suggestions(available_inventory: Dict[str, Any]) -> str:
+    """
+    Generate a formatted string of available inventory for user-friendly messages.
+    
+    Args:
+        available_inventory: Dictionary of available makes and their models
+    
+    Returns:
+        Formatted string showing available brands and popular models
+    """
+    if not available_inventory:
+        return "Please contact us for current inventory availability."
+    
+    suggestions = []
+    for make, details in sorted(available_inventory.items()):
+        models = details.get("models", [])
+        # Show first few models as examples
+        model_examples = ", ".join(sorted(models)[:3])
+        if len(models) > 3:
+            model_examples += f" (and {len(models) - 3} more)"
+        
+        suggestions.append(f"• **{make}**: {model_examples}")
+    
+    return "\n".join(suggestions)
+
+
+# =============================================================================
+# HITL RESUME LOGIC HANDLERS (Tasks 5.3.1.3-5.3.1.9)
+# =============================================================================
+
+async def _handle_quotation_resume(
+    customer_identifier: str,
+    vehicle_requirements: str,
+    additional_notes: Optional[str],
+    quotation_validity_days: int,
+    quotation_state: Dict[str, Any],
+    current_step: str,
+    user_response: str,
+    conversation_context: str
+) -> str:
+    """
+    Handle resuming quotation generation from HITL interactions.
+    
+    This function implements the multi-step HITL flow support by:
+    1. Processing user responses for specific steps
+    2. Updating quotation state with new information
+    3. Continuing to the next step or completing the quotation
+    
+    Args:
+        customer_identifier: Customer identifier
+        vehicle_requirements: Vehicle requirements
+        additional_notes: Additional notes
+        quotation_validity_days: Validity period
+        quotation_state: Preserved intermediate state
+        current_step: Current HITL step being resumed
+        user_response: User's response to HITL prompt
+        conversation_context: Conversation context
+        
+    Returns:
+        Either continuation of quotation process or next HITL request
+    """
+    try:
+        logger.info(f"[QUOTATION_RESUME] Processing step: {current_step}")
+        logger.info(f"[QUOTATION_RESUME] User response: {user_response}")
+        
+        # Process user response based on current step
+        if current_step == "customer_lookup":
+            return await _resume_customer_lookup(
+                customer_identifier, quotation_state, user_response
+            )
+        elif current_step == "vehicle_requirements":
+            return await _resume_vehicle_requirements(
+                vehicle_requirements, quotation_state, user_response
+            )
+        elif current_step == "employee_data":
+            return await _resume_employee_data(
+                quotation_state, user_response
+            )
+        elif current_step == "missing_information":
+            return await _resume_missing_information(
+                quotation_state, user_response
+            )
+        elif current_step == "pricing_issues":
+            return await _resume_pricing_issues(
+                quotation_state, user_response
+            )
+        elif current_step == "quotation_approval":
+            return await _resume_quotation_approval(
+                quotation_state, user_response
+            )
+        else:
+            logger.error(f"[QUOTATION_RESUME] Unknown step: {current_step}")
+            return f"❌ Error: Unknown quotation step '{current_step}'. Please start the quotation process again."
+            
+    except Exception as e:
+        logger.error(f"[QUOTATION_RESUME] Error processing step {current_step}: {e}")
+        return f"❌ Error processing your response. Please try again or start a new quotation."
+
+
+async def _resume_customer_lookup(
+    customer_identifier: str, quotation_state: Dict[str, Any], user_response: str
+) -> str:
+    """Resume customer lookup step with user-provided information."""
+    logger.info("[QUOTATION_RESUME] Processing customer lookup response")
+    
+    # Parse user response for customer information
+    # This could be email, phone, company name, or other identifiers
+    quotation_state["customer_lookup_response"] = user_response.strip()
+    
+    # Try to lookup customer with new information
+    customer_data = await _lookup_customer(user_response.strip())
+    if customer_data:
+        quotation_state["customer_data"] = customer_data
+        logger.info("[QUOTATION_RESUME] Customer found with provided information")
+        
+        # Continue with quotation process - call main function without resume params
+        return await generate_quotation(
+            customer_identifier=user_response.strip(),
+            vehicle_requirements=quotation_state.get("vehicle_requirements", ""),
+            additional_notes=quotation_state.get("additional_notes"),
+            quotation_validity_days=quotation_state.get("quotation_validity_days", 30),
+            quotation_state=quotation_state,
+            conversation_context=quotation_state.get("conversation_context", "")
+        )
+    else:
+        # Still no customer found - request more specific information
+        return request_input(
+            prompt=f"""🔍 **Customer Lookup - Additional Information Needed**
+
+I couldn't find a customer record with "{user_response}". 
+
+Please provide:
+• **Email address** (most reliable)
+• **Phone number** with area code
+• **Full company name** (for business customers)
+• **Customer ID** (if known)
+
+This helps me locate the correct customer record for the quotation.""",
+            input_type="customer_lookup",
+            context={
+                "source_tool": "generate_quotation",
+                "current_step": "customer_lookup",
+                "customer_identifier": customer_identifier,
+                "quotation_state": quotation_state,
+                "previous_attempts": quotation_state.get("customer_lookup_attempts", 0) + 1
+            }
+        )
+
+
+async def _resume_vehicle_requirements(
+    vehicle_requirements: str, quotation_state: Dict[str, Any], user_response: str
+) -> str:
+    """Resume vehicle requirements step with user-provided information."""
+    logger.info("[QUOTATION_RESUME] Processing vehicle requirements response")
+    
+    # Update vehicle requirements with user response
+    updated_requirements = f"{vehicle_requirements} {user_response}".strip()
+    quotation_state["updated_vehicle_requirements"] = updated_requirements
+    
+    # Continue with quotation process using updated requirements
+    return await generate_quotation(
+        customer_identifier=quotation_state.get("customer_identifier", ""),
+        vehicle_requirements=updated_requirements,
+        additional_notes=quotation_state.get("additional_notes"),
+        quotation_validity_days=quotation_state.get("quotation_validity_days", 30),
+        quotation_state=quotation_state,
+        conversation_context=quotation_state.get("conversation_context", "")
+    )
+
+
+async def _resume_employee_data(quotation_state: Dict[str, Any], user_response: str) -> str:
+    """Resume employee data step with user-provided information."""
+    logger.info("[QUOTATION_RESUME] Processing employee data response")
+    
+    # Parse employee information from user response
+    quotation_state["employee_data_response"] = user_response.strip()
+    
+    # Continue with quotation process
+    return await generate_quotation(
+        customer_identifier=quotation_state.get("customer_identifier", ""),
+        vehicle_requirements=quotation_state.get("vehicle_requirements", ""),
+        additional_notes=quotation_state.get("additional_notes"),
+        quotation_validity_days=quotation_state.get("quotation_validity_days", 30),
+        quotation_state=quotation_state,
+        conversation_context=quotation_state.get("conversation_context", "")
+    )
+
+
+async def _resume_missing_information(quotation_state: Dict[str, Any], user_response: str) -> str:
+    """Resume missing information step with user-provided information."""
+    logger.info("[QUOTATION_RESUME] Processing missing information response")
+    
+    # Parse and store missing information
+    quotation_state["missing_info_response"] = user_response.strip()
+    
+    # Continue with quotation process
+    return await generate_quotation(
+        customer_identifier=quotation_state.get("customer_identifier", ""),
+        vehicle_requirements=quotation_state.get("vehicle_requirements", ""),
+        additional_notes=quotation_state.get("additional_notes"),
+        quotation_validity_days=quotation_state.get("quotation_validity_days", 30),
+        quotation_state=quotation_state,
+        conversation_context=quotation_state.get("conversation_context", "")
+    )
+
+
+async def _resume_pricing_issues(quotation_state: Dict[str, Any], user_response: str) -> str:
+    """Resume pricing issues step with user-provided information."""
+    logger.info("[QUOTATION_RESUME] Processing pricing issues response")
+    
+    # Parse pricing decision from user response
+    quotation_state["pricing_decision"] = user_response.strip()
+    
+    # Continue with quotation process
+    return await generate_quotation(
+        customer_identifier=quotation_state.get("customer_identifier", ""),
+        vehicle_requirements=quotation_state.get("vehicle_requirements", ""),
+        additional_notes=quotation_state.get("additional_notes"),
+        quotation_validity_days=quotation_state.get("quotation_validity_days", 30),
+        quotation_state=quotation_state,
+        conversation_context=quotation_state.get("conversation_context", "")
+    )
+
+
+async def _resume_quotation_approval(quotation_state: Dict[str, Any], user_response: str) -> str:
+    """Resume quotation approval step with user-provided information."""
+    logger.info("[QUOTATION_RESUME] Processing quotation approval response")
+    
+    # Use LLM-driven interpretation instead of keyword matching
+    context = {
+        "source_tool": "generate_quotation",
+        "current_step": "quotation_approval",
+        "interaction_type": "approval_request"
+    }
+    
+    # Use the centralized HITL system for LLM-driven intent interpretation
+    from agents.hitl import _interpret_user_intent_with_llm
+    user_intent = await _interpret_user_intent_with_llm(user_response, context)
+    
+    if user_intent == "approval":
+        logger.info(f"[QUOTATION_RESUME] Quotation approved by user: '{user_response}' - proceeding with PDF generation")
+        
+        try:
+            # Extract data from quotation state
+            customer_data = quotation_state.get("customer_data", {})
+            vehicle_pricing = quotation_state.get("vehicle_pricing", [])
+            employee_data = quotation_state.get("employee_data", {})
+            additional_notes = quotation_state.get("additional_notes", "")
+            quotation_validity_days = quotation_state.get("quotation_validity_days", 30)
+            
+            # Generate PDF quotation
+            logger.info("[QUOTATION_RESUME] Generating PDF quotation...")
+            pdf_content = await generate_quotation_pdf(
+                customer_data=customer_data,
+                vehicle_pricing=vehicle_pricing,
+                employee_data=employee_data,
+                additional_notes=additional_notes,
+                validity_days=quotation_validity_days
+            )
+            
+            # Upload to Supabase storage
+            logger.info("[QUOTATION_RESUME] Uploading PDF to storage...")
+            
+            # Generate unique filename
+            from datetime import datetime
+            import uuid
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            customer_name = customer_data.get("name", "customer").replace(" ", "_")
+            filename = f"quotation_{customer_name}_{timestamp}_{str(uuid.uuid4())[:8]}.pdf"
+            
+            # Upload PDF
+            upload_result = await upload_quotation_pdf(
+                pdf_content=pdf_content,
+                filename=filename,
+                customer_id=customer_data.get("id"),
+                employee_id=quotation_state.get("employee_id")
+            )
+            
+            if upload_result.get("success"):
+                # Create shareable link
+                logger.info("[QUOTATION_RESUME] Creating shareable link...")
+                shareable_url = await create_signed_quotation_url(
+                    storage_path=filename,
+                    expires_in_seconds=48 * 3600
+                )
+                
+                # Calculate totals for summary
+                total_amount = sum(item["pricing"].get("final_price", 0) for item in vehicle_pricing)
+                vehicle_count = len(vehicle_pricing)
+                
+                success_message = f"""🎉 **QUOTATION GENERATED SUCCESSFULLY**
+
+📄 **Quotation Details:**
+- **Document**: Professional PDF quotation created
+- **Customer**: {customer_data.get('name', 'N/A')}
+- **Vehicles**: {vehicle_count} option{'s' if vehicle_count != 1 else ''}
+- **Total Value**: ₱{total_amount:,.2f}
+- **Valid Until**: {(datetime.now().replace(day=datetime.now().day + quotation_validity_days)).strftime('%B %d, %Y')}
+
+🔗 **Access Information:**
+- **Shareable Link**: {shareable_url}
+- **Link Validity**: 48 hours from now
+- **File Size**: {len(pdf_content) / 1024:.1f} KB
+
+📋 **Next Steps:**
+✅ Quotation saved to CRM system
+✅ Document stored securely in cloud storage  
+✅ Shareable link generated for customer access
+✅ Quotation tracking activated for follow-up
+
+**Share the link above with your customer to provide them access to download their personalized quotation PDF.**
+
+*The quotation has been automatically recorded in our system for tracking and follow-up purposes.*"""
+
+                logger.info(f"[QUOTATION_RESUME] Quotation successfully generated: {filename}")
+                return success_message
+                
+            else:
+                logger.error(f"[QUOTATION_RESUME] Failed to upload PDF: {upload_result}")
+                return f"❌ **Upload Failed**\n\nThe PDF was generated successfully, but there was an issue uploading it to storage. Please try again or contact your administrator.\n\nError: {upload_result.get('error', 'Unknown error')}"
+                
+        except Exception as e:
+            logger.error(f"[QUOTATION_RESUME] Error generating quotation: {e}")
+            return f"❌ **Generation Failed**\n\nThere was an error generating the quotation PDF. Please try again or contact your administrator.\n\nError: {str(e)}"
+    
+    elif user_intent == "denial":
+        # Approval was denied
+        logger.info(f"[QUOTATION_RESUME] Quotation approval denied by user: '{user_response}'")
+        return f"""❌ **Quotation Generation Cancelled**
+
+The quotation generation has been cancelled as requested.
+
+**Options:**
+- Modify the quotation details and try again
+- Generate a new quotation with different requirements
+- Contact customer for updated specifications
+
+No quotation document was created or stored."""
+    
+    else:
+        # User provided input instead of approval/denial
+        logger.info(f"[QUOTATION_RESUME] User provided input instead of approval: '{user_response}'")
+        return f"""📝 **Additional Information Received**
+
+I received: "{user_response}"
+
+However, I need a clear approval or denial for the quotation generation.
+
+**Please respond with:**
+- "✅ Generate Quotation" to proceed with PDF creation
+- "❌ Cancel" to cancel the quotation
+
+Or let me know if you need to modify any details first."""
+
+
+async def _build_conversation_state_for_extraction(
+    customer_identifier: str,
+    vehicle_requirements: str,
+    additional_notes: Optional[str],
+    conversation_context: str
+) -> Dict[str, Any]:
+    """
+    Build a comprehensive conversation state for extract_fields_from_conversation.
+    
+    This function creates a rich state object that provides maximum context for
+    intelligent field extraction, going beyond the simple mock_state approach.
+    
+    Args:
+        customer_identifier: Customer identifier provided to the tool
+        vehicle_requirements: Vehicle requirements provided to the tool
+        additional_notes: Additional notes provided to the tool
+        conversation_context: Recent conversation context
+    
+    Returns:
+        Enhanced state dict with comprehensive conversation information
+    """
+    try:
+        # Get current conversation ID for additional context
+        conversation_id = get_current_conversation_id()
+        
+        # Build comprehensive message history simulation
+        messages = []
+        
+        # Add conversation context as historical messages if available
+        if conversation_context:
+            messages.append({
+                "type": "system",
+                "content": f"Previous conversation context: {conversation_context}"
+            })
+        
+        # Add current tool parameters as user messages for context extraction
+        if customer_identifier:
+            messages.append({
+                "type": "human", 
+                "content": f"Customer: {customer_identifier}"
+            })
+        
+        if vehicle_requirements:
+            messages.append({
+                "type": "human",
+                "content": f"Vehicle requirements: {vehicle_requirements}"
+            })
+        
+        if additional_notes:
+            messages.append({
+                "type": "human",
+                "content": f"Additional notes: {additional_notes}"
+            })
+        
+        # Build comprehensive state object
+        enhanced_state = {
+            "messages": messages,
+            "conversation_summary": conversation_context or "",
+            "conversation_id": conversation_id,
+            "tool_context": {
+                "tool_name": "generate_quotation",
+                "customer_identifier": customer_identifier,
+                "vehicle_requirements": vehicle_requirements,
+                "additional_notes": additional_notes
+            }
+        }
+        
+        logger.debug(f"[CONVERSATION_STATE] Built enhanced state with {len(messages)} messages")
+        return enhanced_state
+        
+    except Exception as e:
+        logger.error(f"[CONVERSATION_STATE] Error building conversation state: {e}")
+        # Fallback to simple state if enhancement fails
+        return {
+            "messages": [{"content": f"Customer: {customer_identifier}, Requirements: {vehicle_requirements}"}],
+            "conversation_summary": conversation_context or ""
+        }
+
+
+def _enhance_vehicle_criteria_with_extracted_context(
+    vehicle_criteria: Dict[str, Any], 
+    extracted_context: Dict[str, Any]
+) -> None:
+    """
+    Enhance vehicle criteria with additional information from extracted conversation context.
+    
+    This function merges relevant vehicle information from the conversation context
+    into the vehicle criteria, filling in gaps that the LLM parsing might have missed.
+    
+    Args:
+        vehicle_criteria: Original criteria from LLM parsing (modified in place)
+        extracted_context: Context extracted from conversation
+    """
+    # Mapping of context fields to vehicle criteria fields
+    context_to_criteria_mapping = {
+        "vehicle_make": "make",
+        "vehicle_model": "model", 
+        "vehicle_type": "type",
+        "vehicle_year": "year",
+        "vehicle_color": "color",
+        "vehicle_transmission": "transmission",
+        "vehicle_fuel_type": "fuel_type",
+        "quantity": "quantity",
+        "budget_range": "price_range",
+        "special_requirements": "special_features"
+    }
+    
+    # Enhance criteria with extracted context, but don't override existing values
+    for context_field, criteria_field in context_to_criteria_mapping.items():
+        if (context_field in extracted_context and 
+            extracted_context[context_field] and 
+            criteria_field not in vehicle_criteria):
+            
+            vehicle_criteria[criteria_field] = extracted_context[context_field]
+            logger.info(f"[VEHICLE_ENHANCEMENT] Added {criteria_field}='{extracted_context[context_field]}' from conversation context")
+
+
+def _format_vehicle_list_for_hitl(vehicles: List[dict]) -> str:
+    """
+    Format a list of vehicles for display in HITL prompts.
+    
+    Args:
+        vehicles: List of vehicle dictionaries from database lookup
+    
+    Returns:
+        Formatted string suitable for HITL prompts
+    """
+    if not vehicles:
+        return "No vehicles found."
+    
+    formatted_list = []
+    for i, vehicle in enumerate(vehicles, 1):
+        vehicle_info = f"{i}. **{vehicle.get('make', 'Unknown')} {vehicle.get('model', 'Unknown')}**"
+        
+        details = []
+        if vehicle.get('year'):
+            details.append(f"Year: {vehicle['year']}")
+        if vehicle.get('type'):
+            details.append(f"Type: {vehicle['type']}")
+        if vehicle.get('color'):
+            details.append(f"Color: {vehicle['color']}")
+        if vehicle.get('stock_quantity'):
+            details.append(f"Available: {vehicle['stock_quantity']} units")
+        
+        if details:
+            vehicle_info += f" ({', '.join(details)})"
+        
+        formatted_list.append(vehicle_info)
+    
+    return "\n".join(formatted_list)
+
+
+def _identify_missing_quotation_information(
+    customer_data: dict,
+    vehicle_pricing: List[dict],
+    extracted_context: Dict[str, Any]
+) -> Dict[str, str]:
+    """
+    Identify missing critical information needed for a complete quotation.
+    
+    Args:
+        customer_data: Customer information from CRM lookup
+        vehicle_pricing: Vehicle and pricing information
+        extracted_context: Context extracted from conversation
+    
+    Returns:
+        Dictionary of missing information with field names as keys and descriptions as values
+    """
+    missing_info = {}
+    
+    # Check critical customer information
+    if not customer_data.get('email') and not extracted_context.get('customer_email'):
+        missing_info['customer_email'] = "Customer email address for sending the quotation"
+    
+    if not customer_data.get('phone') and not extracted_context.get('customer_phone'):
+        missing_info['customer_phone'] = "Customer phone number for follow-up contact"
+    
+    # Check if we have delivery/contact address
+    if (not customer_data.get('address') and 
+        not extracted_context.get('customer_address') and
+        not extracted_context.get('delivery_timeline')):
+        missing_info['delivery_info'] = "Delivery address or pickup preference"
+    
+    # Check quantity specification
+    if not extracted_context.get('quantity'):
+        # Try to infer from vehicle_pricing count, but ask for confirmation if unclear
+        if len(vehicle_pricing) > 1:
+            missing_info['quantity_confirmation'] = f"Confirmation of quantity needed (showing {len(vehicle_pricing)} vehicle options)"
+    
+    # Check timeline if not specified
+    if not extracted_context.get('delivery_timeline'):
+        missing_info['timeline'] = "When you need the vehicle(s) delivered or ready"
+    
+    # Check financing preferences for business context
+    if (not extracted_context.get('financing_preference') and 
+        not extracted_context.get('budget_range')):
+        missing_info['payment_info'] = "Payment method preference (cash, financing, lease, etc.)"
+    
+    return missing_info
+
+
+async def _request_missing_information_via_hitl(
+    missing_info: Dict[str, str],
+    customer_data: dict,
+    vehicle_pricing: List[dict],
+    employee_data: dict,
+    extracted_context: Dict[str, Any],
+    additional_notes: Optional[str],
+    quotation_validity_days: int,
+    customer_identifier: str = "",
+    vehicle_requirements: str = "",
+    quotation_state: Dict[str, Any] = None,
+    conversation_context: str = "",
+    employee_id: str = ""
+) -> str:
+    """
+    Request missing information via HITL flow with intelligent prompting.
+    
+    Args:
+        missing_info: Dictionary of missing information
+        customer_data: Customer information
+        vehicle_pricing: Vehicle and pricing information  
+        employee_data: Employee information
+        extracted_context: Extracted conversation context
+        additional_notes: Additional notes
+        quotation_validity_days: Quotation validity period
+    
+    Returns:
+        HITL request string
+    """
+    # Build summary of what we have
+    summary_parts = []
+    
+    # Customer summary
+    customer_name = customer_data.get('name', 'Customer')
+    summary_parts.append(f"**Customer**: {customer_name}")
+    
+    # Vehicle summary
+    if vehicle_pricing:
+        vehicle_summary = []
+        for item in vehicle_pricing:
+            vehicle = item['vehicle']
+            pricing = item['pricing']
+            vehicle_summary.append(f"• {vehicle.get('make', '')} {vehicle.get('model', '')} - ₱{pricing.get('final_price', 0):,.2f}")
+        summary_parts.append(f"**Vehicles**: \n" + "\n".join(vehicle_summary))
+    
+    # Build missing information request
+    missing_items = []
+    priority_order = ['customer_email', 'customer_phone', 'quantity_confirmation', 'timeline', 'delivery_info', 'payment_info']
+    
+    # Sort missing info by priority
+    sorted_missing = []
+    for priority_field in priority_order:
+        if priority_field in missing_info:
+            sorted_missing.append((priority_field, missing_info[priority_field]))
+    
+    # Add any remaining missing items
+    for field, description in missing_info.items():
+        if field not in [item[0] for item in sorted_missing]:
+            sorted_missing.append((field, description))
+    
+    for i, (field, description) in enumerate(sorted_missing, 1):
+        missing_items.append(f"{i}. **{description}**")
+    
+    return request_input(
+        prompt=f"""📋 **Additional Information Needed for Quotation**
+
+I have most of the information needed for your quotation:
+
+{chr(10).join(summary_parts)}
+
+To complete your professional quotation, I need a few more details:
+
+{chr(10).join(missing_items)}
+
+Please provide the missing information above. You can answer all at once or just the most important ones first.""",
+        input_type="missing_quotation_info",
+        context={
+            "source_tool": "generate_quotation",
+            "current_step": "missing_information",
+            "customer_identifier": customer_identifier,
+            "vehicle_requirements": vehicle_requirements,
+            "additional_notes": additional_notes,
+            "quotation_validity_days": quotation_validity_days,
+            "quotation_state": quotation_state or {},
+            "conversation_context": conversation_context,
+            "customer_data": customer_data,
+            "vehicle_pricing": vehicle_pricing,
+            "employee_data": employee_data,
+            "extracted_context": extracted_context,
+            "missing_info": missing_info,
+            "employee_id": employee_id
+        }
+    )
 
 
 # =============================================================================
@@ -2203,8 +3171,757 @@ Answer:"""
         logger.error(f"Error in simple_rag: {e}")
         return f"I encountered an issue while searching for that information. Please try rephrasing your question or ask for help."
 
+
 # =============================================================================
-# TOOL REGISTRY (Simplified)
+# PRICING LOOKUP HELPER (Task 4.3)
+# =============================================================================
+
+async def _lookup_current_pricing(
+    vehicle_id: str,
+    include_inactive: bool = False,
+    discounts: float | None = None,
+    insurance: float | None = None,
+    lto_fees: float | None = None,
+    add_ons: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[dict]:
+    """
+    Retrieve current pricing for a vehicle and compute totals with optional components.
+
+    - Reads from `pricing` table (expected columns: id, vehicle_id, base_price, final_price, is_active)
+    - If multiple pricing rows exist, prefers active ones; falls back to the most recent
+    - Computes a `computed_total` using provided optional components when present
+
+    Args:
+        vehicle_id: Vehicle UUID
+        include_inactive: If True, allow inactive pricing when no active exists
+        discounts: Optional discount amount to subtract from computed total
+        insurance: Optional insurance amount to add
+        lto_fees: Optional LTO fees to add
+        add_ons: Optional list of {name, price} to add
+
+    Returns:
+        Dict with base fields and computed totals, or None if pricing not found
+    """
+    try:
+        # Validate inputs
+        if not vehicle_id or not isinstance(vehicle_id, str) or not vehicle_id.strip():
+            logger.warning("[PRICING_LOOKUP] Missing or invalid vehicle_id")
+            return None
+        if add_ons is not None and not isinstance(add_ons, list):
+            logger.warning("[PRICING_LOOKUP] add_ons must be a list of {name, price}; ignoring provided value")
+            add_ons = []
+        from core.database import db_client
+
+        client = db_client.client
+
+        def run_query():
+            # Select only necessary columns for performance and stability
+            q = (
+                client.table("pricing")
+                .select("id, vehicle_id, base_price, final_price, is_active")
+                .eq("vehicle_id", vehicle_id)
+            )
+            if not include_inactive:
+                q = q.eq("is_active", True)
+            # Prefer newer rows first if updated_at exists, else by id desc
+            try:
+                q = q.order("updated_at", desc=True)
+            except Exception:
+                q = q.order("id", desc=True)
+            return q.limit(1).execute()
+
+        result = await asyncio.to_thread(run_query)
+        if not result.data:
+            # Optionally attempt fallback to inactive rows
+            if not include_inactive:
+                def fallback_query():
+                    q2 = (
+                        client.table("pricing")
+                        .select("id, vehicle_id, base_price, final_price, is_active")
+                        .eq("vehicle_id", vehicle_id)
+                    )
+                    try:
+                        q2 = q2.order("updated_at", desc=True)
+                    except Exception:
+                        q2 = q2.order("id", desc=True)
+                    return q2.limit(1).execute()
+                result = await asyncio.to_thread(fallback_query)
+            if not result.data:
+                logger.info(f"[PRICING_LOOKUP] No pricing found for vehicle_id={vehicle_id}")
+                return None
+
+        row = result.data[0]
+        base_price = float(row.get("base_price") or 0.0)
+        final_price = row.get("final_price")
+        try:
+            final_price = float(final_price) if final_price is not None else None
+        except Exception:
+            final_price = None
+
+        # Optional components
+        add_ons_list = add_ons or []
+        add_on_total = 0.0
+        for item in add_ons_list:
+            try:
+                add_on_total += float(item.get("price") or 0.0)
+            except Exception:
+                continue
+
+        insurance_val = float(insurance or 0.0)
+        lto_val = float(lto_fees or 0.0)
+        discount_val = float(discounts or 0.0)
+
+        # Computed total using base price by default when final_price absent
+        base_for_calc = final_price if final_price is not None else base_price
+        computed_total = max(0.0, base_for_calc + insurance_val + lto_val + add_on_total - discount_val)
+
+        pricing_info = {
+            "pricing_id": row.get("id"),
+            "vehicle_id": vehicle_id,
+            "is_active": row.get("is_active", True),
+            "base_price": base_price,
+            "final_price": final_price,
+            "currency": row.get("currency", "PHP"),
+            "effective_date": row.get("effective_date"),
+            "computed": {
+                "insurance": insurance_val,
+                "lto_fees": lto_val,
+                "discounts": discount_val,
+                "add_ons": add_ons_list,
+                "add_on_total": add_on_total,
+                "computed_total": computed_total,
+            },
+        }
+
+        logger.info(f"[PRICING_LOOKUP] vehicle_id={vehicle_id} → base={base_price} final={final_price} total={computed_total}")
+        return pricing_info
+
+    except Exception as e:
+        logger.error(f"[PRICING_LOOKUP] Error fetching pricing for vehicle_id={vehicle_id}: {e}")
+        return None
+
+
+# =============================================================================
+# EMPLOYEE DETAILS LOOKUP HELPER (Task 4.4)
+# =============================================================================
+
+async def _lookup_employee_details(identifier: str) -> Optional[dict]:
+    """
+    Lookup employee details by id/email/name and include branch info when available.
+
+    Returns fields needed for quotations: name, position, email, phone, branch_name, branch_region.
+    """
+    try:
+        from core.database import db_client
+
+        client = db_client.client
+        search = (identifier or "").strip()
+
+        def run_query():
+            q = client.table("employees").select("id, name, position, email, phone, branch_id").limit(1)
+            # Try UUID exact match first
+            if len(search.replace("-", "")) == 32 and search.count("-") == 4:
+                res = client.table("employees").select("id, name, position, email, phone, branch_id").eq("id", search).limit(1).execute()
+                if res.data:
+                    return res
+            # Try email exact
+            res = client.table("employees").select("id, name, position, email, phone, branch_id").eq("email", search).limit(1).execute()
+            if res.data:
+                return res
+            # Name ilike
+            res = client.table("employees").select("id, name, position, email, phone, branch_id").filter("name", "ilike", f"%{search}%").limit(1).execute()
+            return res
+
+        emp_res = await asyncio.to_thread(run_query)
+        if not emp_res.data:
+            return None
+
+        emp = emp_res.data[0]
+        branch_name = None
+        branch_region = None
+
+        # Fetch branch details if there is a branch_id
+        if emp.get("branch_id"):
+            def fetch_branch():
+                return (
+                    client.table("branches")
+                    .select("name, region")
+                    .eq("id", emp["branch_id"])  # type: ignore[index]
+                    .limit(1)
+                    .execute()
+                )
+            br_res = await asyncio.to_thread(fetch_branch)
+            if br_res.data:
+                branch_name = br_res.data[0].get("name")
+                branch_region = br_res.data[0].get("region")
+
+        result = {
+            "id": emp.get("id"),
+            "name": emp.get("name"),
+            "position": emp.get("position"),
+            "email": emp.get("email"),
+            "phone": emp.get("phone"),
+            "branch_name": branch_name,
+            "branch_region": branch_region,
+        }
+
+        logger.info(f"[EMPLOYEE_LOOKUP] identifier={identifier} → {result.get('name')}")
+        return result
+
+    except Exception as e:
+        logger.error(f"[EMPLOYEE_LOOKUP] Error looking up employee '{identifier}': {e}")
+        return None
+
+
+# =============================================================================
+# QUOTATION GENERATION TOOL (Task 5.1)
+# =============================================================================
+
+class GenerateQuotationParams(BaseModel):
+    """Parameters for generating customer quotations."""
+    customer_identifier: str = Field(..., description="Customer identifier: name, email, phone, or company")
+    vehicle_requirements: str = Field(..., description="Vehicle requirements: make, model, type, quantity, etc.")
+    additional_notes: Optional[str] = Field(None, description="Additional notes or special requirements")
+    quotation_validity_days: Optional[int] = Field(30, description="Number of days the quotation is valid (default: 30)")
+
+@tool(args_schema=GenerateQuotationParams)
+@traceable(name="generate_quotation")
+async def generate_quotation(
+    customer_identifier: str,
+    vehicle_requirements: str,
+    additional_notes: Optional[str] = None,
+    quotation_validity_days: Optional[int] = 30,
+    # HITL Resume Parameters (Task 5.3.1.1)
+    quotation_state: Dict[str, Any] = None,
+    current_step: str = "",
+    user_response: str = "",
+    conversation_context: str = ""
+) -> str:
+    """
+    Generate a professional PDF quotation for a customer (Employee Only).
+    
+    This tool creates comprehensive quotations by:
+    1. Extracting context from conversation history
+    2. Looking up customer and vehicle information from CRM
+    3. Gathering missing information through HITL flows
+    4. Generating preview for employee confirmation
+    5. Creating professional PDF document
+    6. Providing secure shareable link
+    
+    Args:
+        customer_identifier: Customer name, email, phone, or company
+        vehicle_requirements: Vehicle specifications and requirements
+        additional_notes: Special requirements or notes
+        quotation_validity_days: Quotation validity period in days
+    
+    Returns:
+        Quotation generation result with shareable link or HITL request
+    """
+    try:
+        # Initialize quotation state for resume logic (Task 5.3.1.2)
+        if quotation_state is None:
+            quotation_state = {}
+            
+        logger.info(f"[GENERATE_QUOTATION] Starting quotation generation for customer: {customer_identifier}")
+        logger.info(f"[GENERATE_QUOTATION] Current step: '{current_step}', User response: '{user_response}'")
+        logger.info(f"[GENERATE_QUOTATION] State keys: {list(quotation_state.keys())}")
+        
+        # HITL Resume Detection Logic (Task 5.3.1.2)
+        if current_step and user_response:
+            logger.info(f"[GENERATE_QUOTATION] 🔄 Resuming from HITL interaction: {current_step}")
+            return await _handle_quotation_resume(
+                customer_identifier, vehicle_requirements, additional_notes, 
+                quotation_validity_days, quotation_state, current_step, user_response, conversation_context
+            )
+        
+        # Employee access control
+        employee_id = await get_current_employee_id()
+        if not employee_id:
+            logger.warning("[GENERATE_QUOTATION] Non-employee user attempted to use quotation generation")
+            return "I apologize, but quotation generation is only available to employees. Please contact your administrator if you need assistance."
+        
+        logger.info(f"[GENERATE_QUOTATION] Starting quotation generation for employee {employee_id}")
+        
+        # Step 1: Enhanced conversation context extraction (Task 5.2)
+        # Get comprehensive conversation context for intelligent field extraction
+        conversation_context = await get_recent_conversation_context()
+        
+        # Define comprehensive field definitions for quotation-specific information
+        field_definitions = {
+            # Customer Information Fields
+            "customer_name": "Full name of the customer or contact person",
+            "customer_email": "Customer's email address for correspondence",
+            "customer_phone": "Customer's phone number for contact",
+            "customer_company": "Customer's company name or business",
+            "customer_address": "Customer's address for delivery or documentation",
+            
+            # Vehicle Specification Fields
+            "vehicle_make": "Vehicle manufacturer/brand (Toyota, Honda, Ford, etc.)",
+            "vehicle_model": "Specific vehicle model name (Camry, Civic, F-150, etc.)",
+            "vehicle_type": "Type of vehicle (Sedan, SUV, Pickup, Hatchback, Coupe, etc.)",
+            "vehicle_year": "Model year preference or range (2023, 2022-2024, etc.)",
+            "vehicle_color": "Preferred color or color options",
+            "vehicle_transmission": "Transmission preference (Automatic, Manual, CVT)",
+            "vehicle_fuel_type": "Fuel type preference (Gasoline, Diesel, Hybrid, Electric)",
+            
+            # Purchase Requirements
+            "quantity": "Number of vehicles needed",
+            "budget_range": "Budget range, maximum budget, or price expectations",
+            "financing_preference": "Financing options or payment preferences",
+            "trade_in_vehicle": "Details of vehicle to trade in",
+            
+            # Timeline and Usage
+            "delivery_timeline": "When the customer needs the vehicle",
+            "primary_use": "How the customer plans to use the vehicle",
+            "special_requirements": "Any special features, modifications, or requirements",
+            
+            # Business Context
+            "urgency_level": "How urgent the purchase decision is",
+            "decision_makers": "Who else is involved in the purchase decision",
+            "previous_interactions": "Reference to previous conversations or quotes"
+        }
+        
+        # Build comprehensive state for context extraction
+        # This provides the extract_fields_from_conversation function with rich context
+        # to intelligently identify information already provided in the conversation
+        enhanced_state = await _build_conversation_state_for_extraction(
+            customer_identifier,
+            vehicle_requirements,
+            additional_notes,
+            conversation_context
+        )
+        
+        # Extract all available context from conversation using intelligent analysis
+        extracted_context = await extract_fields_from_conversation(
+            enhanced_state,
+            field_definitions,
+            "generate_quotation"
+        )
+        
+        # Log extracted context for debugging and verification
+        if extracted_context:
+            logger.info(f"[GENERATE_QUOTATION] ✅ Extracted from conversation: {list(extracted_context.keys())}")
+            for field, value in extracted_context.items():
+                logger.debug(f"[GENERATE_QUOTATION] {field}: {value}")
+        else:
+            logger.info("[GENERATE_QUOTATION] ℹ️ No additional context extracted from conversation")
+        
+        logger.info(f"[GENERATE_QUOTATION] Extracted context: {extracted_context}")
+        
+        # Step 2: Intelligent customer lookup using extracted context
+        customer_data = await _lookup_customer(customer_identifier)
+        
+        # If primary lookup fails, try using extracted context for alternative searches
+        if not customer_data and extracted_context:
+            logger.info("[GENERATE_QUOTATION] Primary customer lookup failed, trying extracted context")
+            
+            # Try alternative customer identifiers from extracted context
+            for field in ["customer_email", "customer_phone", "customer_company"]:
+                if field in extracted_context and extracted_context[field]:
+                    logger.info(f"[GENERATE_QUOTATION] Trying customer lookup with {field}: {extracted_context[field]}")
+                    customer_data = await _lookup_customer(extracted_context[field])
+                    if customer_data:
+                        logger.info(f"[GENERATE_QUOTATION] ✅ Found customer using {field}")
+                        break
+        
+        if not customer_data:
+            # Build intelligent prompt using extracted context
+            context_info = ""
+            if extracted_context:
+                context_details = []
+                for field, value in extracted_context.items():
+                    if field.startswith("customer_") and value:
+                        context_details.append(f"- {field.replace('customer_', '').title()}: {value}")
+                
+                if context_details:
+                    context_info = f"\n\n**Information I found from our conversation:**\n" + "\n".join(context_details)
+            
+            return request_input(
+                prompt=f"""📋 **Customer Information Needed**
+
+I couldn't find customer information for "{customer_identifier}" in our CRM system.{context_info}
+
+Please provide the customer's complete details:
+- **Full Name**: 
+- **Email**: 
+- **Phone**: 
+- **Company** (if applicable): 
+- **Address**: 
+
+Or provide a different customer identifier (name, email, or phone) that I can search for in our system.""",
+                input_type="customer_information",
+                context={
+                    "source_tool": "generate_quotation",
+                    "current_step": "customer_lookup",
+                    "customer_identifier": customer_identifier,
+                    "vehicle_requirements": vehicle_requirements,
+                    "additional_notes": additional_notes,
+                    "quotation_validity_days": quotation_validity_days,
+                    "quotation_state": quotation_state,
+                    "conversation_context": conversation_context,
+                    "extracted_context": extracted_context,
+                    "employee_id": employee_id
+                }
+            )
+        
+        # Step 3: Parse vehicle requirements using intelligent LLM-based approach with extracted context
+        # This follows the project principle: "Use LLM intelligence rather than keyword matching or complex logic"
+        # Enhanced to use comprehensive extracted context for better parsing accuracy
+        vehicle_criteria = await _parse_vehicle_requirements_with_llm(
+            vehicle_requirements, 
+            extracted_context
+        )
+        
+        # Enhance vehicle criteria with additional context from conversation
+        if extracted_context:
+            _enhance_vehicle_criteria_with_extracted_context(vehicle_criteria, extracted_context)
+        
+        # Get available inventory for dynamic matching and fallback messages
+        available_inventory = await _get_available_makes_and_models()
+        
+        # Enhance criteria with fuzzy matching to handle variations in brand/model names
+        enhanced_criteria = await _enhance_vehicle_criteria_with_fuzzy_matching(
+            vehicle_criteria, 
+            available_inventory
+        )
+        
+        # Look up vehicles based on enhanced criteria
+        vehicles = await _lookup_vehicle_by_criteria(enhanced_criteria, limit=10)
+        
+        if not vehicles:
+            # Generate dynamic inventory suggestions based on actual available stock
+            inventory_suggestions = _generate_inventory_suggestions(available_inventory)
+            
+            return request_input(
+                prompt=f"""🚗 **Vehicle Information Needed**
+
+I couldn't find vehicles matching "{vehicle_requirements}" in our current inventory.
+
+**Available Brands in Stock:**
+{inventory_suggestions}
+
+Please provide more specific details:
+- **Make/Brand**: Choose from available brands above
+- **Model**: Specific model name
+- **Type**: (Sedan, SUV, Pickup, Hatchback, Coupe, etc.)
+- **Year**: (2023, 2024, or range like 2022-2024)
+- **Quantity**: How many vehicles needed?
+- **Budget**: Price range if relevant
+
+**Example**: "I need 2 Toyota Camry sedans, 2023 or newer, budget around 1.5M each"
+
+Or let me know if you'd like to see detailed specifications for any specific brand.
+
+**Helpful Tips:**
+- Be as specific as possible (e.g., "2023 Toyota Camry Hybrid, white or silver")
+- Include quantity if you need multiple vehicles
+- Mention your budget range if relevant
+- Let me know if you're flexible on certain features""",
+                input_type="detailed_vehicle_requirements",
+                context={
+                    "source_tool": "generate_quotation",
+                    "current_step": "vehicle_requirements",
+                    "customer_identifier": customer_identifier,
+                    "vehicle_requirements": vehicle_requirements,
+                    "additional_notes": additional_notes,
+                    "quotation_validity_days": quotation_validity_days,
+                    "quotation_state": quotation_state,
+                    "conversation_context": conversation_context,
+                    "customer_data": customer_data,
+                    "extracted_context": extracted_context,
+                    "available_inventory": available_inventory,
+                    "original_criteria": vehicle_criteria,
+                    "enhanced_criteria": enhanced_criteria,
+                    "employee_id": employee_id
+                }
+            )
+        
+        # Step 4: Get employee details with HITL fallback
+        employee_data = await _lookup_employee_details(employee_id)
+        if not employee_data:
+            logger.error(f"[GENERATE_QUOTATION] Could not find employee details for {employee_id}")
+            
+            # HITL flow for employee data issues
+            return request_input(
+                prompt=f"""👤 **Employee Information Issue**
+
+I couldn't retrieve your employee information from our system (ID: {employee_id}). This is needed to include your contact details in the quotation.
+
+Please provide your information:
+- **Full Name**: 
+- **Position/Title**: 
+- **Email Address**: 
+- **Phone Number**: 
+- **Branch/Location**: 
+
+Alternatively, please contact your system administrator to update your employee profile.""",
+                input_type="employee_information",
+                context={
+                    "source_tool": "generate_quotation",
+                    "current_step": "employee_data",
+                    "customer_identifier": customer_identifier,
+                    "vehicle_requirements": vehicle_requirements,
+                    "additional_notes": additional_notes,
+                    "quotation_validity_days": quotation_validity_days,
+                    "quotation_state": quotation_state,
+                    "conversation_context": conversation_context,
+                    "employee_id": employee_id,
+                    "customer_data": customer_data,
+                    "extracted_context": extracted_context
+                }
+            )
+        
+        # Step 5: For each vehicle, get pricing information
+        vehicle_pricing = []
+        for vehicle in vehicles[:3]:  # Limit to top 3 matches
+            pricing = await _lookup_current_pricing(vehicle["id"])
+            if pricing:
+                vehicle_pricing.append({
+                    "vehicle": vehicle,
+                    "pricing": pricing
+                })
+        
+        if not vehicle_pricing:
+            # HITL flow for pricing issues - gather more specific vehicle information
+            return request_input(
+                prompt=f"""⚠️ **Pricing Information Issue**
+
+I found vehicles matching your requirements but couldn't retrieve current pricing information. This might be due to:
+- Vehicles temporarily out of stock
+- Pricing updates in progress
+- Specific configuration not available
+
+**Available vehicles found:**
+{_format_vehicle_list_for_hitl(vehicles[:5])}
+
+Please help me by:
+1. **Selecting specific vehicles** from the list above, or
+2. **Providing alternative preferences** (different model, year, etc.), or
+3. **Confirming if you'd like me to check with our sales team** for manual pricing
+
+What would you prefer?""",
+                input_type="pricing_resolution",
+                context={
+                    "source_tool": "generate_quotation",
+                    "current_step": "pricing_issues",
+                    "customer_identifier": customer_identifier,
+                    "vehicle_requirements": vehicle_requirements,
+                    "additional_notes": additional_notes,
+                    "quotation_validity_days": quotation_validity_days,
+                    "quotation_state": quotation_state,
+                    "conversation_context": conversation_context,
+                    "customer_data": customer_data,
+                    "vehicles_found": vehicles,
+                    "employee_data": employee_data,
+                    "extracted_context": extracted_context,
+                    "employee_id": employee_id
+                }
+            )
+        
+        # Step 6: Validate completeness and gather missing critical information via HITL
+        missing_info = _identify_missing_quotation_information(
+            customer_data, 
+            vehicle_pricing, 
+            extracted_context
+        )
+        
+        if missing_info:
+            return await _request_missing_information_via_hitl(
+                missing_info,
+                customer_data,
+                vehicle_pricing,
+                employee_data,
+                extracted_context,
+                additional_notes,
+                quotation_validity_days,
+                customer_identifier,
+                vehicle_requirements,
+                quotation_state,
+                conversation_context,
+                employee_id
+            )
+        
+        # Step 7: Create quotation preview for confirmation
+        quotation_preview = _create_quotation_preview(
+            customer_data,
+            vehicle_pricing,
+            employee_data,
+            additional_notes,
+            quotation_validity_days
+        )
+        
+        # Step 7: Request approval via HITL
+        # Ensure quotation state contains all necessary data for PDF generation
+        quotation_state.update({
+            "customer_data": customer_data,
+            "vehicle_pricing": vehicle_pricing,
+            "employee_data": employee_data,
+            "additional_notes": additional_notes,
+            "quotation_validity_days": quotation_validity_days,
+            "employee_id": employee_id,
+            "quotation_preview": quotation_preview,
+            "ready_for_generation": True
+        })
+        
+        context_data = {
+            "source_tool": "generate_quotation",
+            "current_step": "quotation_approval",
+            "customer_identifier": customer_identifier,
+            "vehicle_requirements": vehicle_requirements,
+            "additional_notes": additional_notes,
+            "quotation_validity_days": quotation_validity_days,
+            "quotation_state": quotation_state,
+            "conversation_context": conversation_context,
+            "customer_data": customer_data,
+            "vehicle_pricing": vehicle_pricing,
+            "employee_data": employee_data,
+            "employee_id": employee_id,
+            "quotation_preview": quotation_preview
+        }
+        
+        return request_approval(
+            prompt=f"""📄 **QUOTATION APPROVAL REQUIRED**
+
+{quotation_preview}
+
+---
+
+🎯 **READY FOR FINAL GENERATION**
+
+I've prepared a comprehensive quotation based on the customer's requirements and our current inventory. Please review the details above carefully.
+
+**Upon approval, the system will:**
+✅ Generate a professional PDF quotation document
+✅ Store the document securely in our Supabase storage
+✅ Create a shareable link valid for 48 hours
+✅ Record the quotation in our CRM system
+✅ Track quotation status and expiry
+✅ Enable customer access via secure link
+
+**Important Notes:**
+- Once generated, the quotation cannot be modified
+- Customer will receive access to download the PDF
+- Quotation will be tracked for follow-up and conversion
+- All pricing is based on current inventory and rates
+
+**Please confirm:** Are you ready to generate this quotation?""",
+            context=context_data,
+            approve_text="✅ Generate Quotation",
+            reject_text="❌ Cancel & Revise"
+        )
+        
+    except Exception as e:
+        logger.error(f"[GENERATE_QUOTATION] Error in quotation generation: {e}")
+        return f"I encountered an error while generating the quotation: {str(e)}. Please try again or contact your administrator."
+
+
+def _create_quotation_preview(
+    customer_data: dict,
+    vehicle_pricing: List[dict],
+    employee_data: dict,
+    additional_notes: Optional[str],
+    validity_days: int
+) -> str:
+    """Create a comprehensive text preview of the quotation for HITL confirmation."""
+    
+    # Generate quotation number for preview
+    from datetime import datetime
+    import random
+    quotation_number = f"QT-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+    
+    preview = f"""🏢 **PROFESSIONAL QUOTATION PREVIEW**
+
+📋 **Quotation Details:**
+- Quotation Number: {quotation_number}
+- Date: {datetime.now().strftime('%B %d, %Y')}
+- Valid Until: {(datetime.now().replace(day=datetime.now().day + validity_days)).strftime('%B %d, %Y')}
+
+👤 **Customer Information:**
+- **Name**: {customer_data.get('name', 'N/A')}
+- **Email**: {customer_data.get('email', 'N/A')}
+- **Phone**: {customer_data.get('phone', 'N/A')}
+- **Company**: {customer_data.get('company', 'Individual Customer' if not customer_data.get('company') else customer_data.get('company'))}
+- **Address**: {customer_data.get('address', 'To be provided')}
+
+🚗 **Vehicle Selections:**"""
+    
+    total_base_price = 0
+    total_final_price = 0
+    total_savings = 0
+    
+    for i, item in enumerate(vehicle_pricing, 1):
+        vehicle = item["vehicle"]
+        pricing = item["pricing"]
+        
+        base_price = pricing.get('base_price', 0)
+        final_price = pricing.get('final_price', 0)
+        discount = base_price - final_price
+        
+        preview += f"""
+
+**Option {i}: {vehicle.get('make', '')} {vehicle.get('model', '')} {vehicle.get('year', 'N/A')}**
+   🔹 **Vehicle Details:**
+      • Type: {vehicle.get('type', 'N/A')}
+      • Color: {vehicle.get('color', 'Any available color')}
+      • Transmission: {vehicle.get('transmission', 'N/A')}
+      • Engine: {vehicle.get('engine', 'N/A')}
+      • Stock Available: {vehicle.get('stock_quantity', 0)} units
+   
+   💰 **Pricing:**
+      • Base Price: ₱{base_price:,.2f}
+      • Final Price: ₱{final_price:,.2f}"""
+        
+        if discount > 0:
+            preview += f"""
+      • **You Save**: ₱{discount:,.2f}"""
+        
+        total_base_price += base_price
+        total_final_price += final_price
+        total_savings += discount
+    
+    # Add comprehensive pricing summary
+    preview += f"""
+
+💵 **Pricing Summary:**
+- **Subtotal**: ₱{total_base_price:,.2f}"""
+    
+    if total_savings > 0:
+        preview += f"""
+- **Total Savings**: ₱{total_savings:,.2f}"""
+    
+    preview += f"""
+- **🎯 TOTAL AMOUNT**: ₱{total_final_price:,.2f}
+- **Payment Terms**: As per agreement
+- **Delivery**: To be arranged upon order confirmation
+
+👨‍💼 **Sales Representative:**
+- **Name**: {employee_data.get('name', 'N/A')}
+- **Position**: {employee_data.get('position', 'Sales Representative')}
+- **Branch**: {employee_data.get('branch_name', 'Main Branch')}
+- **Email**: {employee_data.get('email', 'N/A')}
+- **Phone**: {employee_data.get('phone', 'N/A')}"""
+    
+    if additional_notes:
+        preview += f"""
+
+📝 **Additional Notes:**
+{additional_notes}"""
+    
+    # Add terms and conditions preview
+    preview += f"""
+
+📋 **Terms & Conditions:**
+- Quotation valid for {validity_days} days from date of issue
+- Prices subject to change without prior notice
+- Vehicle specifications may vary based on availability
+- Final pricing confirmed upon order placement
+- Delivery timeline to be confirmed upon order"""
+    
+    return preview
+
+
+# =============================================================================
+# TOOL REGISTRY
 # =============================================================================
 
 def get_simple_sql_tools():
@@ -2224,6 +3941,7 @@ def get_all_tools():
         simple_rag,
         trigger_customer_message,
         collect_sales_requirements,  # REVOLUTIONARY: Tool-managed recursive collection with 3-field HITL architecture (Task 9.1)
+        generate_quotation,  # Professional PDF quotation generation with HITL flows (Task 5.1)
         # gather_further_details ELIMINATED - replaced by business-specific tools using revolutionary 3-field approach
     ]
 
@@ -2245,6 +3963,7 @@ def get_tools_for_user_type(user_type: str = "employee"):
             simple_rag,  # Full access  
             trigger_customer_message,  # Employee only - customer outreach tool
             collect_sales_requirements,  # REVOLUTIONARY: Tool-managed recursive collection with 3-field HITL architecture
+            generate_quotation,  # Employee only - professional PDF quotation generation (Task 5.1)
             # gather_further_details ELIMINATED - replaced by business-specific tools using revolutionary 3-field approach
         ]
     else:

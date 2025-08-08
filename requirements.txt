@@ -52,4 +52,7 @@ aiohttp>=3.9.1
 aiofiles>=23.0.0
 
 # Validation utilities
-validators>=0.22.0 
+validators>=0.22.0
+
+# Task scheduling
+apscheduler>=3.10.0 

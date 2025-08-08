@@ -1,5 +1,6 @@
 # Environment files
 .env
+.env-old
 .env.local
 .env.production
 .env.development

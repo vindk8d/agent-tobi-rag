@@ -122,6 +122,9 @@ export default function PDFTestPage() {
     message: string;
     pdfUrl?: string;
     htmlPreview?: string;
+    storagePath?: string;
+    storageUrl?: string;
+    uploadStatus?: string;
   } | null>(null);
   const [activeTab, setActiveTab] = useState<'customer' | 'vehicle' | 'pricing' | 'employee'>('customer');
 
@@ -312,12 +315,20 @@ export default function PDFTestPage() {
     calculateTotal();
   };
 
-  const generatePDF = async (preview: boolean = false) => {
+  const generatePDF = async (preview: boolean = false, withStorage: boolean = false) => {
     setIsLoading(true);
     setResult(null);
     
     try {
-      const endpoint = preview ? 'http://localhost:8000/api/v1/test-pdf-preview' : 'http://localhost:8000/api/v1/test-pdf-generation';
+      let endpoint: string;
+      if (preview) {
+        endpoint = 'http://localhost:8000/api/v1/test-pdf-preview';
+      } else if (withStorage) {
+        endpoint = 'http://localhost:8000/api/v1/test-pdf-generation-with-storage';
+      } else {
+        endpoint = 'http://localhost:8000/api/v1/test-pdf-generation';
+      }
+      
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -341,10 +352,29 @@ export default function PDFTestPage() {
         // For PDF generation, we expect a blob response
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
+        
+        // Check for storage information in headers
+        const storagePath = response.headers.get('X-Storage-Path');
+        const storageUrl = response.headers.get('X-Storage-URL');
+        const uploadStatus = response.headers.get('X-Upload-Status');
+        const uploadError = response.headers.get('X-Upload-Error');
+        
+        let message = 'PDF generated successfully!';
+        if (withStorage) {
+          if (uploadStatus === 'success' && storagePath) {
+            message += ` PDF stored in Supabase at: ${storagePath}`;
+          } else if (uploadStatus === 'failed') {
+            message += ` (Storage failed: ${uploadError || 'Unknown error'})`;
+          }
+        }
+        
         setResult({
           success: true,
-          message: 'PDF generated successfully!',
-          pdfUrl: url
+          message,
+          pdfUrl: url,
+          storagePath: storagePath || undefined,
+          storageUrl: storageUrl || undefined,
+          uploadStatus: uploadStatus || undefined
         });
       }
     } catch (error) {
@@ -804,6 +834,13 @@ export default function PDFTestPage() {
                       >
                         {isLoading ? 'Generating...' : 'Generate PDF'}
                       </button>
+                      <button
+                        onClick={() => generatePDF(false, true)}
+                        disabled={isLoading}
+                        className="w-full px-4 py-3 bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-semibold"
+                      >
+                        {isLoading ? 'Generating...' : '🚀 Generate + Store in Supabase'}
+                      </button>
                     </div>
                   </div>
 
@@ -827,14 +864,37 @@ export default function PDFTestPage() {
                       </div>
                       
                       {result.pdfUrl && (
-                        <div className="mt-3 space-y-2">
-                          <a
-                            href={result.pdfUrl}
-                            download="quotation.pdf"
-                            className="inline-block px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors"
-                          >
-                            Download PDF
-                          </a>
+                        <div className="mt-3 space-y-3">
+                          <div className="flex flex-wrap gap-2">
+                            <a
+                              href={result.pdfUrl}
+                              download="quotation.pdf"
+                              className="inline-block px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors"
+                            >
+                              📥 Download PDF
+                            </a>
+                            {result.storageUrl && (
+                              <a
+                                href={result.storageUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-block px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition-colors"
+                              >
+                                ☁️ View in Supabase
+                              </a>
+                            )}
+                          </div>
+                          
+                          {result.storagePath && (
+                            <div className="text-xs text-gray-600 bg-gray-100 p-2 rounded">
+                              <strong>Storage Path:</strong> {result.storagePath}
+                              <br />
+                              <strong>Upload Status:</strong> <span className={result.uploadStatus === 'success' ? 'text-green-600' : 'text-red-600'}>
+                                {result.uploadStatus || 'N/A'}
+                              </span>
+                            </div>
+                          )}
+                          
                           <div>
                             <iframe
                               src={result.pdfUrl}

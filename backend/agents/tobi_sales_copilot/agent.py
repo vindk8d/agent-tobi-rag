@@ -3224,10 +3224,28 @@ Important: Use the tools to help you provide the best possible assistance to the
                 # 2. Clear HITL state to process approval
                 # 3. Resume with stream(None, config) to continue from where we left off
                 
-                # Process the approval and clear HITL state
-                response_lower = user_response.lower()
-                approve_words = ["yes", "approve", "send", "go ahead", "confirm", "ok", "proceed", "send it", "do it"]
-                is_approved = any(word in response_lower for word in approve_words)
+                # Process the approval using centralized HITL system
+                try:
+                    from agents.hitl import _interpret_user_intent_with_llm
+                    
+                    context = {
+                        "source_tool": "agent_resume",
+                        "current_step": "hitl_response",
+                        "interaction_type": "approval_request"
+                    }
+                    
+                    user_intent = await _interpret_user_intent_with_llm(user_response, context)
+                    is_approved = (user_intent == "approval")
+                    
+                    logger.info(f"🧠 [AGENT_RESUME] LLM interpreted '{user_response}' as: {user_intent}")
+                    
+                except Exception as e:
+                    logger.error(f"🧠 [AGENT_RESUME] Error in LLM interpretation: {e}")
+                    # Fallback to keyword matching as backup
+                    response_lower = user_response.lower()
+                    approve_words = ["yes", "approve", "send", "go ahead", "confirm", "ok", "proceed", "send it", "do it"]
+                    is_approved = any(word in response_lower for word in approve_words)
+                    logger.warning(f"🧠 [AGENT_RESUME] Falling back to keyword matching: {is_approved}")
                 
                 # Update the state to include the human response and process approval
                 hitl_update = {"messages": [human_response_msg]}

@@ -12,6 +12,8 @@ from io import BytesIO
 import asyncio
 
 from core.pdf_generator import QuotationPDFGenerator, PDFGenerationError
+from core.storage import upload_quotation_pdf, create_signed_quotation_url, QuotationStorageError
+from core.database import db_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -125,6 +127,117 @@ async def generate_test_pdf(request: QuotationTestRequest):
             media_type='application/pdf',
             headers=headers
         )
+        
+    except PDFGenerationError as e:
+        logger.error(f"PDF generation failed: {e}")
+        raise HTTPException(status_code=400, detail=f"PDF generation failed: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error in PDF generation: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.post("/test-pdf-generation-with-storage")
+async def generate_test_pdf_with_storage(request: QuotationTestRequest):
+    """
+    Generate a PDF quotation from test data AND store it in Supabase storage.
+    
+    Returns both the PDF stream for download and storage information.
+    """
+    try:
+        logger.info(f"Generating and storing PDF for quotation {request.quotation_number}")
+        
+        # Convert Pydantic model to dict for PDF generator
+        quotation_data = request.dict()
+        
+        # Initialize PDF generator
+        generator = QuotationPDFGenerator()
+        
+        # Generate PDF bytes
+        pdf_bytes = await generator.generate_quotation_pdf(quotation_data)
+        
+        # Upload to Supabase storage
+        try:
+            # Use customer email as customer_id for storage path
+            customer_id = request.customer.email.replace("@", "_").replace(".", "_")
+            employee_id = request.employee.email.replace("@", "_").replace(".", "_")
+            
+            storage_result = await upload_quotation_pdf(
+                pdf_bytes=pdf_bytes,
+                customer_id=customer_id,
+                employee_id=employee_id,
+                quotation_number=request.quotation_number,
+                folder="test_quotations"  # Separate folder for test PDFs
+            )
+            
+            # Create a signed URL for the uploaded PDF
+            signed_url = await create_signed_quotation_url(
+                storage_path=storage_result["path"],
+                expires_in_seconds=7 * 24 * 3600  # 7 days
+            )
+            
+            logger.info(f"PDF uploaded successfully: {storage_result['path']}")
+            
+            # Store quotation record in database
+            quotation_record = {
+                "quotation_number": request.quotation_number,
+                "customer_id": None,  # We don't have actual customer IDs in test data
+                "employee_id": None,  # We don't have actual employee IDs in test data
+                "vehicle_id": None,   # We don't have actual vehicle IDs in test data
+                "vehicle_specs": {
+                    "make": request.vehicle.make,
+                    "model": request.vehicle.model,
+                    "type": request.vehicle.type,
+                    "color": request.vehicle.color,
+                    "year": request.vehicle.year,
+                    "specifications": request.vehicle.specifications.dict()
+                },
+                "pricing_data": request.pricing.dict(),
+                "pdf_url": signed_url,
+                "pdf_filename": storage_result["path"].split("/")[-1],
+                "title": f"{request.vehicle.make} {request.vehicle.model} Quotation",
+                "notes": f"Test quotation generated for {request.customer.name}",
+                "status": "draft",
+                "expires_at": "2025-12-31 23:59:59+00:00"  # Default expiry
+            }
+            
+            # Insert quotation record (this will fail gracefully if constraints aren't met)
+            try:
+                db_result = db_client.client.table('quotations').insert(quotation_record).execute()
+                logger.info(f"Quotation record saved to database: {db_result.data[0]['id'] if db_result.data else 'unknown'}")
+            except Exception as db_error:
+                logger.warning(f"Failed to save quotation to database (PDF still stored): {db_error}")
+            
+            # Return both PDF stream and storage info
+            headers = {
+                'Content-Disposition': f'attachment; filename="quotation_{request.quotation_number}.pdf"',
+                'Content-Type': 'application/pdf',
+                'Content-Length': str(len(pdf_bytes)),
+                'X-Storage-Path': storage_result["path"],
+                'X-Storage-URL': signed_url,
+                'X-Upload-Status': 'success'
+            }
+            
+            return StreamingResponse(
+                iter([pdf_bytes]),
+                media_type='application/pdf',
+                headers=headers
+            )
+            
+        except QuotationStorageError as storage_error:
+            logger.error(f"Storage upload failed: {storage_error}")
+            # Still return the PDF even if storage fails
+            headers = {
+                'Content-Disposition': f'attachment; filename="quotation_{request.quotation_number}.pdf"',
+                'Content-Type': 'application/pdf',
+                'Content-Length': str(len(pdf_bytes)),
+                'X-Upload-Status': 'failed',
+                'X-Upload-Error': str(storage_error)
+            }
+            
+            return StreamingResponse(
+                iter([pdf_bytes]),
+                media_type='application/pdf',
+                headers=headers
+            )
         
     except PDFGenerationError as e:
         logger.error(f"PDF generation failed: {e}")

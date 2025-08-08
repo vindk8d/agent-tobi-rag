@@ -841,67 +841,35 @@ async def hitl_node(state: Dict[str, Any]) -> Dict[str, Any]:
         
         # Get user response from latest messages  
         user_response = None
-        user_message_found = False
         all_messages = updated_messages
         for msg in reversed(all_messages):
             if isinstance(msg, dict) and msg.get("type") == "human":
-                user_response = msg.get("content", "")
-                user_message_found = True
+                user_response = msg.get("content", "").strip()
                 break
             elif hasattr(msg, 'type') and msg.type == "human":
-                user_response = msg.content
-                user_message_found = True
+                user_response = msg.content.strip()
                 break
         
-        if not user_message_found:
-            logger.warning(f"[HITL_SIMPLE] No user message found after resume")
+        if not user_response:
+            logger.warning(f"[HITL_SIMPLE] No user response found after resume")
             interrupt("Please provide your response:")
             return state
         
-        # REVOLUTIONARY: Send ALL responses (even empty/ambiguous) to LLM for interpretation
-        # This ensures natural language processing handles edge cases gracefully
-        user_response = user_response.strip() if user_response else ""
-        logger.info(f"[HITL_SIMPLE] Found user response (length: {len(user_response)}): '{user_response}'")
+        # Simple approval detection
+        response_lower = user_response.lower()
+        approve_words = ["yes", "approve", "send", "go ahead", "confirm", "ok", "proceed"]
+        is_approved = any(word in response_lower for word in approve_words)
         
-        # REVOLUTIONARY: Use LLM to interpret user intent naturally
-        logger.info(f"[HITL_SIMPLE] Using LLM interpretation for: '{user_response}'")
-        
-        try:
-            intent = await _interpret_user_intent_with_llm(user_response, hitl_context)
-            logger.info(f"[HITL_SIMPLE] LLM interpreted intent as: {intent}")
-            
-            if intent == "approval":
-                logger.info(f"[HITL_SIMPLE] User approved: '{user_response}'")
-                response_msg = "✅ Approved! Executing action..."
-                execution_context = hitl_context
-                result_phase = "approved"
-                
-            elif intent == "denial":
-                logger.info(f"[HITL_SIMPLE] User denied: '{user_response}'")
-                response_msg = "❌ Action cancelled."
-                execution_context = None
-                result_phase = "denied"
-                
-            else:  # intent == "input"
-                logger.info(f"[HITL_SIMPLE] User provided data input: '{user_response}'")
-                response_msg = f"📝 Received: {user_response}"
-                # Preserve input data in context for tool re-calling
-                execution_context = {
-                    **hitl_context,
-                    "user_input": user_response
-                }
-                result_phase = "approved"  # Data input counts as approval
-                
-        except Exception as e:
-            logger.error(f"[HITL_SIMPLE] LLM interpretation failed: {e}, defaulting to approval")
-            # Fallback to approval to avoid blocking user workflows, but inform user of interpretation error
-            response_msg = f"⚠️ Interpretation error occurred, but proceeding with: {user_response}"
-            execution_context = {
-                **hitl_context,
-                "user_input": user_response,
-                "interpretation_error": str(e)
-            }
-            result_phase = "approved"
+        # Clear HITL state and set result
+        if is_approved:
+            logger.info(f"[HITL_SIMPLE] User approved: '{user_response}'")
+            response_msg = "✅ Approved! Executing action..."
+            # Keep context for agent execution  
+            execution_context = hitl_context
+        else:
+            logger.info(f"[HITL_SIMPLE] User denied: '{user_response}'")
+            response_msg = "❌ Action cancelled."
+            execution_context = None
         
         # Add response message
         final_messages = list(updated_messages)
@@ -911,13 +879,13 @@ async def hitl_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "type": "ai"
         })
         
-        # Return cleaned state with LLM-determined phase
+        # Return cleaned state
         return {
             **state,
             "messages": final_messages,
-            "hitl_phase": result_phase,    # Set by LLM interpretation
-            "hitl_prompt": None,           # Clear prompt
-            "hitl_context": execution_context  # Keep context based on interpretation
+            "hitl_phase": "approved" if is_approved else "denied",  # Set completion phase
+            "hitl_prompt": None,     # Clear prompt
+            "hitl_context": execution_context  # Keep context if approved
         }
             
     except GraphInterrupt:

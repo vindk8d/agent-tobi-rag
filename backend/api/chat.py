@@ -141,11 +141,10 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
         hitl_context = None
         is_awaiting_hitl = False
 
-    # Detect approval messages when agent is waiting for HITL response
-    approval_keywords = ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'proceed', 'go ahead', 'send', 'send it', 'do it']
-    is_approval_message = any(keyword in request.message.lower().strip() for keyword in approval_keywords)
+    # Agent will handle all approval logic - API just routes messages
+    is_approval_message = False  # Default to False, let agent interpret
     
-    logger.info(f"🔍 [CHAT_DEBUG] State-based approval detection: message='{request.message}', is_approval={is_approval_message}, awaiting_hitl={is_awaiting_hitl}")
+    logger.info(f"🔍 [CHAT_DEBUG] Routing message to agent: message='{request.message}', awaiting_hitl={is_awaiting_hitl}")
 
     if is_awaiting_hitl and is_approval_message:
         logger.info(f"🔍 [CHAT_DEBUG] STATE-BASED APPROVAL DETECTED: Agent is awaiting HITL response, passing approval to agent")

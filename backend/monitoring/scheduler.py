@@ -1,5 +1,6 @@
 """
-Daily refresh scheduler for data sources using APScheduler.
+Daily refresh scheduler and routine maintenance jobs using APScheduler.
+Includes data source refresh and quotation PDF cleanup.
 """
 from apscheduler.schedulers.background import BackgroundScheduler
 from core.database import db_client
@@ -8,6 +9,7 @@ from scrapers.web_scraper import WebScraper
 from models.datasource import DataSourceStatus, ScrapingFrequency
 import logging
 import asyncio
+from .quotation_cleanup import cleanup_expired_quotations
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,8 @@ class DataSourceScheduler:
 
     def start(self):
         self.scheduler.add_job(self.refresh_all_sources, 'interval', days=1, id='daily_refresh')
+        # Run quotation cleanup twice daily by default
+        self.scheduler.add_job(self.run_quotation_cleanup, 'interval', hours=12, id='quotation_cleanup')
         self.scheduler.start()
         logger.info("Data source daily refresh scheduler started.")
 
@@ -50,3 +54,14 @@ class DataSourceScheduler:
                     logger.error(f"Error refreshing data source {data_source_id}: {e}")
         except Exception as e:
             logger.error(f"Scheduler failed: {e}")
+
+    def run_quotation_cleanup(self):
+        logger.info("Running quotation PDF cleanup job...")
+        try:
+            summary = cleanup_expired_quotations()
+            logger.info(
+                "Quotation cleanup summary: selected=%s, deleted=%s, failed=%s",
+                summary.get("selected"), summary.get("deleted"), summary.get("failed")
+            )
+        except Exception as e:
+            logger.error(f"Quotation cleanup job failed: {e}")
