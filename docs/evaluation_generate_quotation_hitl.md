@@ -158,3 +158,4 @@ Need to handle sequential HITL interactions gracefully.
 
 ## Recommendation: Implement Resume Logic
 The generate_quotation tool needs to be refactored to support resumable execution following the established patterns used by other tools in the system.
+

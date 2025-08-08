@@ -1652,16 +1652,20 @@ Failed to deliver your message to {customer_name}.
             max_tool_iterations = 3
             iteration = 0
 
-            # Create LLM and bind tools
+            # Get employee-specific tools (full access including generate_quotation)
+            employee_tools = get_tools_for_user_type(user_type="employee")
+            
+            # Create LLM and bind employee tools
             selected_model = self.settings.openai_chat_model
             llm = ChatOpenAI(
                 model=selected_model,
                 temperature=self.settings.openai_temperature,
                 max_tokens=self.settings.openai_max_tokens,
                 api_key=self.settings.openai_api_key,
-            ).bind_tools(self.tools)
+            ).bind_tools(employee_tools)
 
             logger.info(f"[EMPLOYEE_AGENT_NODE] Using model: {selected_model}")
+            logger.info(f"[EMPLOYEE_AGENT_NODE] Employee tools available: {[tool.name for tool in employee_tools]}")
 
             hitl_required = False  # Flag to track if HITL interaction is needed
             

@@ -164,8 +164,8 @@ class TestLookupVehicleByCriteria:
         if result:
             assert isinstance(result, list)
             for vehicle in result:
-                assert "make" in vehicle
-                assert "toyota" in vehicle["make"].lower()
+                assert "brand" in vehicle  # Database uses 'brand' not 'make'
+                assert "toyota" in vehicle["brand"].lower()
     
     @pytest.mark.asyncio
     async def test_filter_by_model(self):
