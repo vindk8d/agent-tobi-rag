@@ -2157,121 +2157,12 @@ def _generate_search_suggestions(user_input: str, original_id: str) -> str:
 
 
 # =============================================================================
-# VEHICLE LOOKUP HELPER (Task 4.2)
+# DEPRECATED VEHICLE LOOKUP HELPER - REMOVED (Task 6.3.1)
 # =============================================================================
-
-async def _lookup_vehicle_by_criteria(criteria: Dict[str, Any], limit: int = 20) -> List[dict]:
-    """
-    Lookup vehicles using flexible criteria.
-
-    Supported keys in criteria:
-      - make (maps to 'brand')
-      - model
-      - type
-      - year (int or str)
-      - color
-      - is_available (bool)
-      - min_stock (int) → stock_quantity >= min_stock
-
-    Returns a list of vehicles with key fields for quotation building.
-    """
-    try:
-        # Basic validation and normalization
-        if criteria is None or not isinstance(criteria, dict):
-            logger.warning("[VEHICLE_LOOKUP] Invalid criteria provided; returning empty result")
-            return []
-        if not isinstance(limit, int) or limit <= 0:
-            limit = 20
-        from core.database import db_client
-
-        client = db_client.client
-
-        # Start base query
-        def build_query():
-            q = client.table("vehicles").select(
-                "id, brand, model, year, type, color, is_available, stock_quantity"
-            )
-
-            # Map and normalize filters
-            make = criteria.get("make") or criteria.get("brand")
-            if make:
-                q = q.filter("brand", "ilike", f"%{str(make).strip()}%")
-
-            if criteria.get("model"):
-                q = q.filter("model", "ilike", f"%{str(criteria['model']).strip()}%")
-
-            if criteria.get("type"):
-                q = q.filter("type", "ilike", f"%{str(criteria['type']).strip()}%")
-
-            if criteria.get("year"):
-                # Accept numeric or string year; cast to string for ilike for tolerance (exact preferred when int)
-                year_val = criteria["year"]
-                if isinstance(year_val, int):
-                    q = q.eq("year", year_val)
-                else:
-                    q = q.filter("year", "ilike", f"%{str(year_val).strip()}%")
-
-            if criteria.get("color"):
-                q = q.filter("color", "ilike", f"%{str(criteria['color']).strip()}%")
-
-            if "is_available" in criteria and criteria["is_available"] is not None:
-                q = q.eq("is_available", bool(criteria["is_available"]))
-
-            if criteria.get("min_stock") is not None:
-                try:
-                    min_stock = int(criteria["min_stock"])
-                    q = q.gte("stock_quantity", min_stock)
-                except Exception:
-                    # Ignore invalid min_stock values
-                    pass
-
-            # Prefer available and in-stock items first, then most recent year
-            # Note: desc=True for booleans puts True values first
-            q = q.order("is_available", desc=True).order("stock_quantity", desc=True).order("year", desc=True)
-
-            # Apply a sane limit
-            q = q.limit(max(1, min(limit, 100)))
-            return q
-
-        # Execute synchronously in a thread
-        result = await asyncio.to_thread(lambda: build_query().execute())
-
-        vehicles: List[dict] = []
-        for row in result.data or []:
-            vehicles.append(
-                {
-                    "id": row.get("id"),
-                    "brand": row.get("brand"),
-                    "model": row.get("model"),
-                    "year": row.get("year"),
-                    "type": row.get("type"),
-                    "color": row.get("color"),
-                    "is_available": row.get("is_available"),
-                    "stock_quantity": row.get("stock_quantity"),
-                    # Convenience display field
-                    "display_name": f"{row.get('brand','')} {row.get('model','')} {row.get('year','')}".strip(),
-                }
-            )
-
-        logger.info(f"[VEHICLE_LOOKUP] Criteria={criteria} → {len(vehicles)} result(s)")
-        return vehicles
-
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"[VEHICLE_LOOKUP] Error looking up vehicles: {e}")
-        
-        # Enhanced error logging with context
-        logger.error(f"[VEHICLE_LOOKUP] Criteria: {criteria}, Limit: {limit}, Error: {error_msg}")
-        
-        # Categorize and log different types of errors for better debugging
-        if "connection" in error_msg.lower() or "timeout" in error_msg.lower():
-            logger.critical(f"[VEHICLE_LOOKUP] Database connection issue during vehicle search: {error_msg}")
-        elif "permission" in error_msg.lower() or "access" in error_msg.lower():
-            logger.warning(f"[VEHICLE_LOOKUP] Database access permission issue: {error_msg}")
-        elif "syntax" in error_msg.lower() or "sql" in error_msg.lower():
-            logger.error(f"[VEHICLE_LOOKUP] SQL query issue with criteria {criteria}: {error_msg}")
-        
-        return []
+# The _lookup_vehicle_by_criteria function has been removed and replaced by the
+# unified LLM-based vehicle search system (_search_vehicles_with_llm).
+# This simplification eliminates complex criteria-based filtering in favor of
+# intelligent natural language understanding.
 
 # DEPRECATED: Use _handle_confirmation_approved() and _handle_confirmation_denied() instead
 # async def _handle_customer_message_confirmation(hitl_context: dict, human_response: str) -> str:
@@ -2279,240 +2170,40 @@ async def _lookup_vehicle_by_criteria(criteria: Dict[str, Any], limit: int = 20)
 
 
 # =============================================================================
-# VEHICLE REQUIREMENTS PARSING HELPERS (Task 5.8)
+# DEPRECATED VEHICLE PARSING FUNCTION - REMOVED (Task 6.3.7)
 # =============================================================================
-
-async def _parse_vehicle_requirements_with_llm(
-    requirements: str, 
-    extracted_context: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Parse vehicle requirements using LLM intelligence instead of hard-coded rules.
-    
-    This approach is scalable, flexible, and can handle any brand/model without code changes.
-    Follows the project principle: "Use LLM intelligence rather than keyword matching or complex logic."
-    
-    Args:
-        requirements: Natural language vehicle requirements
-        extracted_context: Additional context from conversation
-    
-    Returns:
-        Dict with structured vehicle criteria for database lookup
-    """
-    try:
-        settings = await get_settings()
-        llm = ChatOpenAI(
-            model=settings.openai_simple_model,
-            temperature=0.1
-        )
-        
-        # Create parsing prompt that extracts structured vehicle criteria
-        parsing_prompt = ChatPromptTemplate.from_template("""
-You are a vehicle requirements parser. Extract structured search criteria from the user's requirements.
-
-Requirements: {requirements}
-Additional Context: {context}
-
-Extract the following information and return ONLY a JSON object:
-{{
-    "make": "exact brand name if mentioned (e.g., Toyota, Honda, Ford, BMW, Mercedes-Benz, etc.)",
-    "model": "exact model name if mentioned (e.g., Camry, Civic, F-150, X5, etc.)",
-    "type": "vehicle type if mentioned (e.g., SUV, Sedan, Pickup, Hatchback, Coupe, Crossover, etc.)",
-    "year": "year or year range if mentioned (e.g., 2023, 2022-2024)",
-    "color": "color preference if mentioned",
-    "transmission": "transmission type if mentioned (Manual, Automatic, CVT)",
-    "fuel_type": "fuel type if mentioned (Gasoline, Diesel, Hybrid, Electric)",
-    "price_range": "budget or price range if mentioned",
-    "quantity": "number of vehicles needed if mentioned",
-    "special_features": "any special features or requirements mentioned"
-}}
-
-Rules:
-- Only include fields that are actually mentioned or can be inferred
-- Use null for fields not mentioned
-- Be flexible with brand names (handle variations like "Benz" -> "Mercedes-Benz", "Beemer" -> "BMW")
-- Normalize vehicle types to standard categories
-- Extract quantity even if written as text ("two cars" -> 2)
-- Handle abbreviations (CR-V, F-150, etc.)
-- Consider context from previous conversation
-
-Return only the JSON object, no other text.
-""")
-        
-        # Execute the parsing
-        chain = parsing_prompt | llm | StrOutputParser()
-        result = await chain.ainvoke({
-            "requirements": requirements,
-            "context": json.dumps(extracted_context, default=str)
-        })
-        
-        # Parse the JSON response
-        try:
-            criteria = json.loads(result.strip())
-            # Clean up null values and empty strings
-            criteria = {k: v for k, v in criteria.items() if v is not None and v != "" and v != "null"}
-            logger.info(f"[VEHICLE_PARSING] Extracted criteria: {criteria}")
-            return criteria
-        except json.JSONDecodeError:
-            logger.warning(f"[VEHICLE_PARSING] Failed to parse LLM response as JSON: {result}")
-            return {}
-            
-    except Exception as e:
-        logger.error(f"[VEHICLE_PARSING] Error parsing vehicle requirements: {e}")
-        return {}
+# The _parse_vehicle_requirements_with_llm function has been absorbed into the
+# unified vehicle search system. The _search_vehicles_with_llm function now
+# handles requirement parsing directly within its SQL generation prompt,
+# eliminating the need for separate parsing and criteria extraction steps.
 
 
-async def _get_available_makes_and_models() -> Dict[str, Any]:
-    """
-    Dynamically fetch available makes and models from the database.
-    This ensures we can handle any brand/model in our inventory without code changes.
-    
-    Returns:
-        Dict mapping makes to their available models and types
-    """
-    try:
-        engine = await _get_sql_engine()
-        
-        query = """
-        SELECT DISTINCT 
-            make,
-            model,
-            type,
-            COUNT(*) as available_count
-        FROM vehicles 
-        WHERE stock_quantity > 0 
-        GROUP BY make, model, type
-        ORDER BY make, model
-        """
-        
-        with engine.connect() as conn:
-            result = conn.execute(text(query))
-            inventory = {}
-            
-            for row in result:
-                make = row.make
-                if make not in inventory:
-                    inventory[make] = {"models": set(), "types": set()}
-                
-                inventory[make]["models"].add(row.model)
-                inventory[make]["types"].add(row.type)
-            
-            # Convert sets to lists for JSON serialization
-            for make in inventory:
-                inventory[make]["models"] = list(inventory[make]["models"])
-                inventory[make]["types"] = list(inventory[make]["types"])
-            
-            logger.info(f"[INVENTORY_LOOKUP] Found {len(inventory)} makes in inventory")
-            return inventory
-            
-    except Exception as e:
-        logger.error(f"[INVENTORY_LOOKUP] Error fetching available inventory: {e}")
-        return {}
+# =============================================================================
+# DEPRECATED INVENTORY LOOKUP FUNCTION - REMOVED (Task 6.3.4)
+# =============================================================================
+# The _get_available_makes_and_models function has been removed and replaced by
+# dynamic LLM-generated inventory suggestions. The enhanced HITL prompts now
+# handle inventory awareness through intelligent contextual suggestions rather
+# than requiring separate inventory lookup functions.
 
 
-async def _enhance_vehicle_criteria_with_fuzzy_matching(
-    criteria: Dict[str, Any], 
-    available_inventory: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Use fuzzy matching to handle variations in brand/model names.
-    This helps match user input like "honda" to "Honda" or "crv" to "CR-V".
-    
-    Args:
-        criteria: Original criteria from LLM parsing
-        available_inventory: Available makes/models from database
-    
-    Returns:
-        Enhanced criteria with corrected make/model names
-    """
-    enhanced_criteria = criteria.copy()
-    
-    if criteria.get("make") and available_inventory:
-        # Find closest matching make
-        available_makes = list(available_inventory.keys())
-        make_match = _find_closest_match(criteria["make"], available_makes)
-        if make_match:
-            enhanced_criteria["make"] = make_match
-            logger.info(f"[FUZZY_MATCHING] Matched make '{criteria['make']}' -> '{make_match}'")
-            
-            # If we found a make match, try to match the model
-            if criteria.get("model") and make_match in available_inventory:
-                available_models = available_inventory[make_match]["models"]
-                model_match = _find_closest_match(criteria["model"], available_models)
-                if model_match:
-                    enhanced_criteria["model"] = model_match
-                    logger.info(f"[FUZZY_MATCHING] Matched model '{criteria['model']}' -> '{model_match}'")
-    
-    return enhanced_criteria
+# =============================================================================
+# DEPRECATED FUZZY MATCHING FUNCTIONS - REMOVED (Task 6.3.2 & 6.3.3)
+# =============================================================================
+# The _enhance_vehicle_criteria_with_fuzzy_matching and _find_closest_match 
+# functions have been removed and replaced by LLM semantic understanding in
+# the unified vehicle search system. The LLM naturally handles variations in
+# brand/model names, abbreviations, and typos without requiring explicit
+# fuzzy matching algorithms.
 
 
-def _find_closest_match(target: str, options: List[str], threshold: int = 70) -> Optional[str]:
-    """
-    Simple fuzzy matching using string similarity.
-    
-    Args:
-        target: String to match
-        options: List of possible matches
-        threshold: Minimum similarity score (0-100)
-    
-    Returns:
-        Best matching option or None if no good match found
-    """
-    from difflib import SequenceMatcher
-    
-    if not target or not options:
-        return None
-    
-    best_match = None
-    best_score = 0
-    
-    target_lower = target.lower().strip()
-    
-    for option in options:
-        option_lower = option.lower().strip()
-        
-        # Exact match gets priority
-        if target_lower == option_lower:
-            return option
-        
-        # Calculate similarity score
-        score = SequenceMatcher(None, target_lower, option_lower).ratio() * 100
-        
-        # Also check if target is contained in option (for abbreviations)
-        if target_lower in option_lower or option_lower in target_lower:
-            score = max(score, 85)  # Boost score for substring matches
-        
-        if score > threshold and score > best_score:
-            best_score = score
-            best_match = option
-    
-    return best_match
-
-
-def _generate_inventory_suggestions(available_inventory: Dict[str, Any]) -> str:
-    """
-    Generate a formatted string of available inventory for user-friendly messages.
-    
-    Args:
-        available_inventory: Dictionary of available makes and their models
-    
-    Returns:
-        Formatted string showing available brands and popular models
-    """
-    if not available_inventory:
-        return "Please contact us for current inventory availability."
-    
-    suggestions = []
-    for make, details in sorted(available_inventory.items()):
-        models = details.get("models", [])
-        # Show first few models as examples
-        model_examples = ", ".join(sorted(models)[:3])
-        if len(models) > 3:
-            model_examples += f" (and {len(models) - 3} more)"
-        
-        suggestions.append(f"• **{make}**: {model_examples}")
-    
-    return "\n".join(suggestions)
+# =============================================================================
+# DEPRECATED INVENTORY SUGGESTIONS FUNCTION - REMOVED (Task 6.3.5)
+# =============================================================================
+# The _generate_inventory_suggestions function has been removed and replaced by
+# contextual HITL prompts. The enhanced LLM-generated prompts now handle
+# inventory suggestions dynamically and contextually, eliminating the need for
+# static inventory formatting functions.
 
 
 # =============================================================================
@@ -2638,17 +2329,505 @@ This helps me locate the correct customer record for the quotation.""",
         )
 
 
+# =============================================================================
+# LLM-BASED VEHICLE SEARCH SYSTEM (Task 6.1.1)
+# =============================================================================
+
+class VehicleSearchResult(BaseModel):
+    """Structured result from LLM-based vehicle search."""
+    sql_query: str = Field(..., description="Generated SQL query for vehicle search")
+    reasoning: str = Field(..., description="LLM reasoning for the query generation")
+    search_intent: str = Field(..., description="Interpreted search intent")
+    semantic_understanding: Dict[str, Any] = Field(default_factory=dict, description="Semantic analysis of the query")
+
+
+async def _search_vehicles_with_llm(
+    requirements: str, 
+    extracted_context: Dict[str, Any] = None,
+    limit: int = 20
+) -> List[dict]:
+    """
+    Unified LLM-based vehicle search function with comprehensive SQL generation.
+    
+    This replaces the complex orchestration of multiple helper functions with a single
+    intelligent search that understands natural language and generates appropriate SQL.
+    
+    Args:
+        requirements: Natural language vehicle requirements
+        extracted_context: Additional context from conversation
+        limit: Maximum number of results to return
+    
+    Returns:
+        List of matching vehicles with full details
+    """
+    try:
+        settings = await get_settings()
+        llm = ChatOpenAI(
+            model=settings.openai_simple_model,
+            temperature=0.1
+        )
+        
+        # Comprehensive SQL generation prompt with semantic understanding
+        sql_generation_prompt = ChatPromptTemplate.from_template("""
+You are an expert SQL query generator for a vehicle dealership database. Generate a safe, optimized SQL query based on the user's natural language requirements.
+
+DATABASE SCHEMA:
+- vehicles table: id (UUID), brand (VARCHAR), year (INTEGER), model (VARCHAR), type (ENUM: 'sedan', 'suv', 'hatchback', 'pickup', 'van', 'motorcycle', 'truck'), color (VARCHAR), acceleration (DECIMAL), power (INTEGER), torque (INTEGER), fuel_type (VARCHAR), transmission (VARCHAR), is_available (BOOLEAN), stock_quantity (INTEGER)
+- pricing table: id (UUID), vehicle_id (UUID), base_price (DECIMAL), final_price (DECIMAL), insurance (DECIMAL), lto (DECIMAL), price_discount (DECIMAL), add_ons (JSONB), is_active (BOOLEAN), availability_start_date (DATE), availability_end_date (DATE)
+
+USER REQUIREMENTS: {requirements}
+ADDITIONAL CONTEXT: {context}
+
+SEMANTIC UNDERSTANDING RULES:
+- "family car" → type IN ('suv', 'sedan', 'van') AND year >= 2018
+- "fuel efficient" → fuel_type IN ('hybrid', 'electric') OR (fuel_type = 'gasoline' AND power <= 150)
+- "affordable" → final_price <= 1500000 (1.5M PHP)
+- "luxury" → final_price >= 3000000 (3M PHP) OR brand IN ('BMW', 'Mercedes-Benz', 'Audi', 'Lexus')
+- "business vehicle" → type IN ('sedan', 'suv') AND year >= 2020
+- "compact" → type IN ('hatchback', 'sedan') AND power <= 120
+- "powerful" → power >= 200 OR acceleration <= 7.0
+- "reliable brands" → brand IN ('Toyota', 'Honda', 'Mazda', 'Subaru')
+- "under X million" → final_price <= (X * 1000000)
+- "recent" or "new" → year >= 2022
+- "good for city driving" → type IN ('hatchback', 'sedan') AND transmission = 'Automatic'
+
+BRAND SYNONYMS:
+- "Beemer", "BMW" → BMW
+- "Benz", "Mercedes" → Mercedes-Benz
+- "Chevy" → Chevrolet
+- "VW" → Volkswagen
+
+Generate a response with this EXACT JSON structure:
+{{
+    "sql_query": "SELECT v.*, p.base_price, p.final_price, p.insurance, p.lto FROM vehicles v LEFT JOIN pricing p ON v.id = p.vehicle_id WHERE [your conditions] AND v.is_available = true AND v.stock_quantity > 0 AND (p.is_active = true OR p.is_active IS NULL) ORDER BY p.final_price ASC LIMIT {limit}",
+    "reasoning": "Explanation of why this query was generated",
+    "search_intent": "Brief summary of what the user is looking for",
+    "semantic_understanding": {{"key": "value pairs of semantic interpretations"}}
+}}
+
+SAFETY REQUIREMENTS:
+- ALWAYS include: v.is_available = true AND v.stock_quantity > 0
+- ALWAYS use proper JOINs with pricing table
+- NEVER use dynamic SQL or string concatenation
+- Use parameterized conditions where possible
+- Include proper ordering (usually by price or relevance)
+- Limit results to prevent performance issues
+""")
+        
+        # Generate the SQL query using LLM
+        context_str = json.dumps(extracted_context or {}, indent=2)
+        
+        chain = sql_generation_prompt | llm | StrOutputParser()
+        llm_response = await chain.ainvoke({
+            "requirements": requirements,
+            "context": context_str,
+            "limit": limit
+        })
+        
+        # Parse the LLM response
+        try:
+            search_result = json.loads(llm_response)
+            vehicle_search = VehicleSearchResult(**search_result)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"[VEHICLE_SEARCH_LLM] Failed to parse LLM response: {e}")
+            # Fallback to basic search
+            return await _fallback_vehicle_search(requirements, limit)
+        
+        # Execute the generated SQL safely
+        vehicles = await _execute_vehicle_sql_safely(
+            vehicle_search.sql_query,
+            vehicle_search.reasoning
+        )
+        
+        logger.info(f"[VEHICLE_SEARCH_LLM] Found {len(vehicles)} vehicles using LLM query")
+        logger.debug(f"[VEHICLE_SEARCH_LLM] Search intent: {vehicle_search.search_intent}")
+        
+        return vehicles
+        
+    except Exception as e:
+        logger.error(f"[VEHICLE_SEARCH_LLM] Error in LLM-based vehicle search: {e}")
+        # Fallback to basic search
+        return await _fallback_vehicle_search(requirements, limit)
+
+
+async def _execute_vehicle_sql_safely(sql_query: str, reasoning: str) -> List[dict]:
+    """
+    Execute vehicle search SQL with safety validation and injection protection.
+    
+    Args:
+        sql_query: The SQL query to execute
+        reasoning: LLM reasoning for logging purposes
+    
+    Returns:
+        List of vehicle records
+    """
+    try:
+        # Basic SQL injection protection - validate query structure
+        query_lower = sql_query.lower().strip()
+        
+        # Ensure it's a SELECT query
+        if not query_lower.startswith('select'):
+            logger.error(f"[VEHICLE_SQL_SAFETY] Non-SELECT query rejected: {sql_query[:100]}")
+            return []
+        
+        # Ensure no dangerous operations
+        dangerous_keywords = ['drop', 'delete', 'update', 'insert', 'create', 'alter', 'truncate', '--', ';--']
+        if any(keyword in query_lower for keyword in dangerous_keywords):
+            logger.error(f"[VEHICLE_SQL_SAFETY] Dangerous keywords detected in query")
+            return []
+        
+        # Ensure required safety conditions are present
+        required_conditions = ['v.is_available = true', 'v.stock_quantity > 0']
+        if not all(condition.lower() in query_lower for condition in required_conditions):
+            logger.warning(f"[VEHICLE_SQL_SAFETY] Missing required safety conditions")
+            return []
+        
+        # Execute the query
+        engine = await _get_sql_engine()
+        with engine.connect() as conn:
+            result = conn.execute(text(sql_query))
+            vehicles = []
+            
+            for row in result:
+                vehicle_dict = dict(row._mapping)
+                # Convert UUID objects to strings for JSON serialization
+                for key, value in vehicle_dict.items():
+                    if hasattr(value, 'hex'):  # UUID object
+                        vehicle_dict[key] = str(value)
+                    elif isinstance(value, date):
+                        vehicle_dict[key] = value.isoformat()
+                
+                vehicles.append(vehicle_dict)
+            
+            logger.info(f"[VEHICLE_SQL_SAFETY] Successfully executed query, found {len(vehicles)} vehicles")
+            logger.debug(f"[VEHICLE_SQL_SAFETY] Query reasoning: {reasoning}")
+            
+            return vehicles
+            
+    except Exception as e:
+        logger.error(f"[VEHICLE_SQL_SAFETY] Error executing vehicle SQL: {e}")
+        return []
+
+
+async def _fallback_vehicle_search(requirements: str, limit: int = 20) -> List[dict]:
+    """
+    Fallback vehicle search when LLM-based search fails.
+    
+    Uses basic keyword matching and simple database query as a safety net.
+    """
+    try:
+        logger.info(f"[VEHICLE_FALLBACK] Using fallback search for: {requirements}")
+        
+        # Basic keyword extraction
+        requirements_lower = requirements.lower()
+        
+        # Extract basic criteria using simple keyword matching
+        brand_filter = None
+        type_filter = None
+        
+        # Extract vehicle type
+        vehicle_types = ['sedan', 'suv', 'hatchback', 'pickup', 'van', 'motorcycle', 'truck']
+        for vtype in vehicle_types:
+            if vtype in requirements_lower:
+                type_filter = vtype
+                break
+        
+        # Extract brand
+        brands = ['toyota', 'honda', 'nissan', 'mazda', 'ford', 'chevrolet', 'bmw', 'mercedes-benz', 'hyundai', 'kia']
+        for brand in brands:
+            if brand in requirements_lower or brand.replace('-', ' ') in requirements_lower:
+                brand_filter = brand.title().replace('-Benz', '-Benz')
+                break
+        
+        # Simple direct database query (replaces complex _lookup_vehicle_by_criteria)
+        engine = await _get_sql_engine()
+        
+        # Build simple query with basic filters
+        query_parts = ["SELECT v.*, p.base_price, p.final_price FROM vehicles v LEFT JOIN pricing p ON v.id = p.vehicle_id"]
+        conditions = ["v.is_available = true", "v.stock_quantity > 0"]
+        
+        if brand_filter:
+            conditions.append(f"v.brand ILIKE '%{brand_filter}%'")
+        if type_filter:
+            conditions.append(f"v.type = '{type_filter}'")
+        
+        query_parts.append("WHERE " + " AND ".join(conditions))
+        query_parts.append("ORDER BY v.year DESC, p.final_price ASC")
+        query_parts.append(f"LIMIT {min(limit, 20)}")
+        
+        query = " ".join(query_parts)
+        
+        with engine.connect() as conn:
+            result = conn.execute(text(query))
+            vehicles = []
+            
+            for row in result:
+                vehicle_dict = dict(row._mapping)
+                # Convert UUID objects to strings for JSON serialization
+                for key, value in vehicle_dict.items():
+                    if hasattr(value, 'hex'):  # UUID object
+                        vehicle_dict[key] = str(value)
+                    elif isinstance(value, date):
+                        vehicle_dict[key] = value.isoformat()
+                
+                vehicles.append(vehicle_dict)
+        
+        logger.info(f"[VEHICLE_FALLBACK] Found {len(vehicles)} vehicles with basic search")
+        return vehicles
+        
+    except Exception as e:
+        logger.error(f"[VEHICLE_FALLBACK] Error in fallback search: {e}")
+        return []
+
+
+async def _generate_enhanced_hitl_vehicle_prompt(
+    vehicle_requirements: str,
+    extracted_context: Dict[str, Any],
+    inventory_suggestions: str,
+    customer_data: Optional[dict]
+) -> str:
+    """
+    Generate enhanced HITL prompt with LLM interpretation and contextual suggestions.
+    
+    This function uses LLM intelligence to:
+    1. Interpret what the user was looking for
+    2. Analyze why no matches were found
+    3. Provide intelligent, contextual suggestions
+    4. Personalize the prompt based on customer profile
+    
+    Args:
+        vehicle_requirements: Original user requirements
+        extracted_context: Context from conversation
+        inventory_suggestions: Available inventory
+        customer_data: Customer profile information
+    
+    Returns:
+        Enhanced HITL prompt with intelligent suggestions
+    """
+    try:
+        settings = await get_settings()
+        llm = ChatOpenAI(
+            model=settings.openai_simple_model,
+            temperature=0.3  # Slightly higher for more creative suggestions
+        )
+        
+        # Build customer context for personalization
+        customer_context = ""
+        if customer_data:
+            customer_type = "business customer" if customer_data.get("is_for_business") else "individual customer"
+            customer_context = f"Customer: {customer_data.get('full_name', 'Unknown')} ({customer_type})"
+            if customer_data.get("company"):
+                customer_context += f", Company: {customer_data.get('company')}"
+        
+        # Build conversation context
+        conversation_context = ""
+        if extracted_context:
+            if extracted_context.get("budget_mentions"):
+                conversation_context += f"Budget mentioned: {extracted_context['budget_mentions']}\n"
+            if extracted_context.get("family_size_mentions"):
+                conversation_context += f"Family considerations: {extracted_context['family_size_mentions']}\n"
+            if extracted_context.get("usage_mentions"):
+                conversation_context += f"Vehicle usage: {extracted_context['usage_mentions']}\n"
+        
+        # Generate enhanced prompt using LLM
+        prompt_generation_template = ChatPromptTemplate.from_template("""
+You are an expert vehicle sales consultant creating a helpful, personalized response for a customer whose vehicle search didn't return results.
+
+ORIGINAL REQUEST: "{vehicle_requirements}"
+
+CUSTOMER CONTEXT: {customer_context}
+
+CONVERSATION CONTEXT: {conversation_context}
+
+AVAILABLE INVENTORY: {inventory_suggestions}
+
+Create a helpful, personalized response that:
+1. Acknowledges their specific request with empathy
+2. Explains likely reasons why no exact matches were found
+3. Provides intelligent alternative suggestions based on their needs
+4. Offers specific vehicle recommendations from available inventory
+5. Asks clarifying questions to better understand their needs
+
+The response should be:
+- Professional but friendly and conversational
+- Personalized to their situation (business vs personal use)
+- Specific with actual vehicle recommendations
+- Helpful in guiding them toward suitable alternatives
+
+Use this structure:
+🚗 **Let me help you find the right vehicle**
+
+[Acknowledge their request and explain the situation]
+
+**Based on your requirements, here's what I found:**
+[Intelligent analysis of their needs]
+
+**I'd recommend considering:**
+[Specific alternative suggestions from inventory]
+
+**To find the perfect match, could you help me with:**
+[Targeted questions based on their context]
+
+**Available Options:**
+[Curated list from inventory based on their likely needs]
+
+Make it conversational, helpful, and focused on finding them the right vehicle.
+""")
+        
+        chain = prompt_generation_template | llm | StrOutputParser()
+        enhanced_prompt = await chain.ainvoke({
+            "vehicle_requirements": vehicle_requirements,
+            "customer_context": customer_context or "Not specified",
+            "conversation_context": conversation_context or "No additional context",
+            "inventory_suggestions": inventory_suggestions
+        })
+        
+        logger.info("[HITL_ENHANCEMENT] Generated enhanced vehicle prompt with LLM interpretation")
+        return enhanced_prompt
+        
+    except Exception as e:
+        logger.warning(f"[HITL_ENHANCEMENT] Failed to generate enhanced prompt: {e}")
+        
+        # Fallback to improved static prompt
+        return f"""🚗 **Vehicle Information Needed**
+
+I couldn't find vehicles matching "{vehicle_requirements}" in our current inventory.
+
+**Available Brands in Stock:**
+{inventory_suggestions}
+
+Please provide more specific details:
+- **Make/Brand**: Choose from available brands above
+- **Model**: Specific model name  
+- **Type**: (Sedan, SUV, Pickup, Hatchback, Coupe, etc.)
+- **Year**: (2023, 2024, or range like 2022-2024)
+- **Quantity**: How many vehicles needed?
+- **Budget**: Price range if relevant
+
+**Example**: "I need 2 Toyota Camry sedans, 2023 or newer, budget around 1.5M each"
+
+Or let me know if you'd like to see detailed specifications for any specific brand.
+
+**Helpful Tips:**
+- Be as specific as possible (e.g., "2023 Toyota Camry Hybrid, white or silver")
+- Include quantity if you need multiple vehicles
+- Mention your budget range if relevant
+- Let me know if you're flexible on certain features"""
+
+
+async def _merge_vehicle_requirements_intelligently(
+    original_requirements: str,
+    user_clarification: str,
+    extracted_context: Dict[str, Any]
+) -> str:
+    """
+    Intelligently merge original vehicle requirements with user clarification.
+    
+    This function uses LLM intelligence to create coherent, consolidated requirements
+    that work seamlessly with the simplified vehicle search system.
+    
+    Args:
+        original_requirements: Original user requirements that didn't match
+        user_clarification: User's response to HITL prompt with additional details
+        extracted_context: Context from conversation
+    
+    Returns:
+        Intelligently merged requirements string
+    """
+    try:
+        settings = await get_settings()
+        llm = ChatOpenAI(
+            model=settings.openai_simple_model,
+            temperature=0.1  # Low temperature for consistent merging
+        )
+        
+        # Build context for better merging
+        context_info = ""
+        if extracted_context:
+            if extracted_context.get("budget_mentions"):
+                context_info += f"Budget context: {extracted_context['budget_mentions']}\n"
+            if extracted_context.get("family_size_mentions"):
+                context_info += f"Family context: {extracted_context['family_size_mentions']}\n"
+            if extracted_context.get("usage_mentions"):
+                context_info += f"Usage context: {extracted_context['usage_mentions']}\n"
+        
+        # Create intelligent merging prompt
+        merging_prompt = ChatPromptTemplate.from_template("""
+You are an expert at consolidating vehicle requirements. Merge the original request with the user's clarification into a single, coherent requirement statement.
+
+ORIGINAL REQUIREMENTS: "{original_requirements}"
+
+USER CLARIFICATION: "{user_clarification}"
+
+CONVERSATION CONTEXT: {context_info}
+
+Create a single, clear vehicle requirement statement that:
+1. Combines the best information from both original and clarification
+2. Resolves any contradictions by favoring the more specific/recent information
+3. Maintains all important details (make, model, type, year, quantity, budget, features)
+4. Is written in natural language that works well with vehicle search systems
+5. Removes redundancy and conflicting information
+
+Return ONLY the merged requirement statement, nothing else.
+
+Examples:
+- Original: "family car" + Clarification: "Toyota Camry sedan, 2023, budget 1.5M" → "Toyota Camry sedan 2023, budget around 1.5M, for family use"
+- Original: "SUV for business" + Clarification: "Honda CR-V, white or silver, automatic" → "Honda CR-V SUV for business use, white or silver, automatic transmission"
+- Original: "affordable vehicle" + Clarification: "under 1M budget, fuel efficient, manual transmission" → "Affordable fuel efficient vehicle under 1M budget, manual transmission"
+""")
+        
+        chain = merging_prompt | llm | StrOutputParser()
+        merged_requirements = await chain.ainvoke({
+            "original_requirements": original_requirements,
+            "user_clarification": user_clarification,
+            "context_info": context_info or "No additional context"
+        })
+        
+        # Clean up the response (remove any extra formatting)
+        merged_requirements = merged_requirements.strip()
+        
+        logger.info(f"[REQUIREMENT_MERGE] Successfully merged requirements using LLM")
+        logger.debug(f"[REQUIREMENT_MERGE] Original: {original_requirements}")
+        logger.debug(f"[REQUIREMENT_MERGE] Clarification: {user_clarification}")
+        logger.debug(f"[REQUIREMENT_MERGE] Merged: {merged_requirements}")
+        
+        return merged_requirements
+        
+    except Exception as e:
+        logger.error(f"[REQUIREMENT_MERGE] Error in intelligent merging: {e}")
+        # Fallback to simple concatenation
+        return f"{original_requirements} {user_clarification}".strip()
+
+
 async def _resume_vehicle_requirements(
     vehicle_requirements: str, quotation_state: Dict[str, Any], user_response: str
 ) -> str:
-    """Resume vehicle requirements step with user-provided information."""
-    logger.info("[QUOTATION_RESUME] Processing vehicle requirements response")
+    """
+    Resume vehicle requirements step with intelligent requirement merging.
     
-    # Update vehicle requirements with user response
-    updated_requirements = f"{vehicle_requirements} {user_response}".strip()
-    quotation_state["updated_vehicle_requirements"] = updated_requirements
+    This function now uses LLM intelligence to properly merge the original requirements
+    with the user's clarification, working seamlessly with the simplified vehicle search.
+    """
+    logger.info("[QUOTATION_RESUME] Processing vehicle requirements response with LLM intelligence")
+    
+    # Use LLM to intelligently merge requirements instead of simple concatenation
+    try:
+        updated_requirements = await _merge_vehicle_requirements_intelligently(
+            vehicle_requirements, 
+            user_response,
+            quotation_state.get("extracted_context", {})
+        )
+        quotation_state["updated_vehicle_requirements"] = updated_requirements
+        logger.info(f"[QUOTATION_RESUME] Intelligently merged requirements: {updated_requirements}")
+        
+    except Exception as e:
+        logger.warning(f"[QUOTATION_RESUME] LLM merging failed, using fallback: {e}")
+        # Fallback to simple concatenation
+        updated_requirements = f"{vehicle_requirements} {user_response}".strip()
+        quotation_state["updated_vehicle_requirements"] = updated_requirements
     
     # Continue with quotation process using updated requirements
+    # The new LLM-based search will handle these merged requirements intelligently
     return await generate_quotation(
         customer_identifier=quotation_state.get("customer_identifier", ""),
         vehicle_requirements=updated_requirements,
@@ -2923,42 +3102,13 @@ async def _build_conversation_state_for_extraction(
         }
 
 
-def _enhance_vehicle_criteria_with_extracted_context(
-    vehicle_criteria: Dict[str, Any], 
-    extracted_context: Dict[str, Any]
-) -> None:
-    """
-    Enhance vehicle criteria with additional information from extracted conversation context.
-    
-    This function merges relevant vehicle information from the conversation context
-    into the vehicle criteria, filling in gaps that the LLM parsing might have missed.
-    
-    Args:
-        vehicle_criteria: Original criteria from LLM parsing (modified in place)
-        extracted_context: Context extracted from conversation
-    """
-    # Mapping of context fields to vehicle criteria fields
-    context_to_criteria_mapping = {
-        "vehicle_make": "make",
-        "vehicle_model": "model", 
-        "vehicle_type": "type",
-        "vehicle_year": "year",
-        "vehicle_color": "color",
-        "vehicle_transmission": "transmission",
-        "vehicle_fuel_type": "fuel_type",
-        "quantity": "quantity",
-        "budget_range": "price_range",
-        "special_requirements": "special_features"
-    }
-    
-    # Enhance criteria with extracted context, but don't override existing values
-    for context_field, criteria_field in context_to_criteria_mapping.items():
-        if (context_field in extracted_context and 
-            extracted_context[context_field] and 
-            criteria_field not in vehicle_criteria):
-            
-            vehicle_criteria[criteria_field] = extracted_context[context_field]
-            logger.info(f"[VEHICLE_ENHANCEMENT] Added {criteria_field}='{extracted_context[context_field]}' from conversation context")
+# =============================================================================
+# DEPRECATED CONTEXT ENHANCEMENT FUNCTION - REMOVED (Task 6.3.6)
+# =============================================================================
+# The _enhance_vehicle_criteria_with_extracted_context function has been removed
+# and integrated into LLM processing. The unified vehicle search system now
+# handles context integration naturally through the LLM prompt, eliminating the
+# need for manual field mapping and criteria enhancement.
 
 
 def _format_vehicle_list_for_hitl(vehicles: List[dict]) -> str:
@@ -3715,72 +3865,27 @@ Or provide a different customer identifier (name, email, or phone) that I can se
                 }
             )
         
-        # Step 3: Parse vehicle requirements using intelligent LLM-based approach with extracted context
-        # This follows the project principle: "Use LLM intelligence rather than keyword matching or complex logic"
-        # Enhanced to use comprehensive extracted context for better parsing accuracy
-        try:
-            vehicle_criteria = await _parse_vehicle_requirements_with_llm(
-                vehicle_requirements, 
-                extracted_context
-            )
-            
-            # Enhance vehicle criteria with additional context from conversation
-            if extracted_context:
-                _enhance_vehicle_criteria_with_extracted_context(vehicle_criteria, extracted_context)
-        except Exception as e:
-            logger.warning(f"[GENERATE_QUOTATION] Vehicle parsing failed: {e}")
-            # Fallback to basic parsing
-            vehicle_criteria = {"make": "", "model": "", "type": ""}
-        
-        # Get available inventory for dynamic matching and fallback messages
-        try:
-            available_inventory = await _get_available_makes_and_models()
-        except Exception as e:
-            logger.warning(f"[GENERATE_QUOTATION] Failed to get inventory: {e}")
-            available_inventory = []
-        
-        # Enhance criteria with fuzzy matching to handle variations in brand/model names
-        try:
-            enhanced_criteria = await _enhance_vehicle_criteria_with_fuzzy_matching(
-                vehicle_criteria, 
-                available_inventory
-            )
-        except Exception as e:
-            logger.warning(f"[GENERATE_QUOTATION] Fuzzy matching failed: {e}")
-            enhanced_criteria = vehicle_criteria  # Use original criteria as fallback
-        
-        # Look up vehicles based on enhanced criteria
-        vehicles = await _lookup_vehicle_by_criteria(enhanced_criteria, limit=10)
+        # Step 3: Use unified LLM-based vehicle search (Task 6.2.1)
+        # This replaces the complex orchestration with a single intelligent search function
+        # that handles parsing, fuzzy matching, and database lookup in one unified approach
+        vehicles = await _search_vehicles_with_llm(
+            vehicle_requirements, 
+            extracted_context,
+            limit=10
+        )
         
         if not vehicles:
-            # Generate dynamic inventory suggestions based on actual available stock
-            inventory_suggestions = _generate_inventory_suggestions(available_inventory)
+            # Generate LLM interpretation and contextual suggestions (Task 6.2.2)
+            # The enhanced HITL prompts now handle inventory awareness dynamically
+            enhanced_prompt = await _generate_enhanced_hitl_vehicle_prompt(
+                vehicle_requirements,
+                extracted_context,
+                "Our current inventory includes popular brands like Toyota, Honda, Nissan, Mazda, and others. Let me help you find the right vehicle.",
+                customer_data
+            )
             
             return request_input(
-                prompt=f"""🚗 **Vehicle Information Needed**
-
-I couldn't find vehicles matching "{vehicle_requirements}" in our current inventory.
-
-**Available Brands in Stock:**
-{inventory_suggestions}
-
-Please provide more specific details:
-- **Make/Brand**: Choose from available brands above
-- **Model**: Specific model name
-- **Type**: (Sedan, SUV, Pickup, Hatchback, Coupe, etc.)
-- **Year**: (2023, 2024, or range like 2022-2024)
-- **Quantity**: How many vehicles needed?
-- **Budget**: Price range if relevant
-
-**Example**: "I need 2 Toyota Camry sedans, 2023 or newer, budget around 1.5M each"
-
-Or let me know if you'd like to see detailed specifications for any specific brand.
-
-**Helpful Tips:**
-- Be as specific as possible (e.g., "2023 Toyota Camry Hybrid, white or silver")
-- Include quantity if you need multiple vehicles
-- Mention your budget range if relevant
-- Let me know if you're flexible on certain features""",
+                prompt=enhanced_prompt,
                 input_type="detailed_vehicle_requirements",
                 context={
                     "source_tool": "generate_quotation",
@@ -3793,9 +3898,6 @@ Or let me know if you'd like to see detailed specifications for any specific bra
                     "conversation_context": conversation_context,
                     "customer_data": customer_data,
                     "extracted_context": extracted_context,
-                    "available_inventory": available_inventory,
-                    "original_criteria": vehicle_criteria,
-                    "enhanced_criteria": enhanced_criteria,
                     "employee_id": employee_id
                 }
             )

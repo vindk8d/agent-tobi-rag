@@ -102,6 +102,23 @@ class UnifiedToolCallingRAGAgent:
 
         self._initialized = True
 
+    async def cleanup(self):
+        """Clean up agent resources on shutdown."""
+        logger.info("Cleaning up UnifiedToolCallingRAGAgent resources...")
+        try:
+            # Stop memory scheduler
+            await memory_scheduler.stop()
+            
+            # Clean up memory manager
+            await memory_manager.cleanup()
+            
+            # Reset initialization flag
+            self._initialized = False
+            
+            logger.info("Agent cleanup completed successfully")
+        except Exception as e:
+            logger.error(f"Error during agent cleanup: {e}")
+
 
 
     async def _build_graph(self) -> StateGraph:
@@ -1727,7 +1744,7 @@ Failed to deliver your message to {customer_name}.
                                     employee_id=employee_id
                                 ):
                                     # Execute tool based on type
-                                    if tool_name in ["simple_rag", "simple_query_crm_data", "trigger_customer_message", "collect_sales_requirements"]:
+                                    if tool_name in ["simple_rag", "simple_query_crm_data", "trigger_customer_message", "collect_sales_requirements", "generate_quotation"]:
                                         tool_result = await tool.ainvoke(tool_args)
                                     else:
                                         tool_result = tool.invoke(tool_args)

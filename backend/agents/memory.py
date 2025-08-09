@@ -2067,19 +2067,33 @@ class MemoryManager:
             # Initialize connection pool using psycopg3 (more compatible)
             try:
                 from psycopg_pool import AsyncConnectionPool
-                # Create pool with open=False to avoid deprecation warning
+                # Create pool with optimized settings for LangGraph Studio
+                # Reduced pool size to avoid conflicts with Supabase pooler limits
                 self.connection_pool = AsyncConnectionPool(
                     conninfo=connection_string,
-                    max_size=20,
-                    kwargs={"autocommit": True, "prepare_threshold": 0},
+                    max_size=5,  # Reduced from 20 to avoid pooler conflicts
+                    min_size=1,  # Maintain at least one connection
+                    kwargs={
+                        "autocommit": True, 
+                        "prepare_threshold": 0,
+                        "connect_timeout": 10,  # Add timeout for connections
+                    },
+                    timeout=30,  # Pool checkout timeout
+                    max_idle=300,  # Close idle connections after 5 minutes
+                    max_lifetime=3600,  # Recycle connections after 1 hour
                     open=False  # Don't auto-open in constructor
                 )
                 # Explicitly open the pool as recommended by psycopg documentation
                 await self.connection_pool.open()
+                logger.info(f"Connection pool initialized with max_size=5")
             except ImportError:
                 # Fallback to simpler approach that we know works
                 logger.info("psycopg_pool not available, using fallback connection management")
                 self.connection_pool = None  # Use direct connections instead
+            except Exception as e:
+                # If pool creation fails, use fallback
+                logger.warning(f"Connection pool creation failed: {e}, using fallback")
+                self.connection_pool = None
 
             if self.connection_pool:
                 # Initialize checkpointer
@@ -2609,11 +2623,20 @@ class MemoryManager:
         """Clean up resources."""
         if self.connection_pool:
             try:
-                await self.connection_pool.close()
-                logger.info("Connection pool closed")
+                # Wait for all pending operations to complete with timeout
+                await asyncio.wait_for(self.connection_pool.close(), timeout=10.0)
+                logger.info("Connection pool closed successfully")
+            except asyncio.TimeoutError:
+                logger.warning("Connection pool close timed out, forcing closure")
+                try:
+                    # Force close if normal close times out
+                    await self.connection_pool.close(timeout=1.0)
+                except Exception as e:
+                    logger.error(f"Error forcing connection pool close: {e}")
             except Exception as e:
                 logger.error(f"Error closing connection pool: {e}")
 
+        # Reset all components to ensure clean state
         self.checkpointer = None
         self.connection_pool = None
         self.long_term_store = None

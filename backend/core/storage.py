@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 import uuid
 from typing import Any, Dict, Optional
@@ -35,7 +36,41 @@ def _generate_quotation_filename(customer_id: str, timestamp: Optional[str] = No
     Returns:
         File name string
     """
-    safe_customer_id = (customer_id or "unknown").replace("/", "-")
+    # Comprehensive sanitization to prevent directory traversal, injection attacks, and data leakage
+    safe_customer_id = (customer_id or "unknown")
+    
+    # Remove/replace dangerous characters
+    safe_customer_id = safe_customer_id.replace("/", "-")  # Unix path separator
+    safe_customer_id = safe_customer_id.replace("\\", "-")  # Windows path separator
+    safe_customer_id = safe_customer_id.replace("..", "-")  # Directory traversal
+    safe_customer_id = safe_customer_id.replace("\x00", "")  # Null byte injection
+    safe_customer_id = safe_customer_id.replace("\n", "-")  # Newline injection
+    safe_customer_id = safe_customer_id.replace("\r", "-")  # Carriage return
+    safe_customer_id = safe_customer_id.replace(";", "-")   # Command injection
+    safe_customer_id = safe_customer_id.replace("|", "-")   # Pipe injection
+    safe_customer_id = safe_customer_id.replace("&", "-")   # Command chaining
+    safe_customer_id = safe_customer_id.replace("$", "-")   # Variable expansion
+    safe_customer_id = safe_customer_id.replace("`", "-")   # Command substitution
+    safe_customer_id = safe_customer_id.replace("'", "-")   # Single quote
+    safe_customer_id = safe_customer_id.replace('"', "-")   # Double quote
+    
+    # Remove sensitive keywords that could leak information
+    # Use word boundaries that account for underscores and other separators
+    sensitive_patterns = [
+        r'(?i)secret', r'(?i)password', r'(?i)key', r'(?i)token',
+        r'(?i)confidential', r'(?i)private', r'(?i)admin', r'(?i)root',
+        r'(?i)apikey', r'(?i)api_key', r'(?i)api-key', r'(?i)auth', r'(?i)credential'
+    ]
+    
+    for pattern in sensitive_patterns:
+        safe_customer_id = re.sub(pattern, "REDACTED", safe_customer_id)
+    
+    # Limit length to prevent buffer overflow attacks
+    safe_customer_id = safe_customer_id[:50]
+    
+    # Ensure it's not empty after sanitization
+    if not safe_customer_id or safe_customer_id.replace("-", "").replace("REDACTED", "").strip() == "":
+        safe_customer_id = "sanitized"
     # Include microseconds + short random suffix to avoid collisions within the same second
     ts = timestamp or datetime.now().strftime("%Y%m%d%H%M%S%f")
     suffix = uuid.uuid4().hex[:6]
