@@ -174,16 +174,96 @@
     - [x] 13.5.1 **TARGET**: Achieve 100% test suite success rate ✅ ACHIEVED!
     - [x] 13.5.2 **VERIFY**: All PRD requirements met without test overfitting
 
-- [ ] 14.0 Revolutionary Documentation and Developer Experience
-  - [x] 14.1 Update existing HITL documentation to reflect revolutionary 3-field management approach and elimination of HITL recursion
-  - [ ] 14.2 Create migration guide for developers updating existing tools from legacy fields to ultra-minimal 3-field structure
-  - [ ] 14.3 Document dedicated HITL request tools (`request_approval`, `request_input`, `request_selection`) with examples
-  - [ ] 14.4 Add code examples demonstrating tool-managed recursive collection pattern with agent coordination
-  - [ ] 14.5 Document agent node tool re-calling logic and `collection_mode=tool_managed` detection
-  - [ ] 14.6 Create debugging guide for troubleshooting 3-field phase transitions and tool re-calling loops
-  - [ ] 14.7 Update API documentation to reflect revolutionary 3-field definitions and tool-managed collection patterns
-  - [ ] 14.8 Document the elimination of HITLRequest class, type-based dispatch complexity, and HITL recursion
-  - [ ] 14.9 Document migration strategy and backward compatibility considerations for seamless transition from HITL-managed to tool-managed collection
+- [ ] 14.0 **UNIVERSAL HITL RECURSION SYSTEM** - Solve Grace Lee Bug & Create Portable HITL Foundation
+  - [ ] 14.1 **ROOT CAUSE ANALYSIS & ULTRA-MINIMAL DESIGN**: Address the critical HITL duplication bug with maximum simplicity
+    - [ ] 14.1.1 **DIAGNOSE** current bug: `generate_quotation` tool creates HITL requests but agent doesn't recognize them as resumable due to missing `collection_mode="tool_managed"` flag
+    - [ ] 14.1.2 **IDENTIFY** core problem: Complex tool-specific detection logic in `_is_tool_managed_collection_needed()` requires manual configuration per tool
+    - [ ] 14.1.3 **DESIGN** ultra-minimal solution: Thin wrapper system that works WITH existing 3-field HITL architecture (hitl_phase, hitl_prompt, hitl_context)
+    - [ ] 14.1.4 **ESTABLISH** design principles: Zero New State Variables, Reuse Existing Architecture, Minimal Context Data, Universal Detection Markers
+  - [ ] 14.2 **ULTRA-MINIMAL UNIVERSAL STATE WRAPPER**: Create thin helper class in `backend/agents/hitl.py` (NO NEW STATE VARIABLES)
+    - [ ] 14.2.1 **CREATE** `UniversalHITLState` as lightweight helper that reads/writes to existing `hitl_context` field only
+    - [ ] 14.2.2 **IMPLEMENT** minimal context structure with ONLY 3 essential fields: `source_tool`, `collection_mode="tool_managed"`, `original_params`
+    - [ ] 14.2.3 **ELIMINATE** convenience fields: Remove `user_responses`, `collected_data`, `step_history`, `required_fields` (not needed for routing)
+    - [ ] 14.2.4 **CREATE** `to_hitl_context()` and `from_hitl_context()` methods for existing state field integration
+  - [ ] 14.3 **@hitl_recursive_tool DECORATOR**: Ultra-simple decorator for automatic universal HITL capability
+    - [ ] 14.3.1 **IMPLEMENT** decorator that wraps any tool function to use `UniversalHITLState` helper automatically
+    - [ ] 14.3.2 **ADD** automatic detection of resume parameters (user_response, hitl_phase) from existing state and messages
+    - [ ] 14.3.3 **CREATE** resume logic that preserves original parameters and extracts user responses from message history dynamically
+    - [ ] 14.3.4 **INTEGRATE** seamlessly with existing 3-field HITL infrastructure without any state changes
+  - [ ] 14.4 **ULTRA-MINIMAL HELPER FUNCTIONS**: Standardized HITL request functions using existing patterns
+    - [ ] 14.4.1 **CREATE** `request_universal_input()` that uses existing `request_input` tool pattern with `UniversalHITLState` context
+    - [ ] 14.4.2 **CREATE** `request_universal_approval()` that uses existing `request_approval` tool pattern with `UniversalHITLState` context
+    - [ ] 14.4.3 **CREATE** `request_universal_selection()` that uses existing `request_selection` tool pattern with `UniversalHITLState` context
+    - [ ] 14.4.4 **ENSURE** all helpers generate minimal 3-field context structure automatically
+  - [ ] 14.5 **MINIMAL AGENT INTEGRATION**: Update existing agent routing with one-line universal detection
+    - [ ] 14.5.1 **UPDATE** `_is_tool_managed_collection_needed()` to detect universal marker: `hitl_context.get("collection_mode") == "tool_managed"`
+    - [ ] 14.5.2 **VERIFY** existing `_handle_tool_managed_collection()` works unchanged with universal context structure
+    - [ ] 14.5.3 **VALIDATE** existing routing logic handles universal tools without modification
+    - [ ] 14.5.4 **ENSURE** backward compatibility with existing tool-managed collection patterns
+  - [ ] 14.6 **GENERATE_QUOTATION MIGRATION**: Fix immediate Grace Lee bug using ultra-minimal universal system
+    - [ ] 14.6.1 **APPLY** `@hitl_recursive_tool` decorator to `generate_quotation` function (one line change)
+    - [ ] 14.6.2 **REPLACE** manual HITL request creation with `request_universal_input()` calls that auto-generate proper context
+    - [ ] 14.6.3 **REMOVE** custom state parameters (`quotation_state`, `current_step`) in favor of automatic `UniversalHITLState` management
+    - [ ] 14.6.4 **TEST** Grace Lee scenario: "just 1 vehicle, next week, pickup at branch, financing" should resume properly without duplication
+  - [ ] 14.7 **COMPREHENSIVE TESTING**: Validate ultra-minimal universal system and Grace Lee fix
+    - [ ] 14.7.1 **CREATE** `test_universal_hitl_system.py` with thin wrapper and minimal context tests
+    - [ ] 14.7.2 **CREATE** `test_grace_lee_bug_fix.py` to validate specific duplication issue resolution with universal system
+    - [ ] 14.7.3 **ADD** multi-tool recursion tests using different tools with universal system (backward compatibility)
+    - [ ] 14.7.4 **VALIDATE** existing HITL tools continue working unchanged alongside universal tools
+  - [ ] 14.8 **MINIMAL DOCUMENTATION & EXAMPLES**: Enable easy adoption without complexity
+    - [ ] 14.8.1 **CREATE** ultra-minimal universal HITL documentation focusing on single decorator usage
+    - [ ] 14.8.2 **DOCUMENT** one-line migration guide: "Add @hitl_recursive_tool decorator and replace manual HITL calls"
+    - [ ] 14.8.3 **PROVIDE** simple before/after code examples showing minimal changes required
+    - [ ] 14.8.4 **CREATE** troubleshooting guide focused on 3-field context debugging (reuse existing patterns)
+
+## Universal HITL Context Structure - Ultra-Minimal Design
+
+### **Existing 3-Field HITL Architecture (UNCHANGED)**
+```python
+# AgentState fields (NO NEW VARIABLES ADDED)
+hitl_phase: Optional[str]        # "needs_prompt" | "awaiting_response" | "approved" | "denied"
+hitl_prompt: Optional[str]       # User-facing prompt text
+hitl_context: Optional[Dict[str, Any]]  # Minimal execution context - ENHANCED with universal markers
+```
+
+### **Universal HITL Context Structure (WITHIN hitl_context field)**
+```python
+# ESSENTIAL FIELDS (Required for agent routing and tool re-calling)
+{
+    "source_tool": "generate_quotation",     # Which tool to re-call (ESSENTIAL)
+    "collection_mode": "tool_managed",       # Universal detection marker (ESSENTIAL)
+    "original_params": {                     # All original tool parameters (ESSENTIAL)
+        "customer_identifier": "Grace Lee",
+        "vehicle_requirements": "Prius",
+        "quotation_validity_days": 30
+    }
+}
+
+# ELIMINATED FIELDS (Redundant - removed for maximum simplicity)
+# ❌ "required_fields" - Redundant with collection_mode marker
+# ❌ "collected_data" - Can be managed inside tools or as part of original_params
+# ❌ "user_responses" - Extracted dynamically from message history
+# ❌ "step_history" - Not used by agent routing logic
+# ❌ "universal_hitl" - Redundant with collection_mode marker
+```
+
+### **State Flow Principles**
+1. **Zero New State Variables**: Uses existing hitl_context field only
+2. **Minimal Persistent Data**: Only 3 fields needed for routing/execution
+3. **Dynamic Data Extraction**: User responses extracted from messages on-demand
+4. **Tool-Managed Collection**: Tools handle their own internal state progression
+5. **Clean State Lifecycle**: Context cleared when collection complete
+
+- [ ] 15.0 Revolutionary Documentation and Developer Experience
+  - [x] 15.1 Update existing HITL documentation to reflect revolutionary 3-field management approach and elimination of HITL recursion
+  - [ ] 15.2 Create migration guide for developers updating existing tools from legacy fields to ultra-minimal 3-field structure
+  - [ ] 15.3 Document dedicated HITL request tools (`request_approval`, `request_input`, `request_selection`) with examples
+  - [ ] 15.4 Add code examples demonstrating tool-managed recursive collection pattern with agent coordination
+  - [ ] 15.5 Document agent node tool re-calling logic and `collection_mode=tool_managed` detection
+  - [ ] 15.6 Create debugging guide for troubleshooting 3-field phase transitions and tool re-calling loops
+  - [ ] 15.7 Update API documentation to reflect revolutionary 3-field definitions and tool-managed collection patterns
+  - [ ] 15.8 Document the elimination of HITLRequest class, type-based dispatch complexity, and HITL recursion
+  - [ ] 15.9 Document migration strategy and backward compatibility considerations for seamless transition from HITL-managed to tool-managed collection
 
 ## Functions to Change/Eliminate Based on Tool-Managed Recursion
 
