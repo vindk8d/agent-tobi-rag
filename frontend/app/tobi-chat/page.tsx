@@ -116,6 +116,9 @@ export default function TobiChatPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [loginPassword, setLoginPassword] = useState('Admin123')
   const [loginError, setLoginError] = useState('')
+
+  // Refs for click-outside functionality
+  const conversationSelectorRef = useRef<HTMLDivElement>(null)
   
   // User selection and conversation history
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
@@ -125,6 +128,8 @@ export default function TobiChatPage() {
   const [storedMessages, setStoredMessages] = useState<StoredMessage[]>([])
   const [showUserSelector, setShowUserSelector] = useState(false)
   const [showConversationHistory, setShowConversationHistory] = useState(false)
+  const [showConversationSelector, setShowConversationSelector] = useState(false)
+  const [userConversations, setUserConversations] = useState<{conversation_id: string, first_message: string, created_at: string, message_count: number}[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [loadingConversations, setLoadingConversations] = useState(false)
   const [loadingHistory, setLoadingHistory] = useState(false)
@@ -170,6 +175,8 @@ export default function TobiChatPage() {
     // Generate conversation ID only if none exists
     const currentConversationId = conversationId || crypto.randomUUID()
     const isNewConversation = !conversationId
+    
+    // Set conversation ID immediately for new conversations
     if (isNewConversation) {
       console.log('🔍 [CHAT] No existing conversation ID, generating new one:', currentConversationId)
       setConversationId(currentConversationId)
@@ -263,23 +270,63 @@ export default function TobiChatPage() {
 
       // FRONTEND FIX: Store both user and AI messages directly to database
       try {
-        // Store user message
-        await supabase?.from('messages').insert({
-          conversation_id: chatResponse.conversation_id,
+        console.log('🔍 [STORAGE] Storing messages with conversation_id:', currentConversationId);
+        console.log('🔍 [STORAGE] Backend returned conversation_id:', chatResponse.conversation_id);
+        
+        // Use our frontend conversation ID consistently
+        const storeConversationId = currentConversationId;
+
+        // FIRST: Ensure conversation record exists (always check and create if needed)
+        console.log('🔍 [STORAGE] Checking if conversation exists, isNewConversation:', isNewConversation);
+        
+        // Always try to create conversation record - upsert will handle duplicates gracefully
+        console.log('🔍 [STORAGE] Creating/ensuring conversation record exists...');
+        
+        const conversationResult = await supabase?.from('conversations').upsert({
+          id: storeConversationId,
+          user_id: selectedUser.id,
+          title: message.trim().substring(0, 100), // First 100 chars as title
+          metadata: {}
+        }, { 
+          onConflict: 'id',
+          ignoreDuplicates: false  // Allow updates to existing conversations
+        });
+        
+        console.log('🔍 [STORAGE] Conversation creation/update result:', conversationResult);
+        
+        if (conversationResult?.error) {
+          console.error('❌ Failed to create/update conversation record:', conversationResult.error);
+          // If conversation creation fails, don't try to insert messages
+          throw new Error(`Failed to create conversation: ${conversationResult.error.message}`);
+        }
+
+        // THEN: Store user message (let database handle created_at)
+        const userInsertResult = await supabase?.from('messages').insert({
+          conversation_id: storeConversationId,
           user_id: selectedUser.id,
           role: 'human',
           content: message.trim(),
-          created_at: new Date().toISOString(),
           metadata: {}
         });
 
-        // Store AI response  
-        await supabase?.from('messages').insert({
-          conversation_id: chatResponse.conversation_id,
+        console.log('🔍 [STORAGE] User message insert result:', userInsertResult);
+        
+        if (userInsertResult?.error) {
+          console.error('❌ User message insert error details:', userInsertResult.error);
+          console.error('❌ User message error code:', userInsertResult.error.code);
+          console.error('❌ User message error message:', userInsertResult.error.message);
+          console.error('❌ User message error details:', userInsertResult.error.details);
+        }
+
+        // Small delay to ensure user message is stored first (for chronological order)
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Store AI response (let database handle created_at)
+        const aiInsertResult = await supabase?.from('messages').insert({
+          conversation_id: storeConversationId,
           user_id: selectedUser.id,
           role: 'ai', 
           content: chatResponse.message,
-          created_at: new Date().toISOString(),
           metadata: {
             sources: chatResponse.sources,
             is_interrupted: chatResponse.is_interrupted,
@@ -287,14 +334,28 @@ export default function TobiChatPage() {
           }
         });
 
-        console.log('✅ Messages stored directly to database');
+        console.log('🔍 [STORAGE] AI message insert result:', aiInsertResult);
+        
+        if (aiInsertResult?.error) {
+          console.error('❌ AI message insert error details:', aiInsertResult.error);
+          console.error('❌ AI message error code:', aiInsertResult.error.code);
+          console.error('❌ AI message error message:', aiInsertResult.error.message);
+          console.error('❌ AI message error details:', aiInsertResult.error.details);
+        }
+        console.log('✅ Messages stored directly to database with conversation_id:', storeConversationId);
+
+        // Refresh conversations list to show the new conversation
+        if (isNewConversation) {
+          fetchUserConversations();
+        }
       } catch (storeError) {
-        console.warn('❌ Failed to store messages directly:', storeError);
+        console.error('❌ Failed to store messages directly:', storeError);
+        console.error('❌ Store error details:', storeError);
       }
 
       // Update conversation title if this is the first message
-      if (isNewConversation && chatResponse.conversation_id) {
-        await updateConversationTitle(chatResponse.conversation_id, message.trim())
+      if (isNewConversation) {
+        await updateConversationTitle(currentConversationId, message.trim())
       }
 
     } catch (err) {
@@ -394,10 +455,12 @@ export default function TobiChatPage() {
         setMessages(existingMessages);
         setConversationId(conversationIdFromMessages);
       } else {
-        // No messages found - start fresh
+        // No messages found - generate new conversation ID for this user
         console.log('No messages found for user:', selectedUser.id);
+        const newConversationId = crypto.randomUUID();
+        console.log('🆕 Generated new conversation ID for user with no messages:', newConversationId);
         setMessages([]);
-        setConversationId(null);
+        setConversationId(newConversationId);
       }
     } catch (error) {
       console.error('Error loading messages:', error);
@@ -409,15 +472,114 @@ export default function TobiChatPage() {
     }
   }, [selectedUser, normalizeRole, supabase]);
 
+  // Fetch conversations for selected user
+  const fetchUserConversations = useCallback(async () => {
+    if (!selectedUser || !supabase) return;
+    
+    setLoadingConversations(true);
+    try {
+      // Get unique conversations for this user with first message and message count
+      const { data, error } = await supabase
+        .from('messages')
+        .select('conversation_id, content, created_at')
+        .eq('user_id', selectedUser.id)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching conversations:', error);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        // Group by conversation_id and get first message + count
+        const conversationsMap = new Map();
+        data.forEach(msg => {
+          const convId = msg.conversation_id;
+          if (!conversationsMap.has(convId)) {
+            conversationsMap.set(convId, {
+              conversation_id: convId,
+              first_message: msg.content.substring(0, 50) + (msg.content.length > 50 ? '...' : ''),
+              created_at: msg.created_at,
+              message_count: 1
+            });
+          } else {
+            conversationsMap.get(convId).message_count++;
+          }
+        });
+
+        const conversations = Array.from(conversationsMap.values())
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        
+        setUserConversations(conversations);
+      } else {
+        setUserConversations([]);
+      }
+    } catch (error) {
+      console.error('Error fetching user conversations:', error);
+      setUserConversations([]);
+    } finally {
+      setLoadingConversations(false);
+    }
+  }, [selectedUser, supabase]);
+
+  // Load specific conversation messages
+  const loadConversationMessages = useCallback(async (convId: string) => {
+    if (!selectedUser || !supabase) return;
+
+    try {
+      setLoadingHistory(true);
+      setError(null);
+
+      const { data: messagesData, error: messagesError } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('user_id', selectedUser.id)
+        .eq('conversation_id', convId)
+        .order('created_at', { ascending: true });
+
+      if (messagesError) {
+        console.error('Messages query error:', messagesError);
+        setMessages([]);
+        return;
+      }
+
+      console.log(`Loading ${messagesData?.length || 0} messages for conversation ${convId}`);
+
+      if (messagesData && messagesData.length > 0) {
+        const existingMessages: ChatMessage[] = messagesData.map((msg: any) => ({
+          id: msg.id,
+          role: normalizeRole(msg.role) === 'human' ? 'user' : 'assistant',
+          content: msg.content,
+          created_at: msg.created_at,
+          sources: msg.metadata?.sources || [],
+          is_interrupted: msg.metadata?.is_interrupted,
+          hitl_phase: msg.metadata?.hitl_phase,
+          error: msg.metadata?.error,
+          error_type: msg.metadata?.error_type
+        }));
+
+        setMessages(existingMessages);
+        setConversationId(convId);
+      }
+    } catch (error) {
+      console.error('Error loading conversation messages:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load conversation');
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [selectedUser, normalizeRole, supabase]);
+
   // Load messages when user changes - exactly like dualagentdebug
   useEffect(() => {
     if (selectedUser) {
       loadUserMessages();
+      fetchUserConversations();
     } else {
       setMessages([]);
       setConversationId(null);
+      setUserConversations([]);
     }
-  }, [selectedUser, loadUserMessages])
+  }, [selectedUser, loadUserMessages, fetchUserConversations]);
 
   const fetchUsers = async () => {
     setLoadingUsers(true)
@@ -523,7 +685,8 @@ export default function TobiChatPage() {
         { 
           event: 'INSERT',
           schema: 'public', 
-          table: 'messages'
+          table: 'messages',
+          filter: `user_id=eq.${selectedUser?.id}`
         }, 
         (payload) => {
           console.log('📨 New message detected:', payload);
@@ -542,7 +705,7 @@ export default function TobiChatPage() {
             // Small delay to ensure message is fully persisted, then refresh
             setTimeout(async () => {
               try {
-                await loadUserMessages();
+                await loadConversationMessages(conversationId);
               } finally {
                 setIsRefreshing(false);
               }
@@ -558,7 +721,7 @@ export default function TobiChatPage() {
       console.log('🧹 Cleaning up realtime subscription');
       supabase.removeChannel(channel);
     };
-  }, [conversationId, loadUserMessages, isRefreshing])
+  }, [conversationId, selectedUser, loadConversationMessages, isRefreshing])
 
   // Auto-resize textarea with optimization
   const resizeTextarea = useCallback(() => {
@@ -574,6 +737,20 @@ export default function TobiChatPage() {
     const timeoutId = setTimeout(resizeTextarea, 0)
     return () => clearTimeout(timeoutId)
   }, [input, resizeTextarea])
+
+  // Click outside to close conversation selector
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (conversationSelectorRef.current && !conversationSelectorRef.current.contains(event.target as Node)) {
+        setShowConversationSelector(false)
+      }
+    }
+
+    if (showConversationSelector) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showConversationSelector])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -615,7 +792,6 @@ export default function TobiChatPage() {
     setSelectedUser(null)
     setLoginPassword('')
     setLoginError('')
-    clearConversation()
   }
 
   // File download handler
@@ -813,6 +989,97 @@ export default function TobiChatPage() {
                   )}
                 </div>
               </div>
+
+              {/* Conversation Selection - only show if user is selected */}
+              {selectedUser && (
+                <div>
+                  <label className="block text-sm font-normal text-gray-700 mb-2">
+                    Select Conversation
+                  </label>
+                  <div className="relative" ref={conversationSelectorRef}>
+                    <button
+                      type="button"
+                      onClick={() => setShowConversationSelector(!showConversationSelector)}
+                      className="w-full p-3 text-left border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    >
+                      {conversationId 
+                        ? `${conversationId.substring(0, 8)}... (Current)` 
+                        : 'Choose conversation or start new...'}
+                      <svg className="w-5 h-5 absolute right-3 top-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {showConversationSelector && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+                        {loadingConversations ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">Loading conversations...</div>
+                        ) : (
+                          <>
+                            {/* New Conversation Option */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newConvId = crypto.randomUUID();
+                                setMessages([]);
+                                setConversationId(newConvId);
+                                setShowConversationSelector(false);
+                                console.log('🆕 Starting new conversation with ID:', newConvId);
+                              }}
+                              className="w-full px-3 py-3 text-left hover:bg-green-50 focus:bg-green-50 focus:outline-none border-b border-gray-100"
+                            >
+                              <div className="flex items-center space-x-2">
+                                <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                </svg>
+                                <span className="text-sm font-medium text-green-800">Start New Conversation</span>
+                              </div>
+                            </button>
+
+                            {/* Existing Conversations */}
+                            {userConversations.map((conv) => (
+                              <button
+                                key={conv.conversation_id}
+                                type="button"
+                                onClick={() => {
+                                  loadConversationMessages(conv.conversation_id);
+                                  setShowConversationSelector(false);
+                                }}
+                                className={`w-full px-3 py-3 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none ${
+                                  conversationId === conv.conversation_id ? 'bg-primary-100 border-l-4 border-primary-500' : ''
+                                }`}
+                              >
+                                <div>
+                                  <div className="flex items-center justify-between mb-1">
+                                    <div className="text-xs text-gray-500 font-mono">
+                                      {conv.conversation_id.substring(0, 8)}...
+                                    </div>
+                                    <span className="text-xs text-gray-400">
+                                      {conv.message_count} msg{conv.message_count !== 1 ? 's' : ''}
+                                    </span>
+                                  </div>
+                                  <div className="text-sm text-gray-700 truncate">
+                                    {conv.first_message}
+                                  </div>
+                                  <div className="text-xs text-gray-400 mt-1">
+                                    {new Date(conv.created_at).toLocaleDateString()}
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+
+                            {userConversations.length === 0 && (
+                              <div className="px-3 py-2 text-sm text-gray-500 text-center">
+                                No previous conversations found
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Password Input */}
               <div>
@@ -1186,13 +1453,92 @@ export default function TobiChatPage() {
         </form>
           
           {/* Status and ID display */}
-          <div className="mt-2 text-xs text-gray-400 text-center flex items-center justify-center space-x-4">
-            <span>ID: {conversationId ? conversationId.substring(0, 8) + '...' : 'New conversation'}</span>
+          <div className="mt-2 text-xs text-gray-400 text-center flex items-center justify-center space-x-4 relative">
+            {selectedUser ? (
+              <button 
+                onClick={() => setShowConversationSelector(!showConversationSelector)}
+                className="hover:text-gray-300 transition-colors cursor-pointer bg-transparent border-none p-0 font-inherit text-inherit"
+                title="Click to select conversation"
+              >
+                ID: {conversationId ? conversationId.substring(0, 8) + '...' : 'New conversation'}
+              </button>
+            ) : (
+              <span>ID: {conversationId ? conversationId.substring(0, 8) + '...' : 'New conversation'}</span>
+            )}
             {hitlState.isActive && (
               <span className="text-amber-600 font-normal">● HITL Active</span>
             )}
             {lastSources.length > 0 && (
               <span className="text-blue-600">📚 {lastSources.length} sources</span>
+            )}
+
+            {/* Conversation selector dropdown - appears when clicking ID */}
+            {showConversationSelector && selectedUser && (
+              <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-96 bg-white border border-gray-300 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+                {loadingConversations ? (
+                  <div className="px-3 py-2 text-sm text-gray-500">Loading conversations...</div>
+                ) : (
+                  <>
+                    {/* New Conversation Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newConvId = crypto.randomUUID();
+                        setMessages([]);
+                        setConversationId(newConvId);
+                        setShowConversationSelector(false);
+                        console.log('🆕 Starting new conversation with ID:', newConvId);
+                      }}
+                      className="w-full px-3 py-3 text-left hover:bg-green-50 focus:bg-green-50 focus:outline-none border-b border-gray-100"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        <span className="text-sm font-medium text-green-800">Start New Conversation</span>
+                      </div>
+                    </button>
+
+                    {/* Existing Conversations */}
+                    {userConversations.map((conv) => (
+                      <button
+                        key={conv.conversation_id}
+                        type="button"
+                        onClick={() => {
+                          loadConversationMessages(conv.conversation_id);
+                          setShowConversationSelector(false);
+                        }}
+                        className={`w-full px-3 py-3 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none ${
+                          conversationId === conv.conversation_id ? 'bg-primary-100 border-l-4 border-primary-500' : ''
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="text-xs text-gray-500 font-mono">
+                              {conv.conversation_id.substring(0, 8)}...
+                            </div>
+                            <span className="text-xs text-gray-400">
+                              {conv.message_count} msg{conv.message_count !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          <div className="text-sm text-gray-700 truncate">
+                            {conv.first_message}
+                          </div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            {new Date(conv.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+
+                    {userConversations.length === 0 && (
+                      <div className="px-3 py-2 text-sm text-gray-500 text-center">
+                        No previous conversations found
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             )}
           </div>
         </div>
