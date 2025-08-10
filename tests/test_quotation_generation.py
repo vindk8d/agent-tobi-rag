@@ -35,7 +35,7 @@ try:
             generate_quotation,
             GenerateQuotationParams,
             _lookup_customer,
-            _lookup_vehicle_by_criteria,
+            _search_vehicles_with_llm,
             _lookup_current_pricing,
             _lookup_employee_details,
             UserContext
@@ -57,7 +57,7 @@ try:
         generate_quotation = None
         GenerateQuotationParams = None
         _lookup_customer = None
-        _lookup_vehicle_by_criteria = None
+        _search_vehicles_with_llm = None
         _lookup_current_pricing = None
         _lookup_employee_details = None
         UserContext = None
@@ -72,7 +72,7 @@ except ImportError as e:
     generate_quotation = None
     GenerateQuotationParams = None
     _lookup_customer = None
-    _lookup_vehicle_by_criteria = None
+    _search_vehicles_with_llm = None
     _lookup_current_pricing = None
     _lookup_employee_details = None
     UserContext = None
@@ -157,14 +157,11 @@ class TestQuotationGenerationIntegration:
         
         with patch('backend.agents.tools.get_current_employee_id', return_value="emp001"), \
              patch('backend.agents.tools._lookup_customer', return_value=sample_customer_data), \
-             patch('backend.agents.tools._lookup_vehicle_by_criteria', return_value=sample_vehicle_data), \
+             patch('backend.agents.tools._search_vehicles_with_llm', return_value=sample_vehicle_data), \
              patch('backend.agents.tools._lookup_current_pricing', return_value=sample_pricing_data), \
              patch('backend.agents.tools._lookup_employee_details', return_value=sample_employee_data), \
              patch('backend.agents.tools.get_recent_conversation_context', return_value="Customer wants Toyota Camry"), \
              patch('backend.agents.tools.extract_fields_from_conversation', return_value={}), \
-             patch('backend.agents.tools._parse_vehicle_requirements_with_llm', return_value={"make": "Toyota", "model": "Camry", "type": "Sedan"}), \
-             patch('backend.agents.tools._get_available_makes_and_models', return_value=[{"make": "Toyota", "models": ["Camry"]}]), \
-             patch('backend.agents.tools._enhance_vehicle_criteria_with_fuzzy_matching', return_value={"make": "Toyota", "model": "Camry", "type": "Sedan"}), \
              patch('backend.agents.tools.request_approval', return_value="HITL_REQUIRED:approval:{\"prompt\": \"📄 **QUOTATION APPROVAL REQUIRED**\\n\\nPreview content\\n\\n---\\n\\n🎯 **READY FOR FINAL GENERATION**\", \"context\": {}}") as mock_approval, \
              patch('backend.core.pdf_generator.generate_quotation_pdf', return_value=b"dummy_pdf_content"), \
              patch('backend.core.storage.upload_quotation_pdf', return_value="quotations/test_quotation.pdf"), \
@@ -226,11 +223,8 @@ class TestQuotationGenerationIntegration:
              patch('backend.agents.tools._lookup_customer', return_value=sample_customer_data), \
              patch('backend.agents.tools.get_recent_conversation_context', return_value=""), \
              patch('backend.agents.tools.extract_fields_from_conversation', return_value={}), \
-             patch('backend.agents.tools._parse_vehicle_requirements_with_llm', return_value={"make": "Lamborghini", "model": "Aventador", "type": "Sports Car"}), \
-             patch('backend.agents.tools._get_available_makes_and_models', return_value=[{"make": "Toyota", "models": ["Camry"]}]), \
-             patch('backend.agents.tools._enhance_vehicle_criteria_with_fuzzy_matching', return_value={"make": "Lamborghini", "model": "Aventador", "type": "Sports Car"}), \
-             patch('backend.agents.tools._lookup_vehicle_by_criteria', return_value=[]), \
-             patch('backend.agents.tools._generate_inventory_suggestions', return_value="Available: Toyota Camry, Honda CR-V"), \
+             patch('backend.agents.tools._search_vehicles_with_llm', return_value=[]), \
+             patch('backend.agents.tools._generate_enhanced_hitl_vehicle_prompt', return_value="🚗 **Let me help you find the right vehicle**\n\nI couldn't find any Lamborghini Aventador in our inventory.\n\n**Available alternatives:**\n- Toyota Camry\n- Honda CR-V"), \
              patch('backend.agents.tools.request_input') as mock_input:
             
             mock_input.return_value = "HITL_REQUEST"
@@ -344,14 +338,11 @@ class TestQuotationGenerationIntegration:
         
         with patch('backend.agents.tools.get_current_employee_id', return_value="emp001"), \
              patch('backend.agents.tools._lookup_customer', return_value=sample_customer_data), \
-             patch('backend.agents.tools._lookup_vehicle_by_criteria', return_value=sample_vehicle_data), \
+             patch('backend.agents.tools._search_vehicles_with_llm', return_value=sample_vehicle_data), \
              patch('backend.agents.tools._lookup_current_pricing', return_value=sample_pricing_data), \
              patch('backend.agents.tools._lookup_employee_details', return_value=sample_employee_data), \
              patch('backend.agents.tools.get_recent_conversation_context', return_value=""), \
              patch('backend.agents.tools.extract_fields_from_conversation', return_value={}), \
-             patch('backend.agents.tools._parse_vehicle_requirements_with_llm', return_value={"make": "Toyota", "model": "Camry", "type": "Sedan"}), \
-             patch('backend.agents.tools._get_available_makes_and_models', return_value=[]), \
-             patch('backend.agents.tools._enhance_vehicle_criteria_with_fuzzy_matching', return_value={"make": "Toyota", "model": "Camry", "type": "Sedan"}), \
              patch('backend.agents.tools._create_quotation_preview', return_value="Preview content"), \
              patch('backend.agents.tools._identify_missing_quotation_information', return_value={}), \
              patch('backend.agents.tools.request_approval') as mock_approval:

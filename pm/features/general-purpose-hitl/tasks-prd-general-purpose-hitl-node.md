@@ -175,46 +175,65 @@
     - [x] 13.5.2 **VERIFY**: All PRD requirements met without test overfitting
 
 - [ ] 14.0 **UNIVERSAL HITL RECURSION SYSTEM** - Solve Grace Lee Bug & Create Portable HITL Foundation
-  - [ ] 14.1 **ROOT CAUSE ANALYSIS & ULTRA-MINIMAL DESIGN**: Address the critical HITL duplication bug with maximum simplicity
-    - [ ] 14.1.1 **DIAGNOSE** current bug: `generate_quotation` tool creates HITL requests but agent doesn't recognize them as resumable due to missing `collection_mode="tool_managed"` flag
-    - [ ] 14.1.2 **IDENTIFY** core problem: Complex tool-specific detection logic in `_is_tool_managed_collection_needed()` requires manual configuration per tool
-    - [ ] 14.1.3 **DESIGN** ultra-minimal solution: Thin wrapper system that works WITH existing 3-field HITL architecture (hitl_phase, hitl_prompt, hitl_context)
-    - [ ] 14.1.4 **ESTABLISH** design principles: Zero New State Variables, Reuse Existing Architecture, Minimal Context Data, Universal Detection Markers
-  - [ ] 14.2 **ULTRA-MINIMAL UNIVERSAL STATE WRAPPER**: Create thin helper class in `backend/agents/hitl.py` (NO NEW STATE VARIABLES)
-    - [ ] 14.2.1 **CREATE** `UniversalHITLState` as lightweight helper that reads/writes to existing `hitl_context` field only
-    - [ ] 14.2.2 **IMPLEMENT** minimal context structure with ONLY 3 essential fields: `source_tool`, `collection_mode="tool_managed"`, `original_params`
-    - [ ] 14.2.3 **ELIMINATE** convenience fields: Remove `user_responses`, `collected_data`, `step_history`, `required_fields` (not needed for routing)
-    - [ ] 14.2.4 **CREATE** `to_hitl_context()` and `from_hitl_context()` methods for existing state field integration
-  - [ ] 14.3 **@hitl_recursive_tool DECORATOR**: Ultra-simple decorator for automatic universal HITL capability
-    - [ ] 14.3.1 **IMPLEMENT** decorator that wraps any tool function to use `UniversalHITLState` helper automatically
-    - [ ] 14.3.2 **ADD** automatic detection of resume parameters (user_response, hitl_phase) from existing state and messages
-    - [ ] 14.3.3 **CREATE** resume logic that preserves original parameters and extracts user responses from message history dynamically
-    - [ ] 14.3.4 **INTEGRATE** seamlessly with existing 3-field HITL infrastructure without any state changes
-  - [ ] 14.4 **ULTRA-MINIMAL HELPER FUNCTIONS**: Standardized HITL request functions using existing patterns
-    - [ ] 14.4.1 **CREATE** `request_universal_input()` that uses existing `request_input` tool pattern with `UniversalHITLState` context
-    - [ ] 14.4.2 **CREATE** `request_universal_approval()` that uses existing `request_approval` tool pattern with `UniversalHITLState` context
-    - [ ] 14.4.3 **CREATE** `request_universal_selection()` that uses existing `request_selection` tool pattern with `UniversalHITLState` context
-    - [ ] 14.4.4 **ENSURE** all helpers generate minimal 3-field context structure automatically
-  - [ ] 14.5 **MINIMAL AGENT INTEGRATION**: Update existing agent routing with one-line universal detection
-    - [ ] 14.5.1 **UPDATE** `_is_tool_managed_collection_needed()` to detect universal marker: `hitl_context.get("collection_mode") == "tool_managed"`
-    - [ ] 14.5.2 **VERIFY** existing `_handle_tool_managed_collection()` works unchanged with universal context structure
-    - [ ] 14.5.3 **VALIDATE** existing routing logic handles universal tools without modification
-    - [ ] 14.5.4 **ENSURE** backward compatibility with existing tool-managed collection patterns
-  - [ ] 14.6 **GENERATE_QUOTATION MIGRATION**: Fix immediate Grace Lee bug using ultra-minimal universal system
-    - [ ] 14.6.1 **APPLY** `@hitl_recursive_tool` decorator to `generate_quotation` function (one line change)
-    - [ ] 14.6.2 **REPLACE** manual HITL request creation with `request_universal_input()` calls that auto-generate proper context
-    - [ ] 14.6.3 **REMOVE** custom state parameters (`quotation_state`, `current_step`) in favor of automatic `UniversalHITLState` management
-    - [ ] 14.6.4 **TEST** Grace Lee scenario: "just 1 vehicle, next week, pickup at branch, financing" should resume properly without duplication
-  - [ ] 14.7 **COMPREHENSIVE TESTING**: Validate ultra-minimal universal system and Grace Lee fix
-    - [ ] 14.7.1 **CREATE** `test_universal_hitl_system.py` with thin wrapper and minimal context tests
-    - [ ] 14.7.2 **CREATE** `test_grace_lee_bug_fix.py` to validate specific duplication issue resolution with universal system
-    - [ ] 14.7.3 **ADD** multi-tool recursion tests using different tools with universal system (backward compatibility)
-    - [ ] 14.7.4 **VALIDATE** existing HITL tools continue working unchanged alongside universal tools
-  - [ ] 14.8 **MINIMAL DOCUMENTATION & EXAMPLES**: Enable easy adoption without complexity
-    - [ ] 14.8.1 **CREATE** ultra-minimal universal HITL documentation focusing on single decorator usage
-    - [ ] 14.8.2 **DOCUMENT** one-line migration guide: "Add @hitl_recursive_tool decorator and replace manual HITL calls"
-    - [ ] 14.8.3 **PROVIDE** simple before/after code examples showing minimal changes required
-    - [ ] 14.8.4 **CREATE** troubleshooting guide focused on 3-field context debugging (reuse existing patterns)
+  - [x] 14.1 **ROOT CAUSE ANALYSIS & ULTRA-MINIMAL DESIGN**: Address the critical HITL duplication bug with maximum simplicity
+    - [x] 14.1.1 **DIAGNOSE** current bug: `generate_quotation` tool creates HITL requests but agent doesn't recognize them as resumable due to missing `collection_mode="tool_managed"` flag
+    - [x] 14.1.2 **IDENTIFY** core problem: Complex tool-specific detection logic in `_is_tool_managed_collection_needed()` requires manual configuration per tool
+    - [x] 14.1.3 **DESIGN** ultra-minimal solution: Thin wrapper system that works WITH existing 3-field HITL architecture (hitl_phase, hitl_prompt, hitl_context)
+    - [x] 14.1.4 **ESTABLISH** design principles: Zero New State Variables, Reuse Existing Architecture, Minimal Context Data, Universal Detection Markers
+  - [x] 14.2 **ULTRA-MINIMAL UNIVERSAL STATE WRAPPER**: Create thin helper class in `backend/agents/hitl.py` (NO NEW STATE VARIABLES)
+    - [x] 14.2.1 **CREATE** `UniversalHITLControl` as lightweight helper that reads/writes to existing `hitl_context` field only
+    - [x] 14.2.2 **IMPLEMENT** minimal context structure with ONLY 3 essential fields: `source_tool`, `collection_mode="tool_managed"`, `original_params`
+    - [x] 14.2.3 **ELIMINATE** convenience fields: Remove `user_responses`, `collected_data`, `step_history`, `required_fields` (not needed for routing)
+    - [x] 14.2.4 **CREATE** `to_hitl_context()` and `from_hitl_context()` methods for existing state field integration
+  - [x] 14.3 **@hitl_recursive_tool DECORATOR**: Ultra-simple decorator for automatic universal HITL capability
+    - [x] 14.3.1 **IMPLEMENT** decorator that wraps any tool function to use `UniversalHITLControl` helper automatically
+    - [x] 14.3.2 **ADD** automatic detection of resume parameters (user_response, hitl_phase) from existing state and messages
+    - [x] 14.3.3 **CREATE** resume logic that preserves original parameters and extracts user responses from message history dynamically
+    - [x] 14.3.4 **INTEGRATE** seamlessly with existing 3-field HITL infrastructure without any state changes
+  - [x] 14.4 **ENHANCE EXISTING HITL HELPER FUNCTIONS**: Update existing tools to work with UniversalHITLControl automatically
+    - [x] 14.4.1 **ENHANCE** existing `request_input` tool to detect `UniversalHITLControl` context and auto-generate universal markers
+    - [x] 14.4.2 **ENHANCE** existing `request_approval` tool to detect `UniversalHITLControl` context and auto-generate universal markers  
+    - [x] 14.4.3 **ENHANCE** existing `request_selection` tool to detect `UniversalHITLControl` context and auto-generate universal markers
+    - [x] 14.4.4 **ENSURE** enhanced tools maintain backward compatibility while adding universal HITL capability
+  - [x] 14.5 **MINIMAL AGENT INTEGRATION**: Update existing agent routing with one-line universal detection
+    - [x] 14.5.1 **UPDATE** `_is_tool_managed_collection_needed()` to detect universal marker: `hitl_context.get("collection_mode") == "tool_managed"`
+    - [x] 14.5.2 **VERIFY** existing `_handle_tool_managed_collection()` works unchanged with universal context structure
+    - [x] 14.5.3 **VALIDATE** existing routing logic handles universal tools without modification
+    - [x] 14.5.4 **ENSURE** backward compatibility with existing tool-managed collection patterns
+  - [x] 14.6 **GENERATE_QUOTATION MIGRATION**: Fix immediate Grace Lee bug using ultra-minimal universal system
+    - [x] 14.6.1 **APPLY** `@hitl_recursive_tool` decorator to `generate_quotation` function (one line change)
+    - [x] 14.6.2 **REPLACE** manual HITL request creation with enhanced `request_input()` calls that auto-detect universal context
+    - [x] 14.6.3 **REMOVE** custom state parameters (`quotation_state`, `current_step`) in favor of automatic `UniversalHITLControl` management
+    - [x] 14.6.4 **TEST** Grace Lee scenario: "just 1 vehicle, next week, pickup at branch, financing" should resume properly without duplication
+  - [x] 14.7 **COMPREHENSIVE TESTING**: Validate ultra-minimal universal system and Grace Lee fix
+    - [x] 14.7.1 **CREATE** `test_universal_hitl_system.py` with thin wrapper and minimal context tests
+    - [x] 14.7.2 **CREATE** `test_grace_lee_bug_fix.py` to validate specific duplication issue resolution with universal system
+    - [x] 14.7.3 **ADD** multi-tool recursion tests using different tools with universal system (backward compatibility)
+    - [x] 14.7.4 **VALIDATE** existing HITL tools continue working unchanged alongside universal tools
+  - [x] 14.8 **CRITICAL BUG FIX**: Fixed chat API routing logic that prevented HITL resume
+    - [x] 14.8.1 **IDENTIFIED** root cause: `is_awaiting_hitl=True` but routing required both `is_awaiting_hitl AND is_approval_message`
+    - [x] 14.8.2 **FIXED** chat.py line 149: changed `if is_awaiting_hitl and is_approval_message:` to `if is_awaiting_hitl:`
+    - [x] 14.8.3 **DEPLOYED** fix via Docker container restart - Grace Lee bug should now be resolved
+    - [x] 14.8.4 **SECOND BUG IDENTIFIED**: LLM interpretation issue - "INPUT" responses were treated as denials for tool-managed collections
+    - [x] 14.8.5 **FIXED** agent resume logic: For `collection_mode="tool_managed"`, both "INPUT" and "approval" responses continue the tool
+    - [x] 14.8.6 **DEPLOYED** second fix - Grace Lee bug should now be completely resolved
+    - [x] 14.8.7 **THIRD BUG IDENTIFIED**: Real denials returned original HITL prompt instead of proper cancellation message
+    - [x] 14.8.8 **FIXED** denial handling: Added context-aware cancellation messages for different tools (quotation, messaging, etc.)
+    - [x] 14.8.9 **DEPLOYED** third fix - Real denials now show proper "I understand. I've cancelled..." messages
+    - [x] 14.8.10 **FOURTH BUG IDENTIFIED**: Universal tool-managed collections weren't working - approved HITL routed to memory store instead of back to employee_agent
+    - [x] 14.8.11 **FIXED** routing logic: When `hitl_phase=approved` and `collection_mode=tool_managed`, route back to employee_agent to continue tool
+    - [x] 14.8.12 **DEPLOYED** fourth fix - Universal HITL system should now work correctly for tool-managed collections
+    - [x] 14.8.13 **FIFTH BUG IDENTIFIED**: astream() was receiving incomplete `hitl_update` instead of complete state, causing LangGraph execution failure
+    - [x] 14.8.14 **FIXED** state parameter: Pass `complete_updated_state = {**current_state.values, **hitl_update}` to astream() instead of just `hitl_update`
+    - [x] 14.8.15 **DEPLOYED** fifth fix - Grace Lee bug should now be completely resolved with proper LangGraph state handling
+    - [x] 14.8.16 **SIXTH BUG IDENTIFIED**: State parameter mismatch - routing method passed `state` but resume method passed `state.values` to `_is_tool_managed_collection_needed()`
+    - [x] 14.8.17 **FIXED** state parameter consistency: Both routing and resume now pass `state.values` to ensure consistent universal collection detection
+    - [x] 14.8.18 **DEPLOYED** sixth fix - Universal HITL system should now work correctly with consistent state parameter handling
+  - [ ] 14.9 **MINIMAL DOCUMENTATION & EXAMPLES**: Enable easy adoption without complexity
+    - [ ] 14.9.1 **CREATE** ultra-minimal universal HITL documentation focusing on single decorator usage
+    - [ ] 14.9.2 **DOCUMENT** one-line migration guide: "Add @hitl_recursive_tool decorator and replace manual HITL calls"
+    - [ ] 14.9.3 **PROVIDE** simple before/after code examples showing minimal changes required
+    - [ ] 14.9.4 **CREATE** troubleshooting guide focused on 3-field context debugging (reuse existing patterns)
 
 ## Universal HITL Context Structure - Ultra-Minimal Design
 
@@ -226,7 +245,7 @@ hitl_prompt: Optional[str]       # User-facing prompt text
 hitl_context: Optional[Dict[str, Any]]  # Minimal execution context - ENHANCED with universal markers
 ```
 
-### **Universal HITL Context Structure (WITHIN hitl_context field)**
+### **Universal HITL Control Structure (WITHIN hitl_context field)**
 ```python
 # ESSENTIAL FIELDS (Required for agent routing and tool re-calling)
 {

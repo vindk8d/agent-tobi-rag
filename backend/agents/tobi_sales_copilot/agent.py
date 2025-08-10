@@ -169,7 +169,10 @@ class UnifiedToolCallingRAGAgent:
             self.route_from_employee_agent,
             {
                 "hitl_node": "hitl_node",
-                "ea_memory_store": "ea_memory_store"
+                "ea_memory_store": "ea_memory_store",
+                # Allow routing back to employee_agent for universal tool-managed collection
+                # This enables the agent to re-call tools with HITL-provided input
+                "employee_agent": "employee_agent",
             },
         )
         
@@ -1242,6 +1245,11 @@ This information from your past interactions may help me better assist you.
             logger.info(f"[EMPLOYEE_ROUTING] ✅ HITL prompt needed - tool: {source_tool}")
             return "hitl_node"
         elif hitl_phase in ["approved", "denied"]:
+            # Check if this is a tool-managed collection that should continue
+            if hitl_phase == "approved" and hitl_context and self._is_tool_managed_collection_needed(hitl_context, state):
+                logger.info(f"[EMPLOYEE_ROUTING] ✅ HITL approved for tool-managed collection - routing back to employee_agent")
+                return "employee_agent"
+            
             # HITL completed, route to memory storage to finish
             logger.info(f"[EMPLOYEE_ROUTING] ✅ HITL completed: {hitl_phase} - routing to memory store")
             return "ea_memory_store"
@@ -1296,7 +1304,7 @@ This information from your past interactions may help me better assist you.
 
     def _is_tool_managed_collection_needed(self, hitl_context: Dict[str, Any], state: Dict[str, Any]) -> bool:
         """
-        REVOLUTIONARY: Detect if tool-managed collection is needed (Task 8.4).
+        REVOLUTIONARY: Detect if universal tool-managed collection is needed (Task 14.5.1).
         
         Check if we're coming back from HITL with a context that indicates
         a tool needs to be re-called with user response for collection.
@@ -1313,56 +1321,60 @@ This information from your past interactions may help me better assist you.
             if not hitl_context:
                 return False
             
-            # Look for indicators that this is tool-managed collection
+            # Normalize state into a plain dict
+            state_dict: Dict[str, Any]
+            if isinstance(state, dict):
+                state_dict = state
+            else:
+                state_dict = getattr(state, "values", {}) or {}
+
+            # Get basic requirements
             source_tool = hitl_context.get("source_tool")
+            hitl_phase = state_dict.get("hitl_phase")
             collection_mode = hitl_context.get("collection_mode")
-            required_fields = hitl_context.get("required_fields")
-            collected_data = hitl_context.get("collected_data")
             
-            # Tool-managed collection indicators:
-            # 1. Has source_tool (which tool to re-call)
-            # 2. Has collection_mode="tool_managed" OR has required_fields structure
-            # 3. We're coming back from HITL (hitl_phase exists)
-            hitl_phase = state.get("hitl_phase")
+            # Must have all universal requirements
+            if not source_tool or hitl_phase not in ["approved", "denied"] or collection_mode != "tool_managed":
+                return False
             
-            is_tool_managed = (
-                source_tool and 
-                (collection_mode == "tool_managed" or required_fields) and
-                hitl_phase in ["approved", "denied"]  # Coming back from HITL processing
-            )
+            # Universal tool-managed collection detected
+            logger.info(f"[UNIVERSAL_HITL] ✅ Universal tool-managed collection detected:")
+            logger.info(f"[UNIVERSAL_HITL]   └─ source_tool: {source_tool}")
+            logger.info(f"[UNIVERSAL_HITL]   └─ collection_mode: {collection_mode}")
+            logger.info(f"[UNIVERSAL_HITL]   └─ hitl_phase: {hitl_phase}")
+            logger.info(f"[UNIVERSAL_HITL]   └─ original_params: {list(hitl_context.get('original_params', {}).keys())}")
             
-            if is_tool_managed:
-                logger.info(f"[TOOL_COLLECTION_DETECT] ✅ Tool-managed collection needed:")
-                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ source_tool: {source_tool}")
-                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ collection_mode: {collection_mode}")
-                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ required_fields: {list(required_fields.keys()) if required_fields else None}")
-                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ collected_data: {list(collected_data.keys()) if collected_data else None}")
-                logger.info(f"[TOOL_COLLECTION_DETECT]   └─ hitl_phase: {hitl_phase}")
-            
-            return is_tool_managed
+            return True
             
         except Exception as e:
-            logger.error(f"[TOOL_COLLECTION_DETECT] Error detecting tool collection need: {e}")
+            logger.error(f"[UNIVERSAL_HITL] Error detecting tool collection need: {e}")
             return False
 
     async def _handle_tool_managed_collection(self, hitl_context: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        REVOLUTIONARY: Handle tool-managed collection by re-calling tools with user response (Task 8.5).
+        REVOLUTIONARY: Handle universal tool-managed collection by re-calling tools (Task 14.5.2).
         
-        Re-call the specified tool with updated context including user response,
-        allowing tools to manage their own collection state and determine completion.
+        Re-call the specified tool with original parameters + user response,
+        allowing @hitl_recursive_tool decorated tools to manage their own collection.
         
         Args:
-            hitl_context: Context from HITL interaction with collection info
+            hitl_context: Universal HITL context with original_params and source_tool
             state: Current agent state
             
         Returns:
             Updated state after tool re-calling
         """
         try:
+            # Normalize state into a plain dict for safe access
+            state_dict: Dict[str, Any]
+            if isinstance(state, dict):
+                state_dict = state
+            else:
+                state_dict = getattr(state, "values", {}) or {}
+
             source_tool = hitl_context.get("source_tool")
-            hitl_phase = state.get("hitl_phase")
-            messages = state.get("messages", [])
+            hitl_phase = state_dict.get("hitl_phase")
+            messages = state_dict.get("messages", [])
             
             logger.info(f"[TOOL_COLLECTION_RECALL] 🔄 Re-calling tool: {source_tool}")
             logger.info(f"[TOOL_COLLECTION_RECALL] HITL phase: {hitl_phase}")
@@ -1383,29 +1395,69 @@ This information from your past interactions may help me better assist you.
             
             logger.info(f"[TOOL_COLLECTION_RECALL] User response: '{user_response}'")
             
-            # Create updated context with user response
-            updated_context = {
-                **hitl_context,
-                "user_response": user_response,  # Add user response to context
-                "hitl_phase": hitl_phase,        # Include HITL result (approved/denied)
-                "recall_attempt": hitl_context.get("recall_attempt", 0) + 1  # Track recall attempts
-            }
-            
-            # Get the tool function
-            available_tools = get_all_tools()
-            tool_func = None
-            for tool in available_tools:
-                if tool.name == source_tool:
-                    tool_func = tool.func
-                    break
-            
-            if not tool_func:
+            # Get the tool from the initialized tool map to avoid wrapper mismatches
+            await self._ensure_initialized()
+            selected_tool = None
+            if self.tool_map and source_tool in self.tool_map:
+                selected_tool = self.tool_map[source_tool]
+            else:
+                # Fallback: try to match by underlying function name
+                try:
+                    for tool in (self.tools or []):
+                        func = getattr(tool, 'func', None)
+                        func_name = getattr(func, '__name__', None)
+                        if func_name == source_tool:
+                            selected_tool = tool
+                            break
+                except Exception:
+                    selected_tool = None
+
+            if not selected_tool:
                 logger.error(f"[TOOL_COLLECTION_RECALL] Tool '{source_tool}' not found")
-                return self._create_tool_recall_error_state(state, f"Tool '{source_tool}' not found")
+                return self._create_tool_recall_error_state(state_dict, f"Tool '{source_tool}' not found")
             
-            # Re-call the tool with updated context
-            logger.info(f"[TOOL_COLLECTION_RECALL] Calling {source_tool} with updated context")
-            tool_result = await tool_func(**updated_context)
+            # UNIVERSAL: Use original parameters + HITL resume parameters
+            original_params = hitl_context.get("original_params", {})
+            tool_params = original_params.copy()
+            tool_params.update({
+                "user_response": user_response,
+                "hitl_phase": hitl_phase,
+                # Use step from HITL context so the tool can route correctly
+                "current_step": hitl_context.get("current_step", ""),
+                # Pass preserved quotation state when available
+                "quotation_state": hitl_context.get("quotation_state"),
+                "conversation_context": ""  # Could be populated from messages if needed
+            })
+            
+            logger.info(f"[UNIVERSAL_HITL] 🔄 Re-calling {source_tool} with universal parameters:")
+            logger.info(f"[UNIVERSAL_HITL]   └─ original_params: {list(original_params.keys())}")
+            logger.info(f"[UNIVERSAL_HITL]   └─ user_response: '{user_response}'")
+            logger.info(f"[UNIVERSAL_HITL]   └─ hitl_phase: {hitl_phase}")
+            logger.info(f"[UNIVERSAL_HITL]   └─ final_tool_params: {tool_params}")
+            # Ensure employee context is present during tool execution
+            user_id = state_dict.get("user_id")
+            conversation_id = state_dict.get("conversation_id")
+            employee_id = state_dict.get("employee_id")
+            user_type = "employee" if employee_id else "unknown"
+
+            # Prefer ainvoke/invoke on the tool wrapper to avoid .func mismatches
+            from agents.tools import UserContext
+            with UserContext(user_id=user_id, conversation_id=conversation_id, user_type=user_type, employee_id=employee_id):
+                if hasattr(selected_tool, 'ainvoke'):
+                    tool_result = await selected_tool.ainvoke(tool_params)
+                elif hasattr(selected_tool, 'invoke'):
+                    tool_result = selected_tool.invoke(tool_params)
+                elif hasattr(selected_tool, 'func'):
+                    # If underlying func is async, await it; otherwise call directly
+                    func = selected_tool.func
+                    result_candidate = func(**tool_params)
+                    if asyncio.iscoroutine(result_candidate):
+                        tool_result = await result_candidate
+                    else:
+                        tool_result = result_candidate
+                else:
+                    logger.error(f"[TOOL_COLLECTION_RECALL] Selected tool object has no callable interface: {selected_tool}")
+                    return self._create_tool_recall_error_state(state_dict, f"Tool '{source_tool}' is not callable")
             
             # Process the tool result - it might return HITL_REQUIRED again for more collection
             # or return normal results indicating collection is complete
@@ -1415,7 +1467,7 @@ This information from your past interactions may help me better assist you.
                 # Tool still needs more information - set up for another HITL round
                 logger.info(f"[TOOL_COLLECTION_RECALL] Tool still needs more info - setting up next HITL round")
                 return {
-                    **state,
+                    **state_dict,
                     "hitl_phase": "needs_prompt",  # Set up for HITL prompt display
                     "hitl_prompt": parsed_response["hitl_prompt"],
                     "hitl_context": parsed_response["hitl_context"],
@@ -1433,7 +1485,7 @@ This information from your past interactions may help me better assist you.
                 updated_messages = list(messages) + [tool_message]
                 
                 return {
-                    **state,
+                    **state_dict,
                     "messages": updated_messages,
                     "hitl_phase": None,      # Clear HITL state
                     "hitl_prompt": None,
@@ -1443,7 +1495,7 @@ This information from your past interactions may help me better assist you.
                 
         except Exception as e:
             logger.error(f"[TOOL_COLLECTION_RECALL] Error in tool re-calling: {e}")
-            return self._create_tool_recall_error_state(state, str(e))
+            return self._create_tool_recall_error_state(state_dict, str(e))
 
     def _create_tool_recall_error_state(self, state: Dict[str, Any], error_message: str) -> Dict[str, Any]:
         """
@@ -3256,9 +3308,19 @@ Important: Use the tools to help you provide the best possible assistance to the
                     }
                     
                     user_intent = await _interpret_user_intent_with_llm(user_response, context)
-                    is_approved = (user_intent == "approval")
                     
-                    logger.info(f"🧠 [AGENT_RESUME] LLM interpreted '{user_response}' as: {user_intent}")
+                    # UNIVERSAL HITL SYSTEM: Handle tool-managed collections
+                    hitl_context = current_state.values.get("hitl_context", {})
+                    is_tool_managed = (hitl_context.get("collection_mode") == "tool_managed")
+                    
+                    if is_tool_managed:
+                        # For tool-managed collections, both "INPUT" and "approval" should continue the tool
+                        is_approved = (user_intent in ["approval", "input"])
+                        logger.info(f"🧠 [AGENT_RESUME] Tool-managed collection - LLM interpreted '{user_response}' as: {user_intent} → {'CONTINUE' if is_approved else 'DENY'}")
+                    else:
+                        # For regular HITL, only "approval" continues
+                        is_approved = (user_intent == "approval")
+                        logger.info(f"🧠 [AGENT_RESUME] Regular HITL - LLM interpreted '{user_response}' as: {user_intent} → {'APPROVED' if is_approved else 'DENIED'}")
                     
                 except Exception as e:
                     logger.error(f"🧠 [AGENT_RESUME] Error in LLM interpretation: {e}")
@@ -3303,10 +3365,25 @@ Important: Use the tools to help you provide the best possible assistance to the
                     })
                 else:
                     logger.info(f"🔄 [AGENT_RESUME] ❌ Processing denial: '{user_response}'")
+                    
+                    # Generate appropriate cancellation message based on context
+                    hitl_context = current_state.values.get("hitl_context", {})
+                    source_tool = hitl_context.get("source_tool", "action")
+                    
+                    if source_tool == "generate_quotation":
+                        cancellation_message = "I understand. I've cancelled the quotation request. Please let me know if you need anything else."
+                    elif source_tool == "trigger_customer_message":
+                        cancellation_message = "I understand. I've cancelled the message sending request. No message will be sent."
+                    else:
+                        cancellation_message = "I understand. I've cancelled the request. Please let me know if you need anything else."
+                    
+                    # Add cancellation message to conversation
+                    cancellation_msg = AIMessage(content=cancellation_message)
                     hitl_update.update({
                         "hitl_phase": "denied", 
                         "hitl_prompt": None,
-                        "hitl_context": None
+                        "hitl_context": None,
+                        "messages": [human_response_msg, cancellation_msg]  # Include both user response and cancellation
                     })
                 
                 await self.graph.aupdate_state(
@@ -3316,23 +3393,86 @@ Important: Use the tools to help you provide the best possible assistance to the
                 
                 logger.info(f"🔄 [AGENT_RESUME] ✅ UPDATED state with human response")
                 
-                # CRITICAL FIX: Resume from checkpoint using stream(None, config)
-                # This continues from the HITL node instead of restarting the entire graph
-                result_messages = []
-                async for chunk in self.graph.astream(
-                    None,  # Pass None to resume from checkpoint
-                    {"configurable": {"thread_id": conversation_id}},
-                    stream_mode="values"
-                ):
-                    if "messages" in chunk:
-                        result_messages = chunk["messages"]
+                # CRITICAL FIX: Instead of trying to resume with astream(None, config) which causes state consistency issues,
+                # directly route to the appropriate next node based on the HITL approval/denial
                 
-                # Build the final result from the last chunk
-                result = {
-                    "messages": result_messages,
-                    "conversation_id": conversation_id,
-                    "user_id": actual_user_id,
-                }
+                # Determine next node based on routing logic
+                hitl_context = current_state.values.get("hitl_context", {})
+                hitl_phase = hitl_update.get("hitl_phase", "denied")
+                
+                # Use the updated state (merge) for detection to avoid stale pre-update values
+                merged_state_for_detection = {**current_state.values, **hitl_update}
+                if hitl_phase == "approved" and hitl_context and self._is_tool_managed_collection_needed(hitl_context, merged_state_for_detection):
+                    logger.info(f"🔄 [AGENT_RESUME] HITL approved for tool-managed collection - resuming with LangGraph stream")
+                    
+                    # Create complete updated state by merging current state with HITL updates
+                    complete_updated_state = {**current_state.values, **hitl_update}
+                    
+                    result_messages = []
+                    last_hitl_phase = None
+                    last_hitl_prompt = None
+                    last_hitl_context = None
+                    async for chunk in self.graph.astream(
+                        complete_updated_state,  # Pass the complete updated state
+                        {"configurable": {"thread_id": conversation_id}},
+                        stream_mode="values"
+                    ):
+                        if "messages" in chunk:
+                            result_messages = chunk["messages"]
+                        # Track latest HITL fields so we can return them for correct API handling
+                        if "hitl_phase" in chunk:
+                            last_hitl_phase = chunk.get("hitl_phase")
+                        if "hitl_prompt" in chunk:
+                            last_hitl_prompt = chunk.get("hitl_prompt")
+                        if "hitl_context" in chunk:
+                            last_hitl_context = chunk.get("hitl_context")
+                    
+                    result = {
+                        "messages": result_messages,
+                        "conversation_id": conversation_id,
+                        "user_id": actual_user_id,
+                        # Preserve HITL state so API can return a prompt instead of echoing user text
+                        "hitl_phase": last_hitl_phase,
+                        "hitl_prompt": last_hitl_prompt,
+                        "hitl_context": last_hitl_context,
+                    }
+                else:
+                    logger.info(f"🔄 [AGENT_RESUME] Routing to memory store - HITL completed")
+                    
+                    # Update the state with our changes
+                    updated_state = {**current_state.values, **hitl_update}
+                    
+                    # If this is a tool-managed flow but detection failed, call tool-managed collection directly to avoid echoing user text
+                    if hitl_context and hitl_context.get("collection_mode") == "tool_managed":
+                        try:
+                            logger.info("🔄 [AGENT_RESUME] Fallback: directly handling tool-managed collection")
+                            tool_recall_state = await self._handle_tool_managed_collection(hitl_context, updated_state)
+                            result = {
+                                "messages": tool_recall_state.get("messages", []),
+                                "conversation_id": conversation_id,
+                                "user_id": actual_user_id,
+                                "hitl_phase": tool_recall_state.get("hitl_phase"),
+                                "hitl_prompt": tool_recall_state.get("hitl_prompt"),
+                                "hitl_context": tool_recall_state.get("hitl_context"),
+                            }
+                        except Exception as e:
+                            logger.error(f"🔄 [AGENT_RESUME] Fallback tool-managed handling error: {e}")
+                            # Route to memory store for final processing as last resort
+                            node_result = await self._employee_memory_store_node(updated_state, {"configurable": {"thread_id": conversation_id}})
+                            result = {
+                                "messages": node_result.get("messages", []),
+                                "conversation_id": conversation_id,
+                                "user_id": actual_user_id,
+                            }
+                    else:
+                        # Route to memory store for final processing
+                        node_result = await self._employee_memory_store_node(updated_state, {"configurable": {"thread_id": conversation_id}})
+                        
+                        result = {
+                            "messages": node_result.get("messages", []),
+                            "conversation_id": conversation_id,
+                            "user_id": actual_user_id,
+                        }
                 
                 logger.info(f"✅ [AGENT_RESUME] Conversation resumed successfully. Result keys: {list(result.keys())}")
                 return result

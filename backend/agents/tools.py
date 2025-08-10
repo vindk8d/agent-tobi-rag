@@ -29,7 +29,7 @@ from langsmith import traceable
 from sqlalchemy import create_engine, text
 from rag.retriever import SemanticRetriever
 from core.config import get_settings
-from agents.hitl import request_approval, request_input, request_selection
+from agents.hitl import request_approval, request_input, request_selection, hitl_recursive_tool
 import re
 
 # NOTE: LangGraph interrupt functionality is now handled by the centralized HITL system in hitl.py
@@ -2860,18 +2860,261 @@ async def _resume_missing_information(quotation_state: Dict[str, Any], user_resp
     """Resume missing information step with user-provided information."""
     logger.info("[QUOTATION_RESUME] Processing missing information response")
     
-    # Parse and store missing information
+    # Parse and store missing information using LLM intelligence
     quotation_state["missing_info_response"] = user_response.strip()
     
-    # Continue with quotation process
-    return await generate_quotation(
-        customer_identifier=quotation_state.get("customer_identifier", ""),
-        vehicle_requirements=quotation_state.get("vehicle_requirements", ""),
-        additional_notes=quotation_state.get("additional_notes"),
-        quotation_validity_days=quotation_state.get("quotation_validity_days", 30),
-        quotation_state=quotation_state,
-        conversation_context=quotation_state.get("conversation_context", "")
-    )
+    # Use LLM to intelligently extract structured information from natural language response
+    try:
+        extraction_prompt = ChatPromptTemplate.from_template("""
+You are an expert at extracting quotation information from customer responses.
+
+Extract the following information from the customer's response, if mentioned:
+- quantity: number of vehicles (as integer, e.g. 1, 2, 3)
+- delivery_timeline: when they need it (e.g. "next week", "ASAP", "end of month", "by Friday")
+- payment_preference: how they want to pay (e.g. "cash", "financing", "lease")
+- delivery_address: where to deliver or pickup preference (e.g. "Manila office", "customer pickup", specific address)
+
+Customer response: "{user_response}"
+
+Return ONLY a JSON object with the extracted information. Use null for any information not mentioned.
+Example: {{"quantity": 1, "delivery_timeline": "next week", "payment_preference": "cash", "delivery_address": "Manila office"}}
+""")
+        
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        extraction_chain = extraction_prompt | llm | StrOutputParser()
+        
+        extraction_result = await extraction_chain.ainvoke({"user_response": user_response})
+        logger.info(f"[QUOTATION_RESUME] LLM extraction result: {extraction_result}")
+        
+        # Parse the JSON response (handle markdown code blocks)
+        import json
+        import re
+        
+        # Clean the response - remove markdown code blocks if present
+        cleaned_result = extraction_result.strip()
+        if cleaned_result.startswith('```'):
+            # Extract JSON from markdown code block
+            json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', cleaned_result, re.DOTALL)
+            if json_match:
+                cleaned_result = json_match.group(1).strip()
+        
+        extracted_info = json.loads(cleaned_result)
+        
+        # Update quotation state with extracted information
+        for key, value in extracted_info.items():
+            if value is not None:
+                quotation_state[key] = value
+                logger.info(f"[QUOTATION_RESUME] Extracted {key}: {value}")
+                
+    except Exception as e:
+        logger.warning(f"[QUOTATION_RESUME] LLM extraction failed, using fallback: {e}")
+        # Fallback: just store the response for manual processing
+        quotation_state["manual_processing_needed"] = user_response
+    
+    # Check if we have enough information to generate the quotation
+    customer_data = quotation_state.get("customer_data")
+    vehicle_data = quotation_state.get("vehicle_data", [])
+    
+    if customer_data and vehicle_data and quotation_state.get("quantity"):
+        logger.info("[QUOTATION_RESUME] ✅ Sufficient information collected - generating quotation")
+        
+        # Generate the final quotation with collected information
+        from core.pdf_generator import generate_quotation_pdf
+        
+        try:
+            # Get employee information
+            employee_id = await get_current_employee_id()
+            employee_data = await _lookup_employee_details(employee_id) if employee_id else None
+            
+            # Generate the PDF quotation
+            import uuid
+            from datetime import datetime
+            quotation_number = f"Q{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
+            
+            # Get the first vehicle (since quantity is 1)
+            selected_vehicle_data = vehicle_data[0] if vehicle_data else {}
+            vehicle_info = selected_vehicle_data.get("vehicle", {})
+            pricing_info = selected_vehicle_data.get("pricing", {})
+            
+            quotation_data = {
+                "quotation_number": quotation_number,
+                "customer": customer_data,
+                "vehicle": {
+                    # Map database fields to PDF generator expected fields
+                    "make": vehicle_info.get("brand", ""),  # brand -> make
+                    "model": vehicle_info.get("model", ""),
+                    "year": vehicle_info.get("year", ""),
+                    "color": vehicle_info.get("color", ""),
+                    "type": vehicle_info.get("type", ""),
+                    "engine_type": vehicle_info.get("engine_type", ""),
+                    "transmission": vehicle_info.get("transmission", ""),
+                },
+                "pricing": {
+                    "base_price": pricing_info.get("base_price", 0),
+                    "final_price": pricing_info.get("final_price", 0),
+                    "total_amount": pricing_info.get("final_price", 0),  # Same as final_price for single vehicle
+                },
+                "employee": employee_data,
+                "validity_days": quotation_state.get("quotation_validity_days", 30),
+                "delivery_timeline": quotation_state.get("delivery_timeline", "Standard delivery"),
+                "additional_notes": quotation_state.get("additional_notes", "")
+            }
+            
+            pdf_bytes = await generate_quotation_pdf(quotation_data)
+            
+            # PDF was generated successfully (we have the bytes)
+            pdf_size_kb = len(pdf_bytes) / 1024
+            
+            # Upload PDF to Supabase Storage and save quotation record to database
+            try:
+                from datetime import datetime, timedelta
+                from core.database import get_db_client
+                
+                # Calculate expiry date
+                expires_at = datetime.now() + timedelta(days=quotation_state.get("quotation_validity_days", 30))
+                
+                # Upload PDF to Supabase Storage
+                logger.info(f"[QUOTATION_RESUME] 📤 Uploading PDF to Supabase Storage...")
+                upload_result = await upload_quotation_pdf(
+                    pdf_bytes=pdf_bytes,
+                    customer_id=customer_data.get('id', ''),
+                    employee_id=employee_data.get('id', ''),
+                    quotation_number=quotation_number
+                )
+                
+                # Create signed URL for the uploaded PDF
+                pdf_url = await create_signed_quotation_url(upload_result["path"])
+                logger.info(f"[QUOTATION_RESUME] ✅ PDF uploaded successfully: {upload_result['path']}")
+                
+                # Create quotation record with PDF storage info
+                quotation_record = {
+                    "quotation_number": quotation_number,
+                    "customer_id": customer_data.get('id'),
+                    "employee_id": employee_data.get('id'),
+                    "vehicle_id": vehicle_info.get('id'),
+                    "vehicle_specs": {
+                        "make": vehicle_info.get('brand', ''),
+                        "model": vehicle_info.get('model', ''),
+                        "year": vehicle_info.get('year', ''),
+                        "color": vehicle_info.get('color', ''),
+                        "type": vehicle_info.get('type', ''),
+                        "engine_type": vehicle_info.get('engine_type', ''),
+                        "transmission": vehicle_info.get('transmission', ''),
+                    },
+                    "pricing_data": {
+                        "base_price": pricing_info.get('base_price', 0),
+                        "final_price": pricing_info.get('final_price', 0),
+                        "total_amount": pricing_info.get('final_price', 0),
+                        "currency": "PHP",
+                        "quantity": quotation_state.get("quantity", 1)
+                    },
+                    "pdf_url": pdf_url,
+                    "pdf_filename": upload_result["path"].split("/")[-1],
+                    "title": f"{vehicle_info.get('brand', '')} {vehicle_info.get('model', '')} Quotation",
+                    "notes": f"Generated for {customer_data.get('name', '')} - {quotation_state.get('delivery_timeline', 'Standard delivery')}",
+                    "status": "draft",
+                    "expires_at": expires_at.isoformat()
+                }
+                
+                # Insert quotation record into database
+                db_client = get_db_client()
+                db_result = await asyncio.to_thread(
+                    lambda: db_client.client.table('quotations').insert(quotation_record).execute()
+                )
+                
+                quotation_id = db_result.data[0]['id'] if db_result.data else None
+                logger.info(f"[QUOTATION_RESUME] ✅ Quotation record saved to database: {quotation_id}")
+                
+            except Exception as error:
+                logger.warning(f"[QUOTATION_RESUME] Failed to upload PDF or save quotation to database: {error}")
+                # Still try to save to database without PDF URL if upload fails
+                try:
+                    quotation_record = {
+                        "quotation_number": quotation_number,
+                        "customer_id": customer_data.get('id'),
+                        "employee_id": employee_data.get('id'),
+                        "vehicle_id": vehicle_info.get('id'),
+                        "vehicle_specs": {
+                            "make": vehicle_info.get('brand', ''),
+                            "model": vehicle_info.get('model', ''),
+                            "year": vehicle_info.get('year', ''),
+                            "color": vehicle_info.get('color', ''),
+                            "type": vehicle_info.get('type', ''),
+                            "engine_type": vehicle_info.get('engine_type', ''),
+                            "transmission": vehicle_info.get('transmission', ''),
+                        },
+                        "pricing_data": {
+                            "base_price": pricing_info.get('base_price', 0),
+                            "final_price": pricing_info.get('final_price', 0),
+                            "total_amount": pricing_info.get('final_price', 0),
+                            "currency": "PHP",
+                            "quantity": quotation_state.get("quantity", 1)
+                        },
+                        "title": f"{vehicle_info.get('brand', '')} {vehicle_info.get('model', '')} Quotation",
+                        "notes": f"Generated for {customer_data.get('name', '')} - {quotation_state.get('delivery_timeline', 'Standard delivery')} (PDF upload failed)",
+                        "status": "draft",
+                        "expires_at": expires_at.isoformat()
+                    }
+                    
+                    db_client = get_db_client()
+                    db_result = await asyncio.to_thread(
+                        lambda: db_client.client.table('quotations').insert(quotation_record).execute()
+                    )
+                    logger.info(f"[QUOTATION_RESUME] ⚠️ Quotation saved to database without PDF URL")
+                except Exception as db_error:
+                    logger.error(f"[QUOTATION_RESUME] Failed to save quotation record: {db_error}")
+            
+            return f"""✅ **Professional Quotation Generated Successfully**
+
+**Quotation Number**: {quotation_number}
+**Customer**: {customer_data.get('name', 'N/A')}
+**Vehicle**: {quotation_state.get("quantity", 1)} x {vehicle_info.get('brand', '')} {vehicle_info.get('model', '')} 
+**Total Amount**: ₱{pricing_info.get('final_price', 0):,.2f}
+**Delivery**: {quotation_state.get("delivery_timeline", "Standard delivery")}
+**Valid Until**: {quotation_state.get("quotation_validity_days", 30)} days from today
+
+📄 **Quotation Generated**: Professional PDF quotation ({pdf_size_kb:.1f} KB) has been created, uploaded to Supabase Storage, and stored in the database.
+
+🔗 **Download Your Quotation**: http://localhost:8000/api/v1/quotations/{quotation_number}/download
+
+The quotation has been prepared with all the details you provided. Please review and let me know if you need any modifications."""
+            
+        except Exception as e:
+            logger.error(f"[QUOTATION_RESUME] Error generating final quotation: {e}")
+            return "❌ Error generating the final quotation. Please try again or contact support."
+    
+    else:
+        # Still missing information - ask for more details
+        missing_items = []
+        if not quotation_state.get("delivery_timeline"):
+            missing_items.append("**Delivery timeline** (e.g., 'next week', 'by month end', 'ASAP')")
+        if not quotation_state.get("payment_preference"):
+            missing_items.append("**Payment method** (e.g., 'cash', 'financing', 'lease')")
+        if not quotation_state.get("delivery_address"):
+            missing_items.append("**Delivery address** or pickup preference")
+            
+        if missing_items:
+            return request_input(
+                prompt=f"""📋 **Almost Ready for Your Quotation**
+
+I have most of your information, but need a few more details:
+
+{chr(10).join(f"• {item}" for item in missing_items)}
+
+Please provide the missing information above.""",
+                input_type="missing_quotation_info",
+                context={
+                    "source_tool": "generate_quotation",
+                    "current_step": "missing_information",
+                    "quotation_state": quotation_state,
+                    "customer_identifier": quotation_state.get("customer_identifier", ""),
+                    "vehicle_requirements": quotation_state.get("vehicle_requirements", ""),
+                }
+            )
+        else:
+            # This shouldn't happen, but fallback to quotation generation
+            logger.warning("[QUOTATION_RESUME] Unexpected state - no missing items but quotation not ready")
+            return "❌ Unexpected error in quotation processing. Please start over with 'generate a quotation'."
 
 
 async def _resume_pricing_issues(quotation_state: Dict[str, Any], user_response: str) -> str:
@@ -3272,20 +3515,13 @@ To complete your professional quotation, I need a few more details:
 Please provide the missing information above. You can answer all at once or just the most important ones first.""",
         input_type="missing_quotation_info",
         context={
+            # Enable proper resume routing for tool-managed flow
             "source_tool": "generate_quotation",
             "current_step": "missing_information",
+            "quotation_state": quotation_state,
+            # Helpful context for resume
             "customer_identifier": customer_identifier,
             "vehicle_requirements": vehicle_requirements,
-            "additional_notes": additional_notes,
-            "quotation_validity_days": quotation_validity_days,
-            "quotation_state": quotation_state or {},
-            "conversation_context": conversation_context,
-            "customer_data": customer_data,
-            "vehicle_pricing": vehicle_pricing,
-            "employee_data": employee_data,
-            "extracted_context": extracted_context,
-            "missing_info": missing_info,
-            "employee_id": employee_id
         }
     )
 
@@ -3613,18 +3849,26 @@ class GenerateQuotationParams(BaseModel):
     vehicle_requirements: str = Field(..., description="Detailed vehicle specifications: make/brand, model, type (sedan/SUV/pickup), year, color, quantity needed, budget range")
     additional_notes: Optional[str] = Field(None, description="Special requirements: financing preferences, trade-in details, delivery timeline, custom features")
     quotation_validity_days: Optional[int] = Field(30, description="Quotation validity period in days (default: 30, maximum: 365)")
+    # Universal HITL Resume Parameters (handled by @hitl_recursive_tool decorator)
+    user_response: str = Field(default="", description="User's response to HITL prompts (used for recursive calls)")
+    hitl_phase: str = Field(default="", description="Current HITL phase (used for recursive calls)")
+    current_step: str = Field(default="", description="Current step in the quotation process (used for recursive calls)")
+    quotation_state: Optional[Dict[str, Any]] = Field(default=None, description="Preserved quotation state (used for recursive calls)")
+    conversation_context: str = Field(default="", description="Conversation context for intelligent processing")
 
 @tool(args_schema=GenerateQuotationParams)
 @traceable(name="generate_quotation")
+@hitl_recursive_tool
 async def generate_quotation(
     customer_identifier: str,
     vehicle_requirements: str,
     additional_notes: Optional[str] = None,
     quotation_validity_days: Optional[int] = 30,
-    # HITL Resume Parameters (Task 5.3.1.1)
-    quotation_state: Dict[str, Any] = None,
-    current_step: str = "",
+    # Universal HITL Resume Parameters (handled by @hitl_recursive_tool decorator)
     user_response: str = "",
+    hitl_phase: str = "",
+    current_step: str = "",
+    quotation_state: Optional[Dict[str, Any]] = None,
     conversation_context: str = ""
 ) -> str:
     """
@@ -3694,22 +3938,24 @@ Vehicle requirements are needed to generate a quotation. Please specify:
             quotation_validity_days = 30  # Reset to default
             logger.info("[GENERATE_QUOTATION] Reset quotation_validity_days to default (30 days)")
 
-        # Initialize quotation state for resume logic (Task 5.3.1.2)
-        if quotation_state is None:
-            quotation_state = {}
-            
         logger.info(f"[GENERATE_QUOTATION] Starting quotation generation for customer: {customer_identifier}")
         logger.info(f"[GENERATE_QUOTATION] Vehicle requirements: {vehicle_requirements}")
         logger.info(f"[GENERATE_QUOTATION] Current step: '{current_step}', User response: '{user_response}'")
-        logger.info(f"[GENERATE_QUOTATION] State keys: {list(quotation_state.keys())}")
+        logger.info(f"[GENERATE_QUOTATION] HITL phase: '{hitl_phase}', Quotation state: {quotation_state}")
         logger.info(f"[GENERATE_QUOTATION] Validity days: {quotation_validity_days}")
         
-        # HITL Resume Detection Logic (Task 5.3.1.2)
+        # Universal HITL Resume Logic: Check if this is a resume call
         if current_step and user_response:
-            logger.info(f"[GENERATE_QUOTATION] 🔄 Resuming from HITL interaction: {current_step}")
+            logger.info(f"[GENERATE_QUOTATION] 🔄 RESUME DETECTED - routing to resume handler")
             return await _handle_quotation_resume(
-                customer_identifier, vehicle_requirements, additional_notes, 
-                quotation_validity_days, quotation_state, current_step, user_response, conversation_context
+                customer_identifier=customer_identifier,
+                vehicle_requirements=vehicle_requirements,
+                additional_notes=additional_notes,
+                quotation_validity_days=quotation_validity_days,
+                quotation_state=quotation_state or {},
+                current_step=current_step,
+                user_response=user_response,
+                conversation_context=conversation_context
             )
         
         # Enhanced employee access control (Task 5.6)
@@ -3851,18 +4097,7 @@ Please provide the customer's complete details:
 
 Or provide a different customer identifier (name, email, or phone) that I can search for in our system.""",
                 input_type="customer_information",
-                context={
-                    "source_tool": "generate_quotation",
-                    "current_step": "customer_lookup",
-                    "customer_identifier": customer_identifier,
-                    "vehicle_requirements": vehicle_requirements,
-                    "additional_notes": additional_notes,
-                    "quotation_validity_days": quotation_validity_days,
-                    "quotation_state": quotation_state,
-                    "conversation_context": conversation_context,
-                    "extracted_context": extracted_context,
-                    "employee_id": employee_id
-                }
+                context={}  # Universal context auto-generated by @hitl_recursive_tool decorator
             )
         
         # Step 3: Use unified LLM-based vehicle search (Task 6.2.1)
@@ -3887,19 +4122,7 @@ Or provide a different customer identifier (name, email, or phone) that I can se
             return request_input(
                 prompt=enhanced_prompt,
                 input_type="detailed_vehicle_requirements",
-                context={
-                    "source_tool": "generate_quotation",
-                    "current_step": "vehicle_requirements",
-                    "customer_identifier": customer_identifier,
-                    "vehicle_requirements": vehicle_requirements,
-                    "additional_notes": additional_notes,
-                    "quotation_validity_days": quotation_validity_days,
-                    "quotation_state": quotation_state,
-                    "conversation_context": conversation_context,
-                    "customer_data": customer_data,
-                    "extracted_context": extracted_context,
-                    "employee_id": employee_id
-                }
+                context={}  # Universal context auto-generated by @hitl_recursive_tool decorator
             )
         
         # Step 4: Get employee details with HITL fallback
@@ -3922,19 +4145,7 @@ Please provide your information:
 
 Alternatively, please contact your system administrator to update your employee profile.""",
                 input_type="employee_information",
-                context={
-                    "source_tool": "generate_quotation",
-                    "current_step": "employee_data",
-                    "customer_identifier": customer_identifier,
-                    "vehicle_requirements": vehicle_requirements,
-                    "additional_notes": additional_notes,
-                    "quotation_validity_days": quotation_validity_days,
-                    "quotation_state": quotation_state,
-                    "conversation_context": conversation_context,
-                    "employee_id": employee_id,
-                    "customer_data": customer_data,
-                    "extracted_context": extracted_context
-                }
+                context={}  # Universal context auto-generated by @hitl_recursive_tool decorator
             )
         
         # Step 5: For each vehicle, get pricing information
@@ -3967,21 +4178,7 @@ Please help me by:
 
 What would you prefer?""",
                 input_type="pricing_resolution",
-                context={
-                    "source_tool": "generate_quotation",
-                    "current_step": "pricing_issues",
-                    "customer_identifier": customer_identifier,
-                    "vehicle_requirements": vehicle_requirements,
-                    "additional_notes": additional_notes,
-                    "quotation_validity_days": quotation_validity_days,
-                    "quotation_state": quotation_state,
-                    "conversation_context": conversation_context,
-                    "customer_data": customer_data,
-                    "vehicles_found": vehicles,
-                    "employee_data": employee_data,
-                    "extracted_context": extracted_context,
-                    "employee_id": employee_id
-                }
+                context={}  # Universal context auto-generated by @hitl_recursive_tool decorator
             )
         
         # Step 6: Validate completeness and gather missing critical information via HITL
@@ -3996,6 +4193,18 @@ What would you prefer?""",
             missing_info = []  # Continue without additional validation if this fails
         
         if missing_info:
+            # Create proper quotation state with found data for resume functionality
+            quotation_state = {
+                "customer_data": customer_data,
+                "vehicle_data": vehicle_pricing,
+                "employee_data": employee_data,
+                "extracted_context": extracted_context,
+                "additional_notes": additional_notes,
+                "quotation_validity_days": quotation_validity_days,
+                "customer_identifier": customer_identifier,
+                "vehicle_requirements": vehicle_requirements,
+            }
+            
             return await _request_missing_information_via_hitl(
                 missing_info,
                 customer_data,
@@ -4038,33 +4247,10 @@ I encountered an issue while creating the quotation preview. This might be due t
 **Error ID**: {datetime.now().strftime('%Y%m%d-%H%M%S')}"""
         
         # Step 7: Request approval via HITL
-        # Ensure quotation state contains all necessary data for PDF generation
-        quotation_state.update({
-            "customer_data": customer_data,
-            "vehicle_pricing": vehicle_pricing,
-            "employee_data": employee_data,
-            "additional_notes": additional_notes,
-            "quotation_validity_days": quotation_validity_days,
-            "employee_id": employee_id,
-            "quotation_preview": quotation_preview,
-            "ready_for_generation": True
-        })
+        # Universal HITL system: State management handled automatically by @hitl_recursive_tool decorator
+        # All necessary data preserved in original_params for resume functionality
         
-        context_data = {
-            "source_tool": "generate_quotation",
-            "current_step": "quotation_approval",
-            "customer_identifier": customer_identifier,
-            "vehicle_requirements": vehicle_requirements,
-            "additional_notes": additional_notes,
-            "quotation_validity_days": quotation_validity_days,
-            "quotation_state": quotation_state,
-            "conversation_context": conversation_context,
-            "customer_data": customer_data,
-            "vehicle_pricing": vehicle_pricing,
-            "employee_data": employee_data,
-            "employee_id": employee_id,
-            "quotation_preview": quotation_preview
-        }
+        context_data = {}  # Universal context auto-generated by @hitl_recursive_tool decorator
         
         return request_approval(
             prompt=f"""📄 **QUOTATION APPROVAL REQUIRED**
