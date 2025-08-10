@@ -1,0 +1,45 @@
+{
+  "test_name": "Simple Multi-Turn Quotation Test",
+  "timestamp": "20250811_032042",
+  "results": [
+    {
+      "turn": 1,
+      "input": "Grace Lee, car",
+      "result": "HITL_REQUIRED:input:{\"prompt\": \"\\u26a1 **Critical Information Needed - Grace Lee**\\n\\nFor your car quotation, I need the following essential information:\\n\\n\\u2022 **Email**\\n\\u2022 **Phone**\\n\\u2022 **Vehicle Make**\\n\\n*This information is required to proceed with your quotation request.*\", \"input_type\": \"missing_quotation_information\", \"validation_hints\": [], \"awaiting_response\": false, \"context\": {\"source_tool\": \"generate_quotation\", \"collection_mode\": \"tool_managed\", \"original_params\": {\"customer_identifier\": \"Grace Lee\", \"vehicle_requirements\": \"car\", \"additional_notes\": \"Employee needs quotation\", \"quotation_validity_days\": 30}}}",
+      "execution_time": 14.313884973526001,
+      "hitl_expected": true
+    },
+    {
+      "turn": 2,
+      "input": "Grace Lee, Toyota sedan",
+      "result": "HITL_REQUIRED:input:{\"prompt\": \"\\u26a1 **Critical Information Needed - Grace Lee**\\n\\nFor your Toyota sedan quotation, I need the following essential information:\\n\\n\\u2022 **Email**\\n\\u2022 **Phone**\\n\\n*This information is required to proceed with your quotation request.*\", \"input_type\": \"missing_quotation_information\", \"validation_hints\": [], \"awaiting_response\": false, \"context\": {\"source_tool\": \"generate_quotation\", \"collection_mode\": \"tool_managed\", \"original_params\": {\"customer_identifier\": \"Grace Lee\", \"vehicle_requirements\": \"Toyota sedan\", \"additional_notes\": \"Employee needs quotation\", \"quotation_validity_days\": 30}}}",
+      "execution_time": 14.832817792892456,
+      "hitl_expected": true
+    },
+    {
+      "turn": 3,
+      "input": "Grace Lee, Toyota Camry 2024",
+      "result": "HITL_REQUIRED:input:{\"prompt\": \"\\u26a1 **Critical Information Needed - Grace Lee**\\n\\nFor your Toyota Camry quotation, I need the following essential information:\\n\\n\\u2022 **Email**\\n\\u2022 **Phone**\\n\\n*This information is required to proceed with your quotation request.*\", \"input_type\": \"missing_quotation_information\", \"validation_hints\": [], \"awaiting_response\": false, \"context\": {\"source_tool\": \"generate_quotation\", \"collection_mode\": \"tool_managed\", \"original_params\": {\"customer_identifier\": \"Grace Lee\", \"vehicle_requirements\": \"Toyota Camry 2024\", \"additional_notes\": \"Employee needs quotation\", \"quotation_validity_days\": 30}}}",
+      "execution_time": 15.87024188041687,
+      "hitl_expected": true
+    },
+    {
+      "turn": 4,
+      "input": "Grace Lee with complete contact info, Toyota Camry 2024",
+      "result": "\ud83c\udfaf **Professional Vehicle Quotation**\n\n**Customer**: Grace Lee\n**Vehicle**: Toyota Camry 2024\n**Pricing Strategy**: Value-optimized with comprehensive benefits\n**Validity**: 30 days\n\n\ud83c\udf81 **Available Opportunities:**\n\u2022 Standard manufacturer promotions\n\u2022 Trade-in opportunities\n\u2022 Financing incentives\n\n\ud83d\udca1 **Recommendations:**\n\u2022 Offer value-based pricing\n\u2022 Maintain flexibility in negotiations\n\n\ud83d\udcca **Pricing Analysis:**\n*Given the customer's standard tier and the vehicle's high value proposition, a value-based pricing approach is recommended. This approach, combined with standard promotions and financing options, shou...*\n\n\u2705 **Your intelligent quotation has been prepared!**\n*\ud83c\udfaf High confidence analysis \u2022 Based on comprehensive market and customer analysis*\n\n\ud83d\udcc4 *Professional PDF quotation will be generated and sent to you shortly.*\n*Note: PDF generation is being processed in the background.*",
+      "execution_time": 32.25429391860962,
+      "hitl_expected": false,
+      "pdf_expected": true
+    }
+  ],
+  "summary": {
+    "total_turns": 4,
+    "hitl_detections": 0,
+    "pdf_generations": 0,
+    "total_execution_time": 77.27123856544495,
+    "average_turn_time": 19.317809641361237,
+    "hitl_effectiveness": false,
+    "completion_success": false,
+    "overall_success": false
+  }
+}

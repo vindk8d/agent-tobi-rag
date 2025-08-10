@@ -369,7 +369,10 @@ async def generate_quotation_pdf(quotation_data: Dict[str, Any]) -> bytes:
     Returns:
         PDF content as bytes
     """
-    generator = QuotationPDFGenerator()
+    # Use absolute path to templates directory
+    backend_dir = Path(__file__).parent.parent
+    templates_dir = backend_dir / "templates"
+    generator = QuotationPDFGenerator(template_dir=str(templates_dir))
     return await generator.generate_quotation_pdf(quotation_data)
 
 async def save_quotation_pdf(quotation_data: Dict[str, Any], output_path: str) -> Tuple[str, int]:
