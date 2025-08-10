@@ -29,9 +29,11 @@
   - **Root Directory**: `/backend`
   - **Build Command**: (leave empty - uses Dockerfile)
   - **Start Command**: (leave empty - uses Dockerfile)
-  - **Dockerfile Path**: `backend/Dockerfile.prod`
+  - **Dockerfile Path**: `./Dockerfile.prod` (relative to backend directory)
 - [ ] Add environment variables from `railway-environment-variables.md`
 - [ ] Deploy
+
+**Important**: Make sure `requirements.txt` exists in the backend directory
 
 ### 4. Deploy Frontend Service
 - [ ] Click "+ New" → "GitHub Repo"
@@ -41,7 +43,7 @@
   - **Root Directory**: `/frontend`
   - **Build Command**: (leave empty - uses Dockerfile)
   - **Start Command**: (leave empty - uses Dockerfile)
-  - **Dockerfile Path**: `frontend/Dockerfile.prod`
+  - **Dockerfile Path**: `./Dockerfile.prod` (relative to frontend directory)
 - [ ] Add environment variables from `railway-environment-variables.md`
 - [ ] Deploy
 

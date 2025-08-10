@@ -190,15 +190,17 @@ NEXTAUTH_URL=https://your-frontend-domain.railway.app
    - Click "New Service" → "GitHub Repo"
    - Select your repository
    - Set Root Directory: `/backend`
-   - Set Dockerfile Path: `backend/Dockerfile.prod`
+   - Set Dockerfile Path: `./Dockerfile.prod` (relative to backend directory)
    - Add all backend environment variables
    - Deploy
+   
+   **Note**: The `requirements.txt` file must be present in the backend directory
 
 4. **Deploy Frontend Service**
    - Click "New Service" → "GitHub Repo"
    - Select your repository
    - Set Root Directory: `/frontend`
-   - Set Dockerfile Path: `frontend/Dockerfile.prod`
+   - Set Dockerfile Path: `./Dockerfile.prod` (relative to frontend directory)
    - Add all frontend environment variables
    - Deploy
 

@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY ./backend/requirements.txt .
 
 # Install Python dependencies in one layer with timeout settings
 RUN pip install --no-cache-dir --timeout 100 --retries 5 -r requirements.txt && \
@@ -31,7 +31,7 @@ RUN pip install --no-cache-dir --timeout 100 --retries 5 -r requirements.txt && 
     watchfiles \
     python-multipart
 
-# Create non-root user before copying files
+# Create non-root user after installing dependencies
 RUN adduser --disabled-password --gecos '' appuser
 
 # Copy backend project files
