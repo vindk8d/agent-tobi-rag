@@ -1,10 +1,25 @@
 'use client';
 
-import { Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 import { usePathname } from 'next/navigation';
 import './globals.css';
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = localFont({
+  src: [
+    {
+      path: './fonts/Inter-Regular.ttf',
+      weight: '400 700',
+      style: 'normal',
+    },
+    {
+      path: './fonts/Inter-Italic.ttf', 
+      weight: '400 700',
+      style: 'italic',
+    },
+  ],
+  variable: '--font-inter',
+  display: 'swap',
+});
 
 export default function RootLayout({
   children,
@@ -17,7 +32,7 @@ export default function RootLayout({
   if (isDevPage) {
     // Dev layout with header and navigation
     return (
-      <html lang="en" className="h-full">
+      <html lang="en" className={`h-full ${inter.variable}`}>
         <body className={`${inter.className} h-full bg-gray-50 antialiased`}>
           <div className="min-h-full">
             <header className="bg-white shadow-sm border-b border-gray-200">
@@ -103,7 +118,7 @@ export default function RootLayout({
 
   // Client layout without header (homepage manages its own header)
   return (
-    <html lang="en" className="h-full">
+    <html lang="en" className={`h-full ${inter.variable}`}>
       <body className={`${inter.className} h-full antialiased`}>
         <div className="min-h-full">
           {children}
