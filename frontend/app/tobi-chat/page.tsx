@@ -196,6 +196,7 @@ export default function TobiChatPage() {
 
       console.log('🔍 [CHAT] Sending message with conversation_id:', currentConversationId)
       console.log('🔍 [CHAT] Full request body:', requestBody)
+      console.log('🔍 [CHAT] User ID being sent to backend:', selectedUser.id)
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/chat/message`, {
         method: 'POST',
@@ -260,6 +261,37 @@ export default function TobiChatPage() {
 
       setMessages(prev => [...prev, aiMessage])
 
+      // FRONTEND FIX: Store both user and AI messages directly to database
+      try {
+        // Store user message
+        await supabase?.from('messages').insert({
+          conversation_id: chatResponse.conversation_id,
+          user_id: selectedUser.id,
+          role: 'human',
+          content: message.trim(),
+          created_at: new Date().toISOString(),
+          metadata: {}
+        });
+
+        // Store AI response  
+        await supabase?.from('messages').insert({
+          conversation_id: chatResponse.conversation_id,
+          user_id: selectedUser.id,
+          role: 'ai', 
+          content: chatResponse.message,
+          created_at: new Date().toISOString(),
+          metadata: {
+            sources: chatResponse.sources,
+            is_interrupted: chatResponse.is_interrupted,
+            hitl_phase: chatResponse.hitl_phase
+          }
+        });
+
+        console.log('✅ Messages stored directly to database');
+      } catch (storeError) {
+        console.warn('❌ Failed to store messages directly:', storeError);
+      }
+
       // Update conversation title if this is the first message
       if (isNewConversation && chatResponse.conversation_id) {
         await updateConversationTitle(chatResponse.conversation_id, message.trim())
@@ -311,27 +343,40 @@ export default function TobiChatPage() {
     return role;
   }, []);
 
-  // Load messages function - exactly like dualagentdebug
+  // Load messages function - filter messages by user_id only
   const loadUserMessages = useCallback(async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || !supabase) return;
 
     try {
       setLoadingHistory(true);
       setError(null);
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const url = `${apiUrl}/api/v1/memory-debug/users/${selectedUser.id}/messages`;
-      console.log('🔍 [CHAT] Loading messages from:', url);
-      
-      const response = await fetch(url);
-      
-      if (response.ok) {
-        const result = await response.json();
-        console.log('🔍 [CHAT] Messages response:', result);
-        
-        if (result.success && result.data) {
-          // Convert to chat messages format, exactly like dualagentdebug
-          const existingMessages: ChatMessage[] = result.data.map((msg: any) => ({
+      // Direct query to messages table filtering by user_id
+      const { data: messagesData, error: messagesError } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('user_id', selectedUser.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (messagesError) {
+        console.error('Messages query error:', messagesError);
+        setMessages([]);
+        setConversationId(null);
+        return;
+      }
+
+      console.log(`Found ${messagesData?.length || 0} messages for user ${selectedUser.id}`);
+      if (messagesData?.length > 0) {
+        console.log('Latest message:', messagesData[0]);
+        console.log('Oldest message:', messagesData[messagesData.length - 1]);
+      }
+
+      if (messagesData && messagesData.length > 0) {
+        // Convert to chat messages format and reverse to get chronological order
+        const existingMessages: ChatMessage[] = messagesData
+          .reverse()
+          .map((msg: any) => ({
             id: msg.id,
             role: normalizeRole(msg.role) === 'human' ? 'user' : 'assistant',
             content: msg.content,
@@ -341,35 +386,28 @@ export default function TobiChatPage() {
             hitl_phase: msg.metadata?.hitl_phase,
             error: msg.metadata?.error,
             error_type: msg.metadata?.error_type
-          })).sort((a, b) => new Date(a.created_at!).getTime() - new Date(b.created_at!).getTime());
+          }));
 
-          // Get conversation ID from messages, exactly like dualagentdebug
-          const conversationIdFromMessages = result.data.length > 0 ? result.data[0].conversation_id : null;
+        // Get conversation ID from first message
+        const conversationIdFromMessages = messagesData[0]?.conversation_id || null;
 
-          console.log('🔍 [CHAT] Loaded messages:', existingMessages.length);
-          console.log('🔍 [CHAT] Conversation ID from messages:', conversationIdFromMessages);
-
-          setMessages(existingMessages);
-          setConversationId(conversationIdFromMessages);
-        } else {
-          console.log('🔍 [CHAT] No messages found, starting fresh');
-          setMessages([]);
-          setConversationId(null);
-        }
+        setMessages(existingMessages);
+        setConversationId(conversationIdFromMessages);
       } else {
-        console.warn('🔍 [CHAT] Failed to load messages:', response.status);
+        // No messages found - start fresh
+        console.log('No messages found for user:', selectedUser.id);
         setMessages([]);
         setConversationId(null);
       }
     } catch (error) {
-      console.error('🔍 [CHAT] Error loading messages:', error);
+      console.error('Error loading messages:', error);
       setMessages([]);
       setConversationId(null);
       setError(error instanceof Error ? error.message : 'Failed to load messages');
     } finally {
       setLoadingHistory(false);
     }
-  }, [selectedUser, normalizeRole]);
+  }, [selectedUser, normalizeRole, supabase]);
 
   // Load messages when user changes - exactly like dualagentdebug
   useEffect(() => {
@@ -396,15 +434,27 @@ export default function TobiChatPage() {
       const result = await response.json()
       
       if (result.success && result.data) {
-        // Transform to our User type
+        // Check which users have messages in the database
+        const { data: messageUserIds } = await supabase!
+          .from('messages')
+          .select('user_id')
+          .not('user_id', 'is', null);
+
+        const usersWithMessages = new Set(messageUserIds?.map(m => m.user_id) || []);
+        console.log('📊 Users with existing messages:', Array.from(usersWithMessages));
+
+        // Transform to our User type and mark users with existing messages
         const transformedUsers = result.data.map((user: any) => ({
           id: user.id,
           display_name: user.name || user.email,
           email: user.email,
           user_type: user.role === 'employee' ? 'employee' : 'customer' as 'employee' | 'customer',
           is_active: true,
-          created_at: user.created_at
+          created_at: user.created_at,
+          hasMessages: usersWithMessages.has(user.id) // Add flag for users with existing messages
         }))
+
+        console.log('📊 All users:', transformedUsers.map(u => `${u.display_name} (${u.id}) - Messages: ${u.hasMessages ? '✅' : '❌'}`));
 
         setUsers(transformedUsers)
       }
