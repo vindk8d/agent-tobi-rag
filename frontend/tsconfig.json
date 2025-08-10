@@ -18,6 +18,10 @@
     "jsx": "preserve",
     "baseUrl": ".",
     "paths": {
+      "@/lib/*": ["lib/*"],
+      "@/types/*": ["types/*"],
+      "@/types": ["types/index"],
+      "@/components/*": ["app/components/*"],
       "@/*": ["./*"]
     },
     "plugins": [
