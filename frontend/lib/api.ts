@@ -68,6 +68,10 @@ class ApiClient {
 
     return response.json();
   }
+
+  async getHealth() {
+    return this.get<{ success: boolean; data: any }>('/health');
+  }
 }
 
 export const apiClient = new ApiClient();
