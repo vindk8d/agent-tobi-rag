@@ -36,15 +36,8 @@ for lib in /nix/store/*/lib/libpango-1.0.so*; do
     fi
 done
 
-# Set library paths - put our symlink directory first
-export LD_LIBRARY_PATH="/app/libs:$LD_LIBRARY_PATH"
-
-# Also add all Nix store library paths
-for dir in /nix/store/*/lib; do
-    if [ -d "$dir" ]; then
-        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$dir"
-    fi
-done
+# Set library paths - be very careful about ordering to avoid conflicts
+export LD_LIBRARY_PATH="/app/libs:/usr/lib/x86_64-linux-gnu"
 
 echo "LD_LIBRARY_PATH includes /app/libs with symlinks"
 
@@ -52,9 +45,9 @@ echo "LD_LIBRARY_PATH includes /app/libs with symlinks"
 echo "=== Library symlinks created ==="
 ls -la /app/libs/
 
-# Test WeasyPrint import
+# Test WeasyPrint import (skip if it fails - let the app handle it)
 echo "=== Testing WeasyPrint import ==="
-python -c "import weasyprint; print('SUCCESS: WeasyPrint imported!')" 2>&1
+python -c "import weasyprint; print('SUCCESS: WeasyPrint imported!')" 2>&1 || echo "WeasyPrint import failed - will try at runtime"
 
 # Start the application
 echo "=== Starting application ==="
