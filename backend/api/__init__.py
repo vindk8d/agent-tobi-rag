@@ -9,6 +9,8 @@ from .chat import router as chat_router
 from .documents import router as data_sources_router
 from .datasources import router as datasources_router
 from .memory_debug import router as memory_debug_router
+from .test_pdf_generation import router as pdf_test_router
+from .quotations import router as quotations_router
 
 # Main API router
 api_router = APIRouter(prefix="/api/v1")
@@ -18,5 +20,7 @@ api_router.include_router(chat_router, prefix="/chat", tags=["chat"])
 api_router.include_router(data_sources_router, prefix="/data-sources", tags=["data-sources"])
 api_router.include_router(datasources_router, prefix="/datasources", tags=["datasources"])
 api_router.include_router(memory_debug_router, prefix="/memory-debug", tags=["memory-debug"])
+api_router.include_router(pdf_test_router, tags=["pdf-testing"])
+api_router.include_router(quotations_router, tags=["quotations"])
 
 __version__ = "1.0.0"

@@ -1,0 +1,58 @@
+{
+  "test_name": "Data Completeness Assessment E2E",
+  "start_time": "2025-08-11T02:53:43.964590",
+  "conversation_id": "completeness-test-1754852023",
+  "steps": [
+    {
+      "step": "SENDING_COMPLETE_REQUEST",
+      "timestamp": "2025-08-11T02:53:43.964622",
+      "details": "Sending request with all required data",
+      "success": true
+    },
+    {
+      "step": "API_REQUEST",
+      "timestamp": "2025-08-11T02:53:43.964636",
+      "details": "Sending message: \n        Hi Tobi, I need to generate a quotation for one of our customers with the following complet...",
+      "success": true
+    },
+    {
+      "step": "API_RESPONSE",
+      "timestamp": "2025-08-11T02:54:17.767536",
+      "details": "Response received (length: 754)",
+      "success": true
+    },
+    {
+      "step": "NO_HITL",
+      "timestamp": "2025-08-11T02:54:17.768203",
+      "details": "No HITL triggered as expected",
+      "success": true
+    },
+    {
+      "step": "NO_SUCCESS_INDICATOR",
+      "timestamp": "2025-08-11T02:54:17.768731",
+      "details": "No clear success indicator found. Response: ...",
+      "success": false
+    },
+    {
+      "step": "COMPLETENESS_ASSESSMENT_PASSED",
+      "timestamp": "2025-08-11T02:54:17.768787",
+      "details": "\u2705 Data completeness correctly detected - no HITL triggered",
+      "success": true
+    }
+  ],
+  "errors": [
+    {
+      "step": "NO_SUCCESS_INDICATOR",
+      "details": "No clear success indicator found. Response: ...",
+      "timestamp": "2025-08-11T02:54:17.768731"
+    }
+  ],
+  "hitl_triggered": false,
+  "quotation_created": false,
+  "pdf_generated": false,
+  "pdf_url": null,
+  "success": false,
+  "end_time": "2025-08-11T02:54:17.768815",
+  "duration_seconds": 33.804228,
+  "overall_success": false
+}

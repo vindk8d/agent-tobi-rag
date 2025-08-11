@@ -180,8 +180,8 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")
     openai_embedding_model: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     openai_chat_model: str = Field(default="gpt-4o-mini", env="OPENAI_CHAT_MODEL")
-    openai_simple_model: str = Field(default="gpt-3.5-turbo", env="OPENAI_SIMPLE_MODEL")
-    openai_complex_model: str = Field(default="gpt-4", env="OPENAI_COMPLEX_MODEL")
+    openai_simple_model: str = Field(default="gpt-4o-mini", env="OPENAI_SIMPLE_MODEL")
+    openai_complex_model: str = Field(default="gpt-4o", env="OPENAI_COMPLEX_MODEL")
     openai_max_tokens: int = Field(default=1500, env="OPENAI_MAX_TOKENS")
     openai_temperature: float = Field(default=0.3, env="OPENAI_TEMPERATURE")
 
@@ -255,9 +255,10 @@ class Settings(BaseSettings):
 
             project_id = match.group(1)
 
-            # Use pooler connection format for better compatibility (supports both IPv4 and IPv6)
+            # Use Supabase pooler with reduced pool size to avoid conflicts
             # Format: postgres://postgres.{project_id}:{password}@aws-0-{region}.pooler.supabase.com:5432/postgres
             # Using ap-southeast-1 as the correct region for this project
+            # Our reduced pool size (5 connections) should work well with Supabase pooler
             return f"postgres://postgres.{project_id}:{self.supabase_db_password}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres"
 
         return SimpleNamespace(

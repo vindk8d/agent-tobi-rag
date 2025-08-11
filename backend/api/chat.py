@@ -3,6 +3,7 @@ Chat API endpoints for RAG-Tobi
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
+import asyncio
 from typing import List, Optional, Dict, Any
 import logging
 from datetime import datetime, timedelta
@@ -98,6 +99,38 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
     # Generate defaults for optional fields
     conversation_id = request.conversation_id or str(uuid.uuid4())
     user_id = request.user_id or "anonymous"
+
+    # Fundamental robustness: if user_id not provided but conversation_id exists,
+    # try to derive user_id from the conversation record to preserve employee context
+    if (not request.user_id) and request.conversation_id:
+        try:
+            conv_lookup = await asyncio.to_thread(
+                lambda: db_client.client.table("conversations")
+                .select("user_id")
+                .eq("id", request.conversation_id)
+                .limit(1)
+                .execute()
+            )
+            if conv_lookup.data:
+                user_id = conv_lookup.data[0].get("user_id") or user_id
+                logger.info(f"🔍 [CHAT_DEBUG] Derived user_id from conversation: {user_id}")
+        except Exception as e:
+            logger.warning(f"🔍 [CHAT_DEBUG] Failed to derive user_id from conversation: {e}")
+
+    # If still anonymous, return a clear authentication message instead of falling into tools
+    if user_id == "anonymous":
+        logger.warning("🔒 [CHAT_DEBUG] Missing user_id. Rejecting message to avoid access confusion.")
+        return ChatResponse(
+            message=(
+                "Authentication required. Please make sure your session includes a valid user_id before continuing. "
+                "If you are an employee, log in and retry."
+            ),
+            sources=[],
+            is_interrupted=False,
+            conversation_id=conversation_id,
+            error=True,
+            error_type="auth_required",
+        )
     
     logger.info(f"🔍 [CHAT_DEBUG] Processing message: '{request.message}' for conversation {conversation_id}")
 
@@ -141,13 +174,12 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
         hitl_context = None
         is_awaiting_hitl = False
 
-    # Detect approval messages when agent is waiting for HITL response
-    approval_keywords = ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'proceed', 'go ahead', 'send', 'send it', 'do it']
-    is_approval_message = any(keyword in request.message.lower().strip() for keyword in approval_keywords)
+    # Agent will handle all approval logic - API just routes messages
+    is_approval_message = False  # Default to False, let agent interpret
     
-    logger.info(f"🔍 [CHAT_DEBUG] State-based approval detection: message='{request.message}', is_approval={is_approval_message}, awaiting_hitl={is_awaiting_hitl}")
+    logger.info(f"🔍 [CHAT_DEBUG] Routing message to agent: message='{request.message}', awaiting_hitl={is_awaiting_hitl}")
 
-    if is_awaiting_hitl and is_approval_message:
+    if is_awaiting_hitl:
         logger.info(f"🔍 [CHAT_DEBUG] STATE-BASED APPROVAL DETECTED: Agent is awaiting HITL response, passing approval to agent")
         
         # STATE-BASED APPROACH: Resume interrupted conversation with approval response
