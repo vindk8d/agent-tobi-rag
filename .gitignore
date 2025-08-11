@@ -27,6 +27,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.claude
 
 # Python virtual environments
 venv/
@@ -63,6 +64,7 @@ lerna-debug.log*
 .next/
 out/
 build/
+*.tsbuildinfo
 
 # Nuxt.js
 .nuxt
