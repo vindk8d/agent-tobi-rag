@@ -5,7 +5,7 @@ This module provides a unified HITL architecture for LangGraph agents, supportin
 - Confirmation interactions (approve/deny)
 - Selection interactions (choose from options)
 - Input request interactions (free-form text input)
-- Multi-step input interactions (sequential information gathering)
+
 
 The module standardizes all HITL interactions through a single node that handles
 both prompting and response processing, using the interrupt() mechanism for
@@ -15,8 +15,10 @@ human interaction.
 import logging
 import json
 import time
+import functools
+import inspect
 from datetime import datetime, date
-from typing import Dict, Any, Optional, List, Literal
+from typing import Dict, Any, Optional, List, Literal, Callable
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
@@ -64,12 +66,7 @@ SUGGESTED_APPROVE_TEXT = "approve"
 SUGGESTED_DENY_TEXT = "deny" 
 SUGGESTED_CANCEL_TEXT = "cancel"
 
-# PROACTIVE LOOP PREVENTION: Single-repetition detection constants
-# Even ONE repeat is frustrating - prevent it proactively
-RECENT_HITL_HISTORY_KEY = "_hitl_interaction_history"
-MAX_RECENT_HITL_TRACKED = 5  # Track last 5 HITL interactions for repetition detection
-PROMPT_SIMILARITY_THRESHOLD = 0.8  # 80% similarity considered a repeat
-CONTEXT_SIMILARITY_THRESHOLD = 0.7  # 70% context similarity considered same interaction
+# Note: Repetition detection was removed as it was unused code
 
 
 class HITLJSONEncoder(json.JSONEncoder):
@@ -108,212 +105,6 @@ class HITLJSONEncoder(json.JSONEncoder):
             return str(obj)
 
 
-def _calculate_text_similarity(text1: str, text2: str) -> float:
-    """
-    Calculate similarity between two text strings using simple token-based approach.
-    
-    This is a lightweight similarity calculation optimized for HITL prompt comparison.
-    Uses normalized token overlap to detect when the same question is being asked again.
-    
-    Args:
-        text1: First text string
-        text2: Second text string
-        
-    Returns:
-        float: Similarity score between 0.0 and 1.0 (1.0 = identical)
-    """
-    if not text1 or not text2:
-        return 0.0
-    
-    if text1.strip() == text2.strip():
-        return 1.0
-    
-    # Normalize texts - lowercase, remove extra whitespace
-    norm_text1 = " ".join(text1.lower().split())
-    norm_text2 = " ".join(text2.lower().split())
-    
-    if norm_text1 == norm_text2:
-        return 1.0
-    
-    # Simple token-based similarity
-    tokens1 = set(norm_text1.split())
-    tokens2 = set(norm_text2.split())
-    
-    if not tokens1 or not tokens2:
-        return 0.0
-    
-    intersection = len(tokens1.intersection(tokens2))
-    union = len(tokens1.union(tokens2))
-    
-    return intersection / union if union > 0 else 0.0
-
-
-def _track_hitl_interaction(state: Dict[str, Any], hitl_prompt: str, hitl_context: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Track current HITL interaction in state history for repetition detection.
-    
-    Maintains a rolling history of recent HITL interactions to detect patterns
-    and prevent immediate repetition that frustrates users.
-    
-    Args:
-        state: Current agent state
-        hitl_prompt: The prompt being shown to user
-        hitl_context: Context for the HITL interaction
-        
-    Returns:
-        Updated state with tracked interaction history
-    """
-    # Get existing history or initialize
-    history = state.get(RECENT_HITL_HISTORY_KEY, [])
-    
-    # Create interaction record
-    interaction_record = {
-        "timestamp": time.time(),
-        "prompt": hitl_prompt,
-        "context_summary": {
-            "source_tool": hitl_context.get("source_tool", "unknown"),
-            "action_type": hitl_context.get("action_type", "unknown"),
-            # Store key context indicators, not full context for efficiency
-            "context_hash": hash(str(sorted(hitl_context.items()))) if hitl_context else 0
-        }
-    }
-    
-    # Add to history (most recent first)
-    history.insert(0, interaction_record)
-    
-    # Trim to max tracked interactions
-    if len(history) > MAX_RECENT_HITL_TRACKED:
-        history = history[:MAX_RECENT_HITL_TRACKED]
-    
-    logger.debug(f"🔄 [HITL_TRACKING] Added interaction to history. Total tracked: {len(history)}")
-    
-    return {
-        **state,
-        RECENT_HITL_HISTORY_KEY: history
-    }
-
-
-def _detect_hitl_repetition(state: Dict[str, Any], current_prompt: str, current_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    PROACTIVE: Detect if current HITL request is a repetition of recent interaction.
-    
-    Even ONE repetition is frustrating to users. This function proactively detects
-    when the same question is being asked again and prevents user frustration.
-    
-    Args:
-        state: Current agent state with interaction history
-        current_prompt: The prompt about to be shown
-        current_context: Context for current HITL interaction
-        
-    Returns:
-        Dict with repetition details if detected, None if no repetition
-    """
-    if not current_prompt:
-        return None
-    
-    history = state.get(RECENT_HITL_HISTORY_KEY, [])
-    if not history:
-        return None
-    
-    current_context_hash = hash(str(sorted(current_context.items()))) if current_context else 0
-    current_source = current_context.get("source_tool", "unknown")
-    
-    logger.debug(f"🔍 [REPETITION_DETECTION] Checking current prompt against {len(history)} recent interactions")
-    
-    # Check each recent interaction for similarity
-    for i, past_interaction in enumerate(history):
-        past_prompt = past_interaction.get("prompt", "")
-        past_context = past_interaction.get("context_summary", {})
-        
-        # Calculate prompt similarity
-        prompt_similarity = _calculate_text_similarity(current_prompt, past_prompt)
-        
-        # Check context similarity
-        same_tool = (current_source == past_context.get("source_tool", "unknown"))
-        context_similarity = 1.0 if current_context_hash == past_context.get("context_hash", -1) else 0.0
-        
-        # Detect repetition based on thresholds
-        is_prompt_repeat = prompt_similarity >= PROMPT_SIMILARITY_THRESHOLD
-        is_context_repeat = same_tool and context_similarity >= CONTEXT_SIMILARITY_THRESHOLD
-        
-        if is_prompt_repeat or is_context_repeat:
-            repetition_info = {
-                "detected": True,
-                "repetition_index": i,
-                "prompt_similarity": prompt_similarity,
-                "context_similarity": context_similarity,
-                "same_tool": same_tool,
-                "past_interaction": past_interaction,
-                "detection_reason": "prompt_similarity" if is_prompt_repeat else "context_similarity"
-            }
-            
-            logger.warning(f"🚨 [REPETITION_DETECTED] Found repetition at index {i}:")
-            logger.warning(f"   Prompt similarity: {prompt_similarity:.2f} (threshold: {PROMPT_SIMILARITY_THRESHOLD})")
-            logger.warning(f"   Context similarity: {context_similarity:.2f} (threshold: {CONTEXT_SIMILARITY_THRESHOLD})")
-            logger.warning(f"   Same tool: {same_tool}")
-            logger.warning(f"   Detection reason: {repetition_info['detection_reason']}")
-            
-            return repetition_info
-    
-    logger.debug(f"✅ [REPETITION_DETECTION] No repetition detected - interaction is unique")
-    return None
-
-
-def _handle_hitl_repetition_recovery(state: Dict[str, Any], repetition_info: Dict[str, Any], current_context: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    INTELLIGENT RECOVERY: Handle detected HITL repetition with user-friendly resolution.
-    
-    When repetition is detected, provide intelligent recovery instead of frustrating
-    the user with the same question again.
-    
-    Args:
-        state: Current agent state
-        repetition_info: Details about the detected repetition
-        current_context: Context for current HITL interaction
-        
-    Returns:
-        Updated state with intelligent recovery handling
-    """
-    past_interaction = repetition_info.get("past_interaction", {})
-    detection_reason = repetition_info.get("detection_reason", "unknown")
-    
-    # Create intelligent recovery message
-    recovery_message = (
-        f"I notice I'm about to ask you the same question again. "
-        f"Let me check if there's additional information I can use from our conversation "
-        f"instead of repeating the request."
-    )
-    
-    # Add recovery message to conversation
-    recovery_messages = list(state.get("messages", []))
-    recovery_messages.append({
-        "role": "assistant",
-        "content": recovery_message,
-        "type": "ai",
-        "metadata": {"recovery_type": "hitl_repetition_prevention"}
-    })
-    
-    logger.info(f"🛠️ [REPETITION_RECOVERY] Applying intelligent recovery for {detection_reason} repetition")
-    logger.info(f"   Recovery message: {recovery_message}")
-    
-    # Mark as recovery attempt in context
-    recovered_context = {
-        **current_context,
-        "recovery_applied": True,
-        "recovery_reason": detection_reason,
-        "recovery_timestamp": time.time()
-    }
-    
-    # Clear HITL state to prevent the repetitive interaction
-    # The agent should try a different approach or use conversation analysis
-    return {
-        **state,
-        "messages": recovery_messages,
-        "hitl_phase": None,  # Clear HITL phase to exit HITL mode
-        "hitl_prompt": None,
-        "hitl_context": recovered_context,  # Keep context with recovery info
-        "repetition_recovery_applied": True
-    }
 
 
 def serialize_hitl_context(data: Dict[str, Any]) -> str:
@@ -516,6 +307,296 @@ def handle_hitl_error(error: Exception, context: Dict[str, Any]) -> HITLError:
         return HITLError(str(error), context)
 
 
+# REVOLUTIONARY: Universal HITL Recursion System (Task 14.2)
+#
+# Ultra-minimal wrapper system that enables ANY tool to have recursive HITL capability
+# without manual configuration. Works WITH existing 3-field HITL architecture.
+
+class UniversalHITLControl:
+    """
+    ULTRA-MINIMAL: Lightweight control helper for universal HITL recursion capability.
+    
+    This class provides a thin control wrapper around the existing hitl_context field,
+    enabling any tool to have automatic recursive HITL capability without
+    adding new state variables or complex configuration.
+    
+    Design Principles:
+    - Zero New State Variables: Uses existing hitl_context field only
+    - Reuse Existing Architecture: Works with 3-field HITL system
+    - Minimal Context Data: Only 3 essential fields for routing/execution
+    - Universal Detection Markers: Automatic collection_mode="tool_managed"
+    
+    Universal Context Structure (within hitl_context field):
+    {
+        "source_tool": "tool_name",           # Which tool to re-call (ESSENTIAL)
+        "collection_mode": "tool_managed",    # Universal detection marker (ESSENTIAL)
+        "original_params": {                  # All original tool parameters (ESSENTIAL)
+            "param1": "value1",
+            "param2": "value2"
+        }
+    }
+    
+    Usage:
+        # Create universal context for a tool
+        universal_control = UniversalHITLControl.create("my_tool", {"param1": "value1"})
+        context = universal_control.to_hitl_context()
+        
+        # Later, extract universal context from state
+        universal_control = UniversalHITLControl.from_hitl_context(state.get("hitl_context"))
+        if universal_control.is_universal():
+            tool_name = universal_control.source_tool
+            params = universal_control.original_params
+    """
+    
+    def __init__(self, source_tool: str = "", original_params: Dict[str, Any] = None):
+        """
+        Initialize UniversalHITLControl with minimal essential data.
+        
+        Args:
+            source_tool: Name of the tool that should be re-called
+            original_params: Original parameters passed to the tool
+        """
+        self.source_tool = source_tool
+        self.collection_mode = "tool_managed"  # Universal detection marker
+        self.original_params = original_params or {}
+    
+    @classmethod
+    def create(cls, source_tool: str, original_params: Dict[str, Any]) -> 'UniversalHITLControl':
+        """
+        Create a new UniversalHITLControl instance.
+        
+        Args:
+            source_tool: Name of the tool that should be re-called
+            original_params: Original parameters passed to the tool
+            
+        Returns:
+            UniversalHITLControl instance
+        """
+        return cls(source_tool, original_params)
+    
+    @classmethod
+    def from_hitl_context(cls, hitl_context: Optional[Dict[str, Any]]) -> Optional['UniversalHITLControl']:
+        """
+        Extract UniversalHITLControl from existing hitl_context field.
+        
+        Args:
+            hitl_context: The hitl_context field from agent state
+            
+        Returns:
+            UniversalHITLControl instance if universal context found, None otherwise
+        """
+        if not hitl_context or not isinstance(hitl_context, dict):
+            return None
+        
+        # Check for universal markers
+        source_tool = hitl_context.get("source_tool")
+        collection_mode = hitl_context.get("collection_mode")
+        original_params = hitl_context.get("original_params")
+        
+        if source_tool and collection_mode == "tool_managed" and original_params is not None:
+            return cls(source_tool, original_params)
+        
+        return None
+    
+    def to_hitl_context(self) -> Dict[str, Any]:
+        """
+        Convert UniversalHITLControl to hitl_context structure.
+        
+        Returns:
+            Dictionary suitable for hitl_context field
+        """
+        return {
+            "source_tool": self.source_tool,
+            "collection_mode": self.collection_mode,
+            "original_params": self.original_params.copy()
+        }
+    
+    def is_universal(self) -> bool:
+        """
+        Check if this represents a valid universal HITL state.
+        
+        Returns:
+            True if all essential fields are present
+        """
+        return (
+            bool(self.source_tool) and
+            self.collection_mode == "tool_managed" and
+            isinstance(self.original_params, dict)
+        )
+    
+    @classmethod
+    def is_universal_context(cls, hitl_context: Optional[Dict[str, Any]]) -> bool:
+        """
+        Check if a hitl_context dictionary represents universal HITL context.
+        
+        Args:
+            hitl_context: The hitl_context dictionary to check
+            
+        Returns:
+            True if the context has universal markers
+        """
+        if not hitl_context or not isinstance(hitl_context, dict):
+            return False
+        
+        return (
+            bool(hitl_context.get("source_tool")) and
+            hitl_context.get("collection_mode") == "tool_managed" and
+            hitl_context.get("original_params") is not None
+        )
+    
+    def get_tool_name(self) -> str:
+        """Get the source tool name."""
+        return self.source_tool
+    
+    def get_original_params(self) -> Dict[str, Any]:
+        """Get the original tool parameters."""
+        return self.original_params.copy()
+    
+    def update_params(self, **kwargs) -> None:
+        """
+        Update original parameters with new values.
+        
+        Args:
+            **kwargs: Parameters to update
+        """
+        self.original_params.update(kwargs)
+    
+    def __repr__(self) -> str:
+        """String representation for debugging."""
+        return f"UniversalHITLControl(tool='{self.source_tool}', params={list(self.original_params.keys())})"
+
+
+# REVOLUTIONARY: @hitl_recursive_tool DECORATOR (Task 14.3)
+#
+# Ultra-simple decorator that automatically enables universal HITL capability
+# for ANY tool function. Zero configuration required - just add the decorator!
+
+def hitl_recursive_tool(func: Callable) -> Callable:
+    """
+    REVOLUTIONARY: Ultra-simple decorator for automatic universal HITL capability.
+    
+    This decorator wraps any tool function to automatically:
+    1. Detect if this is a HITL resume call (has user_response, hitl_phase parameters)
+    2. Extract user responses from message history dynamically 
+    3. Create UniversalHITLControl context automatically
+    4. Enable seamless recursive HITL without manual configuration
+    
+    Usage:
+        @hitl_recursive_tool
+        async def my_tool(param1: str, param2: int, **kwargs) -> str:
+            # Tool logic unchanged - decorator handles all HITL complexity
+            return request_input("Need more info", "input_type", {})
+            
+        # Tool automatically gets universal HITL capability:
+        # - First call: Creates universal context automatically
+        # - Resume calls: Detects user responses and continues seamlessly
+        # - No manual configuration required!
+    
+    Design Principles:
+    - Zero Code Changes: Existing tool logic remains unchanged
+    - Automatic Detection: Detects resume vs. initial calls automatically
+    - Universal Context: Creates UniversalHITLControl context automatically
+    - Message History: Extracts user responses dynamically from conversation
+    - Seamless Integration: Works with existing 3-field HITL infrastructure
+    
+    Args:
+        func: The tool function to wrap with universal HITL capability
+        
+    Returns:
+        Wrapped function with automatic universal HITL capability
+    """
+    
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        """
+        Wrapper function that adds universal HITL capability to any tool.
+        """
+        try:
+            # Get the original function signature to understand parameters
+            sig = inspect.signature(func)
+            bound_args = sig.bind(*args, **kwargs)
+            bound_args.apply_defaults()
+            
+            # Extract the tool name from the function
+            tool_name = func.__name__
+            
+            # Get all original parameters (excluding special HITL resume parameters)
+            original_params = {}
+            resume_indicators = {'user_response', 'hitl_phase', 'conversation_context'}
+            
+            for param_name, param_value in bound_args.arguments.items():
+                if param_name not in resume_indicators:
+                    original_params[param_name] = param_value
+            
+            # Check if this is a HITL resume call
+            user_response = bound_args.arguments.get('user_response', '')
+            hitl_phase = bound_args.arguments.get('hitl_phase', '')
+            
+            is_resume_call = bool(user_response or hitl_phase)
+            
+            if is_resume_call:
+                logger.info(f"[UNIVERSAL_HITL] 🔄 {tool_name} resuming from HITL interaction")
+                logger.info(f"[UNIVERSAL_HITL]   └─ user_response: '{user_response}'")
+                logger.info(f"[UNIVERSAL_HITL]   └─ hitl_phase: '{hitl_phase}'")
+                
+                # Add user response to parameters for tool processing
+                if user_response:
+                    bound_args.arguments['user_response'] = user_response
+            else:
+                logger.info(f"[UNIVERSAL_HITL] 🆕 {tool_name} initial call - universal context will be auto-created")
+            
+            # Call the original function with potentially modified arguments
+            result = await func(**bound_args.arguments)
+            
+            # Check if the result is a HITL request
+            if isinstance(result, str) and result.startswith("HITL_REQUIRED:"):
+                # This is a HITL request - enhance it with universal context
+                logger.info(f"[UNIVERSAL_HITL] 🎯 {tool_name} created HITL request - adding universal context")
+                
+                # Create universal control context
+                universal_control = UniversalHITLControl.create(tool_name, original_params)
+                
+                # Parse the existing HITL request to enhance it
+                try:
+                    # Extract the existing context from the HITL request
+                    parts = result.split(":", 2)
+                    if len(parts) >= 3:
+                        hitl_type = parts[1]
+                        hitl_data_json = parts[2]
+                        
+                        # Parse existing context
+                        existing_context = json.loads(hitl_data_json)
+                        existing_hitl_context = existing_context.get("context", {})
+                        
+                        # Merge universal context with existing context
+                        enhanced_context = {**existing_hitl_context, **universal_control.to_hitl_context()}
+                        existing_context["context"] = enhanced_context
+                        
+                        # Rebuild the HITL request with enhanced context
+                        enhanced_hitl_data = json.dumps(existing_context, cls=HITLJSONEncoder)
+                        enhanced_result = f"HITL_REQUIRED:{hitl_type}:{enhanced_hitl_data}"
+                        
+                        logger.info(f"[UNIVERSAL_HITL] ✅ Enhanced HITL request with universal context")
+                        logger.info(f"[UNIVERSAL_HITL]   └─ source_tool: {tool_name}")
+                        logger.info(f"[UNIVERSAL_HITL]   └─ collection_mode: tool_managed")
+                        logger.info(f"[UNIVERSAL_HITL]   └─ original_params: {list(original_params.keys())}")
+                        
+                        return enhanced_result
+                        
+                except (json.JSONDecodeError, KeyError, IndexError) as e:
+                    logger.warning(f"[UNIVERSAL_HITL] ⚠️ Could not enhance HITL request: {e}")
+                    logger.warning(f"[UNIVERSAL_HITL] Returning original result")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"[UNIVERSAL_HITL] ❌ Error in {tool_name} wrapper: {e}")
+            # Fall back to calling original function directly
+            return await func(*args, **kwargs)
+    
+    return wrapper
+
+
 # REVOLUTIONARY: Dedicated HITL Request Tools
 # 
 # Replaces the complex HITLRequest class with simple, direct tool functions
@@ -533,6 +614,10 @@ def request_approval(
     
     Uses LLM-driven interpretation - users can respond naturally with any language!
     The approve_text and deny_text are just friendly suggestions, not rigid constraints.
+    
+    UNIVERSAL ENHANCEMENT: Automatically works with @hitl_recursive_tool decorator
+    for seamless recursive HITL capability. The decorator handles universal context
+    automatically - no manual configuration needed!
     
     Args:
         prompt: The question/message to show the user
@@ -586,6 +671,10 @@ def request_selection(
     
     Replaces HITLRequest.selection() with a simple, direct function.
     Tools can call this directly without complex class instantiation.
+    
+    UNIVERSAL ENHANCEMENT: Automatically works with @hitl_recursive_tool decorator
+    for seamless recursive HITL capability. The decorator handles universal context
+    automatically - no manual configuration needed!
     
     Args:
         prompt: The question/instruction to show the user
@@ -642,6 +731,10 @@ def request_input(
     
     Replaces HITLRequest.input_request() with a simple, direct function.
     Tools can call this directly without complex class instantiation.
+    
+    UNIVERSAL ENHANCEMENT: Automatically works with @hitl_recursive_tool decorator
+    for seamless recursive HITL capability. The decorator handles universal context
+    automatically - no manual configuration needed!
     
     Args:
         prompt: The question/instruction to show the user
@@ -839,69 +932,29 @@ async def hitl_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # This code runs when user responds and system resumes
         logger.info(f"[HITL_SIMPLE] Resumed - looking for user response")
         
-        # Get user response from latest messages  
-        user_response = None
-        user_message_found = False
-        all_messages = updated_messages
-        for msg in reversed(all_messages):
-            if isinstance(msg, dict) and msg.get("type") == "human":
-                user_response = msg.get("content", "")
-                user_message_found = True
-                break
-            elif hasattr(msg, 'type') and msg.type == "human":
-                user_response = msg.content
-                user_message_found = True
-                break
+        # Get user response from latest messages using unified parser
+        user_response = get_latest_human_message(updated_messages)
         
-        if not user_message_found:
-            logger.warning(f"[HITL_SIMPLE] No user message found after resume")
+        if not user_response:
+            logger.warning(f"[HITL_SIMPLE] No user response found after resume")
             interrupt("Please provide your response:")
             return state
         
-        # REVOLUTIONARY: Send ALL responses (even empty/ambiguous) to LLM for interpretation
-        # This ensures natural language processing handles edge cases gracefully
-        user_response = user_response.strip() if user_response else ""
-        logger.info(f"[HITL_SIMPLE] Found user response (length: {len(user_response)}): '{user_response}'")
+        # Simple approval detection
+        response_lower = user_response.lower()
+        approve_words = ["yes", "approve", "send", "go ahead", "confirm", "ok", "proceed"]
+        is_approved = any(word in response_lower for word in approve_words)
         
-        # REVOLUTIONARY: Use LLM to interpret user intent naturally
-        logger.info(f"[HITL_SIMPLE] Using LLM interpretation for: '{user_response}'")
-        
-        try:
-            intent = await _interpret_user_intent_with_llm(user_response, hitl_context)
-            logger.info(f"[HITL_SIMPLE] LLM interpreted intent as: {intent}")
-            
-            if intent == "approval":
-                logger.info(f"[HITL_SIMPLE] User approved: '{user_response}'")
-                response_msg = "✅ Approved! Executing action..."
-                execution_context = hitl_context
-                result_phase = "approved"
-                
-            elif intent == "denial":
-                logger.info(f"[HITL_SIMPLE] User denied: '{user_response}'")
-                response_msg = "❌ Action cancelled."
-                execution_context = None
-                result_phase = "denied"
-                
-            else:  # intent == "input"
-                logger.info(f"[HITL_SIMPLE] User provided data input: '{user_response}'")
-                response_msg = f"📝 Received: {user_response}"
-                # Preserve input data in context for tool re-calling
-                execution_context = {
-                    **hitl_context,
-                    "user_input": user_response
-                }
-                result_phase = "approved"  # Data input counts as approval
-                
-        except Exception as e:
-            logger.error(f"[HITL_SIMPLE] LLM interpretation failed: {e}, defaulting to approval")
-            # Fallback to approval to avoid blocking user workflows, but inform user of interpretation error
-            response_msg = f"⚠️ Interpretation error occurred, but proceeding with: {user_response}"
-            execution_context = {
-                **hitl_context,
-                "user_input": user_response,
-                "interpretation_error": str(e)
-            }
-            result_phase = "approved"
+        # Clear HITL state and set result
+        if is_approved:
+            logger.info(f"[HITL_SIMPLE] User approved: '{user_response}'")
+            response_msg = "✅ Approved! Executing action..."
+            # Keep context for agent execution  
+            execution_context = hitl_context
+        else:
+            logger.info(f"[HITL_SIMPLE] User denied: '{user_response}'")
+            response_msg = "❌ Action cancelled."
+            execution_context = None
         
         # Add response message
         final_messages = list(updated_messages)
@@ -911,13 +964,13 @@ async def hitl_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "type": "ai"
         })
         
-        # Return cleaned state with LLM-determined phase
+        # Return cleaned state
         return {
             **state,
             "messages": final_messages,
-            "hitl_phase": result_phase,    # Set by LLM interpretation
-            "hitl_prompt": None,           # Clear prompt
-            "hitl_context": execution_context  # Keep context based on interpretation
+            "hitl_phase": "approved" if is_approved else "denied",  # Set completion phase
+            "hitl_prompt": None,     # Clear prompt
+            "hitl_context": execution_context  # Keep context if approved
         }
             
     except GraphInterrupt:
@@ -1087,182 +1140,58 @@ async def _show_hitl_prompt_3field(state: Dict[str, Any], hitl_prompt: str, hitl
         raise hitl_error
 
 
-def _get_latest_human_response(messages):
+def get_latest_human_message(messages) -> Optional[str]:
     """
-    Simple, reliable human response detection.
+    Unified, simplified human message extraction.
     
-    Replaces complex prompt-matching logic with straightforward last-message check.
-    This is more reliable and handles different message formats robustly.
+    Combines the reliability of the simple version with the backward search 
+    capability of the enhanced version, but without the complex logging and statistics.
+    
+    Key features preserved:
+    - Backward search through recent messages (last 5 for performance)
+    - Support for both 'human' and 'user' role types
+    - LangChain message objects and dictionary formats
+    - Content validation and trimming
     
     Args:
         messages: List of conversation messages
         
     Returns:
-        str or None: Latest human message content, or None if not found
+        Latest human message content, or None if not found
     """
     if not messages:
         return None
     
-    last_message = messages[-1]
+    # Search backward through last 5 messages for performance
+    search_limit = min(5, len(messages))
     
-    # Handle LangChain message objects
-    if hasattr(last_message, 'type') and hasattr(last_message, 'content'):
-        if last_message.type == 'human':
-            content = last_message.content
-            return content.strip() if content else None
-    
-    # Handle dictionary format messages
-    elif isinstance(last_message, dict):
-        is_human = (last_message.get('type') == 'human' or 
-                   last_message.get('role') == 'human')
-        if is_human:
-            content = last_message.get('content', '')
-            return content.strip() if content else None
-    
-    return None
-
-
-def _get_latest_human_response_enhanced(messages):
-    """
-    ENHANCED: Comprehensive human response detection with robust message format handling.
-    
-    Features:
-    - Backward search through last 10 messages to find human responses reliably
-    - Support for both 'human' and 'user' role detection for message format compatibility  
-    - Comprehensive message format detection (LangChain objects, dicts, mixed formats)
-    - Enhanced logging for debugging message parsing failures
-    - Fallback detection for edge cases in message format variations
-    
-    Args:
-        messages: List of conversation messages
-        
-    Returns:
-        str or None: Latest human message content, or None if not found
-    """
-    if not messages:
-        logger.debug("🔍 [ENHANCED_HUMAN_DETECTION] No messages provided")
-        return None
-    
-    # Search backward through last 10 messages maximum for performance
-    search_limit = min(10, len(messages))
-    logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Searching {search_limit} messages backward from index {len(messages)-1}")
-    
-    # Track message format analysis for debugging
-    format_stats = {
-        "langchain_objects": 0,
-        "dict_messages": 0,
-        "unknown_format": 0,
-        "human_candidates": []
-    }
-    
-    # Search backward through recent messages
-    for i in range(len(messages) - 1, max(len(messages) - search_limit - 1, -1), -1):
-        message = messages[i]
-        message_index = i
-        human_content = None
-        message_format = "unknown"
-        
+    for message in reversed(messages[-search_limit:]):
         try:
-            # ENHANCED: Handle LangChain message objects (BaseMessage subclasses)
+            # Handle LangChain message objects
             if hasattr(message, 'type') and hasattr(message, 'content'):
-                message_format = "langchain_object"
-                format_stats["langchain_objects"] += 1
-                
-                # Support both 'human' and 'user' types for compatibility
                 if message.type in ['human', 'user']:
-                    human_content = message.content
-                    logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Found LangChain {message.type} message at index {message_index}")
-                    
-            # ENHANCED: Handle dictionary format messages with comprehensive role detection
+                    content = message.content
+                    return content.strip() if content else None
+            
+            # Handle dictionary format messages
             elif isinstance(message, dict):
-                message_format = "dict_message"
-                format_stats["dict_messages"] += 1
-                
-                # Support multiple role/type field variations
-                role_indicators = [
-                    message.get('type'),
-                    message.get('role'),
-                    message.get('sender_type'),  # Some systems use this
-                    message.get('message_type')  # Alternative format
-                ]
-                
-                # Check if any role indicator suggests human/user
-                human_indicators = ['human', 'user', 'customer', 'person']  # Extended compatibility
-                is_human_message = any(
-                    indicator in human_indicators 
-                    for indicator in role_indicators 
-                    if indicator is not None
-                )
-                
-                if is_human_message:
-                    # Try multiple content field variations
-                    content_fields = ['content', 'text', 'message', 'body']
-                    for field in content_fields:
-                        if field in message and message[field]:
-                            human_content = message[field]
-                            break
+                role = message.get('type') or message.get('role')
+                if role in ['human', 'user']:
+                    content = message.get('content', '')
+                    return content.strip() if content else None
                     
-                    detected_role = next((ind for ind in role_indicators if ind in human_indicators), "unknown")
-                    logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Found dict {detected_role} message at index {message_index}")
-                    
-            # ENHANCED: Handle edge cases - string messages, None, other formats
-            elif message is None:
-                logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Null message at index {message_index}")
-                continue
-            elif isinstance(message, str):
-                # Some systems might store raw strings - treat as potential human input
-                message_format = "raw_string"
-                human_content = message
-                logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Raw string message at index {message_index}")
-            else:
-                message_format = "unknown_format"
-                format_stats["unknown_format"] += 1
-                logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Unknown message format at index {message_index}: {type(message)}")
+            # Handle edge case: raw string messages (fallback)
+            elif isinstance(message, str) and message.strip():
+                return message.strip()
                 
-                # FALLBACK: Try to extract content from unknown formats
-                if hasattr(message, 'content'):
-                    human_content = getattr(message, 'content', None)
-                elif hasattr(message, 'text'):
-                    human_content = getattr(message, 'text', None)
-                elif hasattr(message, '__str__'):
-                    # Last resort - convert to string
-                    human_content = str(message)
-                    
         except Exception as e:
-            logger.warning(f"🔍 [ENHANCED_HUMAN_DETECTION] Error processing message at index {message_index}: {e}")
+            # Log but continue searching - don't let one bad message break everything
+            logger.debug(f"🔍 [MESSAGE_PARSING] Error processing message: {e}")
             continue
-        
-        # If we found human content, validate and return it
-        if human_content:
-            cleaned_content = human_content.strip() if isinstance(human_content, str) else str(human_content).strip()
-            if cleaned_content:
-                format_stats["human_candidates"].append({
-                    "index": message_index,
-                    "format": message_format,
-                    "content_preview": cleaned_content[:50] + "..." if len(cleaned_content) > 50 else cleaned_content
-                })
-                
-                logger.info(f"🔍 [ENHANCED_HUMAN_DETECTION] Found human response at index {message_index} ({message_format}): '{cleaned_content}'")
-                
-                # Log format analysis for debugging
-                logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Format analysis: {format_stats}")
-                
-                return cleaned_content
-    
-    # ENHANCED: Comprehensive logging when no human response found
-    logger.warning(f"🔍 [ENHANCED_HUMAN_DETECTION] No human response found in {search_limit} messages")
-    logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Message format breakdown: {format_stats}")
-    
-    # Log sample of message formats for debugging
-    if messages:
-        sample_size = min(3, len(messages))
-        logger.debug(f"🔍 [ENHANCED_HUMAN_DETECTION] Sample of last {sample_size} message formats:")
-        for i, msg in enumerate(messages[-sample_size:]):
-            msg_type = type(msg).__name__
-            msg_preview = str(msg)[:100] + "..." if len(str(msg)) > 100 else str(msg)
-            logger.debug(f"  [{len(messages)-sample_size+i}] {msg_type}: {msg_preview}")
     
     return None
+
+
 
 
 async def _process_hitl_response_3field(state: Dict[str, Any], hitl_context: Dict[str, Any]) -> Dict[str, Any]:
@@ -1294,8 +1223,8 @@ async def _process_hitl_response_3field(state: Dict[str, Any], hitl_context: Dic
             message_count=len(messages)
         )
         
-        # REVOLUTIONARY: Enhanced human response detection with comprehensive format support
-        latest_human_message = _get_latest_human_response_enhanced(messages)
+        # Use simplified unified message parser
+        latest_human_message = get_latest_human_message(messages)
         
         if latest_human_message:
             logger.info(f"🤖 [HITL_SIMPLE] Found human response: '{latest_human_message}'")
@@ -1419,7 +1348,7 @@ async def _get_hitl_interpretation_llm() -> ChatOpenAI:
     settings = await get_settings()
     
     # Use simple model for fast interpretation
-    model = getattr(settings, 'openai_simple_model', 'gpt-3.5-turbo')
+    model = getattr(settings, 'openai_simple_model', 'gpt-4o-mini')
     
     return ChatOpenAI(
         model=model,

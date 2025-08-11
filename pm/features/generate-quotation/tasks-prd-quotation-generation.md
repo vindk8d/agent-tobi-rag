@@ -1,0 +1,329 @@
+# Task List: AI Agent Quotation Generation System
+
+Based on the PRD for the AI Agent Quotation Generation System, this document outlines the implementation tasks required to build the feature.
+
+## Relevant Files
+
+- `backend/agents/tools.py` - Add the generate_quotation tool and database helper functions (includes GenerateQuotationParams BaseModel, generate_quotation tool with @tool decorator, _create_quotation_preview helper, intelligent vehicle parsing functions, HITL resume logic)
+- `backend/agents/tools.py` - Add helper functions: `_lookup_customer`, `_lookup_vehicle_by_criteria`, `_lookup_current_pricing`, `_lookup_employee_details`
+- `backend/core/pdf_generator.py` - Comprehensive PDF generation module with WeasyPrint, template rendering, and async support
+- `backend/core/storage.py` - New module for Supabase quotations bucket integration
+- `backend/monitoring/quotation_cleanup.py` - Cleanup job to remove expired quotation PDFs and update DB
+- `backend/monitoring/scheduler.py` - Scheduler wired to run quotation cleanup on an interval
+- `backend/agents/tobi_sales_copilot/agent.py` - Add generate_quotation to employee agent toolset
+- `supabase/migrations/20250808001737_create_quotations_table.sql` - Database table for quotation tracking and metadata with RLS policies, indexes, and auto-generated quotation numbers
+- `supabase/migrations/20250808002000_create_quotations_storage_policies.sql` - Storage helper functions for quotation PDF management and signed URL generation
+- `scripts/create-quotations-bucket.js` - Node.js script to create quotations storage bucket using Supabase service key
+- `templates/quotation_template.html` - Professional HTML template with company branding, vehicle specs, pricing breakdown, and signatures
+- `templates/quotation_styles.css` - Print-optimized CSS with responsive design, dark mode support, and accessibility features
+- `frontend/app/dev/pdf-test/page.tsx` - Comprehensive React testing interface with tabbed forms, sample data, and real-time preview
+- `backend/api/test_pdf_generation.py` - FastAPI endpoints for PDF generation, HTML preview, sample data, and health checks
+- `tests/test_quotation_generation.py` - Comprehensive integration tests for end-to-end quotation generation workflow
+- `tests/test_pdf_generation.py` - Unit tests for PDF generation functionality
+- `tests/test_quotation_storage.py` - Tests for Supabase storage integration
+- `tests/test_quotation_cleanup_simulation.py` - E2E simulation test for upload + cleanup correctness and safety
+- `tests/test_database_helpers.py` - Unit tests for database helper functions (lookup customer/vehicle/pricing/employee)
+- `tests/test_quotation_hitl_flows.py` - Comprehensive HITL flow tests for various scenarios (missing data, approval/rejection)
+- `tests/test_quotation_pdf_quality.py` - PDF quality validation tests with real CRM data, professional appearance, and performance testing
+- `tests/test_quotation_performance.py` - Comprehensive performance testing suite for PDF generation and storage operations
+- `tests/test_quotation_security.py` - Security testing suite for storage access controls, signed URLs, and data protection
+- `tests/test_simplified_vehicle_search.py` - Comprehensive unit tests for LLM-based vehicle search with natural language queries, edge cases, and semantic understanding
+- `tests/test_vehicle_search_fast.py` - Fast unit tests for vehicle search core functionality, error handling, and fallback behavior without LLM calls
+- `tests/test_quotation_integration_simplified.py` - Integration tests for complete quotation generation workflow with simplified LLM-based vehicle search
+- `tests/test_hitl_enhanced_integration.py` - Integration tests for HITL with enhanced LLM-generated prompts and contextual suggestions
+- `tests/test_conversation_context_integration.py` - Tests for conversation context integration affecting vehicle search and suggestions based on budget, family size, and business use cases
+- `tests/test_robustness_and_reliability.py` - Comprehensive robustness and reliability testing including concurrent requests, stress testing, network failures, LLM service degradation, and probabilistic-aware accuracy validation
+- `tests/test_security_and_data_protection.py` - Security and data protection validation including SQL injection prevention, malicious input testing, access control validation, data exposure prevention, and logging security
+- `tests/test_vehicle_search_performance.py` - Performance benchmarks comparing old complex system vs new unified LLM approach
+- `tests/test_vehicle_search_security.py` - Security testing for SQL injection prevention and data protection in LLM-generated queries
+- `tests/test_quotation_completeness_assessment.py` - Unit tests for information completeness assessment and scoring algorithms
+- `tests/test_quotation_correction_handling.py` - Comprehensive tests for correction intent detection, processing, and application
+- `tests/test_enhanced_quotation_flow.py` - Integration tests for complete enhanced quotation flow with pre-approval and corrections
+- `tests/test_quotation_state_management.py` - Tests for enhanced state management and HITL flow integration
+- `evaluation_generate_quotation_hitl.md` - HITL architecture compliance evaluation and identified issues
+
+### Notes
+
+- WeasyPrint requires specific HTML/CSS structure for professional PDF output
+- Supabase storage integration should follow existing document upload patterns
+- HITL flows must integrate with existing request_approval() and request_input() patterns
+- Database helper functions should be reusable across multiple tools
+- Tests should cover both successful flows and error scenarios
+- **CRITICAL**: HITL resume logic is required for proper agent architecture compliance (identified in evaluation_generate_quotation_hitl.md)
+- **NEW**: Enhanced quotation flow introduces pre-approval step before PDF generation to improve customer experience
+- **NEW**: Information correction handling requires LLM-based intent detection and multi-stage processing
+- **NEW**: Completeness assessment must be simple and straightforward - avoid complex scoring or over-collection
+- **NEW**: State management becomes more complex with correction history and multi-step approval processes
+- **NEW**: All correction and pre-approval flows must preserve existing HITL helper function usage patterns
+- **NEW**: Performance optimization critical for correction detection - use keyword filtering before LLM calls
+
+## Tasks
+
+- [x] 1.0 Database Infrastructure Setup
+  - [x] 1.1 Create quotations table migration with fields: id, customer_id, employee_id, vehicle_specs, pricing_data, pdf_url, created_at, expires_at, status
+  - [x] 1.2 Add proper indexes for customer_id, employee_id, and created_at for performance
+  - [x] 1.3 Set up RLS policies for quotations table (employees can only access their own quotations)
+  - [x] 1.4 Create quotations storage bucket in Supabase with proper access policies
+  - [x] 1.5 Test database migration and storage bucket setup
+
+- [x] 2.0 PDF Generation System Implementation
+  - [x] 2.1 Install and configure WeasyPrint dependency in requirements.txt
+  - [x] 2.2 Create professional HTML quotation template with company branding sections
+  - [x] 2.3 Develop CSS styles for print-optimized layout with proper typography and spacing
+  - [x] 2.4 Implement async PDF generation function using WeasyPrint with error handling
+  - [x] 2.5 Add template data injection for customer info, vehicle specs, pricing, and employee details
+  - [x] 2.6 Create frontend PDF testing interface with sample data input forms
+  - [x] 2.7 Add backend API endpoint for PDF generation testing (/api/test-pdf-generation)
+  - [x] 2.8 Test PDF generation with various sample data scenarios and validate output quality
+
+- [x] 3.0 Supabase Storage Integration
+  - [x] 3.1 Implement PDF upload function to quotations bucket with proper metadata
+  - [x] 3.2 Create signed URL generation for secure, time-limited quotation sharing (24-48 hours)
+  - [x] 3.3 Add file naming convention: quotation_{customer_id}_{timestamp}.pdf
+  - [x] 3.4 Implement error handling for storage failures and retry logic
+  - [x] 3.5 Add quotation cleanup job for expired files (optional background task)
+  - [x] 3.6 Simulate upload and cleanup to validate deletion safety and reliability
+    - [x] 3.6.1 Upload a test PDF using `upload_quotation_pdf()` and record returned `path`
+    - [x] 3.6.2 Create or upsert a `quotations` row with `pdf_url` pointing to `/quotations/{path}` and `expires_at` in the past; status in [draft|pending|sent|viewed|expired|rejected]
+    - [x] 3.6.3 Run `cleanup_expired_quotations()` and assert the file at `path` is deleted and DB updated (`pdf_url` NULL, `status` = expired)
+    - [x] 3.6.4 Safety check: create control rows/files that must NOT be deleted (e.g., `status = accepted`, or `expires_at` in future) and verify they remain intact
+    - [x] 3.6.5 Edge case: set a malformed `pdf_url` (no `/quotations/` segment) and verify cleanup skips deletion
+    - [x] 3.6.6 Clean up test artifacts (delete test DB rows if needed)
+
+- [x] 4.0 Database Helper Functions Development
+  - [x] 4.1 Implement _lookup_customer() with flexible search (name, email, phone, company)
+  - [x] 4.2 Create _lookup_vehicle_by_criteria() for vehicle specs, availability, and stock queries
+  - [x] 4.3 Develop _lookup_current_pricing() for real-time pricing, discounts, and add-ons
+  - [x] 4.4 Build _lookup_employee_details() for salesperson information and branch data
+  - [x] 4.5 Add comprehensive error handling and data validation for all helper functions
+  - [x] 4.6 Implement lightweight query optimization (keep code simple)
+    - [x] 4.6.1 Replace any remaining `select("*")` with explicit column lists in helpers (e.g., pricing)
+    - [x] 4.6.2 Apply limits/order only when semantically correct (e.g., single-record lookups like pricing); avoid limits that could truncate user-facing results
+  - [x] 4.7 Generate comprehensive tests for helper functions per PRD (validate inputs, edge cases, and expected outputs)
+    - [x] 4.7.1 Test scaffolding & fixtures
+      - [x] Create test scaffolding with env guards (skip when `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` are missing)
+      - [x] Prefer lightweight fixtures or rely on seeded CRM data; avoid heavy setup/teardown
+    - [x] 4.7.2 `_lookup_customer()` tests
+      - [x] Exact match by UUID, email, phone, and full name
+      - [x] Partial/fuzzy name and company search; multi‑word queries
+      - [x] Phone normalization (formatted vs digits‑only)
+      - [x] Email domain search behavior
+      - [x] Not‑found handling and returned `None`
+      - [x] Performance: repeated calls do not error and return promptly
+    - [x] 4.7.3 `_lookup_vehicle_by_criteria()` tests
+      - [x] Filter by make/model/type/year/color
+      - [x] Availability/stock filters and ranges
+      - [x] Combined criteria correctness; deterministic ordering if applicable
+      - [x] Not‑found handling
+    - [x] 4.7.4 `_lookup_current_pricing()` tests
+      - [x] Base price, discounts, insurance, LTO fees, add‑ons; computed totals align with PRD expectations
+      - [x] Active/valid pricing selection; handles missing/legacy fields gracefully
+      - [x] Edge cases: zero/negative discounts, empty add‑ons
+    - [x] 4.7.5 `_lookup_employee_details()` tests
+      - [x] Lookup by id/email/name; includes branch details
+      - [x] Not‑found handling
+    - [x] 4.7.6 Error‑handling & resilience
+      - [x] Invalid inputs (empty/whitespace, malformed ids) return safe results
+      - [x] Simulated DB error surfaces user‑friendly messages without crashes (monkeypatch client to raise)
+    - [x] 4.7.7 Non‑functional checks
+      - [x] Read‑only behavior (no writes performed by helpers)
+      - [x] Connection stability under repeated calls (no leaks/exceptions)
+
+- [ ] 5.0 Generate Quotation Tool Implementation
+  - [x] 5.1 Create generate_quotation tool with proper @tool decorator and BaseModel schema
+  - [x] 5.2 Implement conversation context extraction using extract_fields_from_conversation()
+  - [x] 5.3 Add HITL flow for missing information gathering using request_input()
+  - [x] 5.3.1 Fix HITL resume logic for proper agent architecture compliance
+    - [x] 5.3.1.1 Add resume parameters to generate_quotation tool signature (state preservation)
+    - [x] 5.3.1.2 Implement resume detection logic at tool start (check for HITL continuation)
+    - [x] 5.3.1.3 Add complete state preservation in all HITL contexts (intermediate results)
+    - [x] 5.3.1.4 Implement multi-step HITL flow support (sequential interactions)
+    - [x] 5.3.1.5 Add resume logic for customer lookup HITL flow
+    - [x] 5.3.1.6 Add resume logic for vehicle requirements HITL flow  
+    - [x] 5.3.1.7 Add resume logic for employee data HITL flow
+    - [x] 5.3.1.8 Add resume logic for missing information HITL flow
+    - [x] 5.3.1.9 Add resume logic for pricing issues HITL flow
+    - [x] 5.3.1.10 Test resume logic with sample HITL scenarios
+  - [x] 5.4 Implement quotation preview and confirmation using request_approval() pattern
+  - [x] 5.5 Integrate all helper functions for data retrieval and validation
+  - [x] 5.6 Add comprehensive error handling and user-friendly error messages
+  - [x] 5.7 Implement employee-only access control using existing user verification patterns (SKIPPED - Already implemented at multiple layers)
+  - [x] 5.8 Replace hard-coded vehicle parsing with intelligent LLM-based approach
+    - [x] 5.8.1 Create _parse_vehicle_requirements_with_llm() function for intelligent parsing
+    - [x] 5.8.2 Implement _get_available_makes_and_models() for dynamic inventory lookup
+    - [x] 5.8.3 Add _enhance_vehicle_criteria_with_fuzzy_matching() for better matching
+    - [x] 5.8.4 Create _find_closest_match() helper for string similarity matching
+    - [x] 5.8.5 Add _generate_inventory_suggestions() for dynamic fallback messages
+    - [x] 5.8.6 Remove hard-coded if/elif vehicle parsing logic (lines 2677-2707)
+    - [x] 5.8.7 Replace static fallback message with dynamic inventory-aware message
+    - [x] 5.8.8 Update generate_quotation tool to use new intelligent parsing functions
+
+- [x] 6.0 Vehicle Search Helper Function Simplification (LLM Intelligence Enhancement)
+  - [x] 6.1 Implement unified LLM-based vehicle search function
+    - [x] 6.1.1 Create _search_vehicles_with_llm() function with comprehensive SQL generation prompt
+    - [x] 6.1.2 Implement VehicleSearchResult Pydantic model for structured LLM output
+    - [x] 6.1.3 Add semantic understanding rules (family car, fuel efficient, affordable, luxury, brand synonyms)
+    - [x] 6.1.4 Implement _execute_vehicle_sql_safely() with SQL injection protection
+    - [x] 6.1.5 Add comprehensive error handling and logging for LLM failures
+  - [x] 6.2 Replace existing helper functions in generate_quotation workflow
+    - [x] 6.2.1 Update generate_quotation() to use _search_vehicles_with_llm() instead of complex orchestration
+    - [x] 6.2.2 Enhance HITL prompts with LLM interpretation and contextual suggestions
+    - [x] 6.2.3 Update HITL resume logic to work with simplified vehicle search results
+  - [x] 6.3 Remove deprecated helper functions (simplification cleanup)
+    - [x] 6.3.1 Remove `_lookup_vehicle_by_criteria()` (replaced by LLM SQL agent)
+    - [x] 6.3.2 Remove _enhance_vehicle_criteria_with_fuzzy_matching() (replaced by LLM semantic understanding)
+    - [x] 6.3.3 Remove _find_closest_match() (no longer needed)
+    - [x] 6.3.4 Remove _get_available_makes_and_models() (replaced by dynamic SQL queries)
+    - [x] 6.3.5 Remove _generate_inventory_suggestions() (replaced by contextual HITL prompts)
+    - [x] 6.3.6 Remove _enhance_vehicle_criteria_with_extracted_context() (integrated into LLM processing)
+    - [x] 6.3.7 Absorb _parse_vehicle_requirements_with_llm() into unified search function
+    - [x] 6.3.8 Clean up imports and references to removed functions
+  - [x] 6.4 Keep essential helper functions (maintain system stability)
+    - [x] 6.4.1 Keep _format_vehicle_list_for_hitl() for consistent UI formatting
+    - [x] 6.4.2 Keep _resume_vehicle_requirements() for HITL continuation handling
+    - [x] 6.4.3 Update function documentation and type hints
+
+- [ ] 7.0 Comprehensive Testing and Validation Suite
+  - [x] 7.1 Unit tests for simplified vehicle search system
+    - [x] 7.1.1 Test _search_vehicles_with_llm() with various natural language queries
+      - [x] Simple queries: "Toyota Prius", "Honda Civic red"
+      - [x] Complex queries: "family SUV good fuel economy under 2M", "luxury sedan 2023 or newer"
+      - [x] Semantic queries: "affordable family car", "fuel efficient compact", "business vehicle"
+      - [x] Edge cases: typos, brand synonyms, model variations, impossible requests
+    - [x] 7.1.2 Test SQL generation and safety validation
+      - [x] Verify generated SQL is syntactically correct and safe
+      - [x] Test SQL injection protection with malicious inputs
+      - [x] Validate semantic understanding rules are properly applied
+      - [x] Test JOIN logic with pricing table integration
+    - [x] 7.1.3 Test error handling and fallback behavior
+      - [x] LLM API failures and timeout handling
+      - [x] Database connection errors during SQL execution
+      - [x] Invalid SQL generation recovery
+      - [x] Empty result set handling
+  - [x] 7.2 Integration tests for end-to-end quotation flow
+    - [x] 7.2.1 Test complete quotation generation with simplified vehicle search
+      - [x] Success path: natural language query → vehicle found → quotation generated
+      - [x] HITL path: unclear query → HITL request → refined search → quotation
+      - [x] Multi-step HITL: complex requirements → multiple clarifications → success
+    - [x] 7.2.2 Test HITL integration with enhanced prompts
+      - [x] Verify LLM interpretation is displayed in HITL prompts
+      - [x] Test contextual suggestions based on search results
+      - [x] Validate HITL resume logic with simplified search context
+    - [x] 7.2.3 Test conversation context integration
+      - [x] Previous budget mentions affect search results
+      - [x] Family size influences vehicle type suggestions
+      - [x] Business use cases prioritize appropriate vehicles
+  - [x] 7.3 Performance and robustness testing
+    - [x] 7.3.1 Robustness and reliability testing (adapted focus)
+      - [x] Test concurrent request handling and resource usage
+      - [x] Stress testing with high query volume
+      - [x] Edge case handling: empty inventory, all vehicles unavailable
+      - [x] Network failure scenarios and recovery
+      - [x] LLM service degradation handling
+    - [x] 7.3.2 Accuracy and effectiveness validation
+      - [x] Validate search result relevance with probabilistic assertions
+      - [x] Test system behavior under various accuracy scenarios
+      - [x] Verify graceful handling of LLM non-deterministic responses
+  - [x] 7.4 Security and data protection validation
+    - [x] 7.4.1 SQL injection prevention testing
+      - [x] Automated SQL injection attack simulation
+      - [x] Manual testing with crafted malicious inputs
+      - [x] Verify parameterized query usage where applicable
+    - [x] 7.4.2 Data privacy and access control testing
+      - [x] Verify employee-only access controls remain intact
+      - [x] Test data exposure through LLM prompts and responses
+      - [x] Validate logging doesn't expose sensitive information
+  - [ ] 7.5 Regression testing and backward compatibility
+    - [ ] 7.5.1 Existing quotation generation functionality
+      - [ ] All existing test cases continue to pass
+      - [ ] PDF generation, storage, and cleanup remain unaffected
+      - [ ] HITL flows maintain expected behavior
+    - [ ] 7.5.2 System integration points
+      - [ ] Agent tool registration and discovery
+      - [ ] Memory and conversation context handling
+      - [ ] Error propagation and user feedback mechanisms
+
+- [ ] 7.6 Simplified Quotation Flow Enhancement (Single Enhanced Approval)
+  - [ ] 7.6.1 Enhanced Existing Approval Step (No Additional HITL Interactions)
+    - [ ] 7.6.1.1 Enhance existing approval prompt with completeness information
+      - [ ] Add completeness check before showing quotation preview to user
+      - [ ] Include missing information warnings in the existing approval prompt
+      - [ ] Show clear "completeness status" in the approval request
+      - [ ] Keep existing single approval interaction - no new HITL steps
+    - [ ] 7.6.1.2 Add basic completeness validation helper
+      - [ ] Create simple _check_quotation_completeness() helper function
+      - [ ] Essential fields only: customer contact info, vehicle selection, employee info  
+      - [ ] Return simple boolean + list of missing items
+      - [ ] Use existing missing information detection logic (_identify_missing_quotation_information)
+  - [ ] 7.6.2 Enhanced Existing Approval Prompt (No New Functions Needed)
+    - [ ] 7.6.2.1 Modify existing approval prompt to include completeness status
+      - [ ] Add completeness warning section to existing approval request
+      - [ ] Include clear correction instructions in the existing prompt
+      - [ ] Keep using existing _create_quotation_preview() function (no changes needed)
+      - [ ] Maintain same professional format and user experience
+    - [ ] 7.6.2.2 Enhance existing approval response handling  
+      - [ ] Update existing _resume_quotation_approval() to detect corrections
+      - [ ] Use existing LLM intent classification with CORRECTION category added
+      - [ ] Keep same state management - no new HITL phases needed
+      - [ ] Handle corrections by regenerating quotation and re-requesting approval
+
+- [ ] 7.7 Simple Correction Handling Within Existing Approval Flow
+  - [ ] 7.7.1 Add Correction Detection to Existing Approval Response Handler
+    - [ ] 7.7.1.1 Enhance existing _resume_quotation_approval() with correction detection
+      - [ ] Add CORRECTION to existing LLM intent classification (APPROVAL, DENIAL, CORRECTION)
+      - [ ] Use existing _interpret_user_intent_with_llm() infrastructure
+      - [ ] No new HITL phases - handle corrections within existing approval step
+      - [ ] Keep same state management and resume logic
+    - [ ] 7.7.1.2 Add simple correction processing helper
+      - [ ] Create _process_correction_in_approval() helper function
+      - [ ] Use LLM to extract what needs correcting from user response
+      - [ ] Apply corrections to quotation data and regenerate preview
+      - [ ] Re-request approval with updated quotation (same approval flow)
+
+
+- [ ] 7.8 Simple Integration Testing (No Complex State Management Needed)  
+  - [ ] 7.8.1 Test enhanced approval flow with completeness and corrections
+    - [ ] Test existing approval flow with completeness warnings in prompt
+    - [ ] Test correction detection within existing _resume_quotation_approval()
+    - [ ] Test quotation regeneration and re-approval after corrections
+    - [ ] Verify existing HITL state management works with corrections
+
+- [ ] 7.9 Testing Suite for Enhanced Quotation Flow
+  - [ ] 7.9.1 Unit tests for enhanced approval flow helpers
+    - [ ] 7.9.1.1 Test simple completeness check helper
+      - [ ] Test _check_quotation_completeness() with essential fields present/missing
+      - [ ] Validate basic field validation (non-empty strings, basic formats)
+      - [ ] Test edge cases with missing customer/vehicle/employee data
+      - [ ] Keep tests simple and focused on core functionality
+    - [ ] 7.9.1.2 Test correction processing within approval
+      - [ ] Test _process_correction_in_approval() helper function
+      - [ ] Test LLM correction extraction and application to quotation data
+      - [ ] Test quotation regeneration after corrections
+      - [ ] Test re-approval request generation
+  - [ ] 7.9.2 Integration tests for single enhanced approval flow
+    - [ ] 7.9.2.1 Test enhanced approval with completeness warnings
+      - [ ] Test existing approval flow with completeness status in prompt
+      - [ ] Test approval with complete information (normal existing flow)
+      - [ ] Test approval with missing information warnings shown
+      - [ ] Validate existing state preservation works
+    - [ ] 7.9.2.2 Test correction handling within approval step
+      - [ ] Test correction detection within existing approval response handler
+      - [ ] Test correction processing and quotation regeneration
+      - [ ] Test re-approval request after corrections (same approval flow)
+      - [ ] Test multiple correction rounds within same approval step
+  - [ ] 7.9.3 End-to-end testing for simplified enhanced approval flow
+    - [ ] 7.9.3.1 Test complete quotation scenarios with single enhanced approval
+      - [ ] Normal flow: data collection → enhanced approval (shows completeness) → PDF
+      - [ ] Correction flow: enhanced approval → correction detected → regenerate → re-approve → PDF
+      - [ ] Missing data flow: enhanced approval shows warnings → user proceeds anyway → PDF
+      - [ ] Test existing performance and error handling still works correctly
+
+- [ ] 8.0 Agent Integration and Final Testing
+  - [x] 8.1 Add generate_quotation tool to employee agent toolset in agent.py
+  - [x] 8.2 Update agent tool descriptions to clearly differentiate from simple_query_crm_data
+  - [x] 8.3 Create comprehensive unit tests for all helper functions (Already completed in Task 4.7 - tests/test_database_helpers.py)
+  - [x] 8.4 Develop integration tests for complete quotation generation flow (16/16 tests passing - 100% success rate achieved)
+  - [x] 8.5 Test HITL flows with various scenarios (missing data, approval/rejection)
+  - [x] 8.6 Validate PDF quality and professional appearance with real CRM data
+  - [x] 8.7 Performance testing for PDF generation and storage operations
+  - [x] 8.8 Security testing for storage access controls and signed URLs

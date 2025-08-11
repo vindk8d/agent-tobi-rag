@@ -1,0 +1,45 @@
+{
+  "test_name": "Simple Multi-Turn Quotation Test",
+  "timestamp": "20250811_032344",
+  "results": [
+    {
+      "turn": 1,
+      "input": "Grace Lee, car",
+      "result": "HITL_REQUIRED:input:{\"prompt\": \"\\u26a1 **Critical Information Needed - Grace Lee**\\n\\nFor your car quotation, I need the following essential information:\\n\\n\\u2022 **Email**\\n\\u2022 **Phone**\\n\\u2022 **Vehicle Make**\\n\\n*This information is required to proceed with your quotation request.*\", \"input_type\": \"missing_quotation_information\", \"validation_hints\": [], \"awaiting_response\": false, \"context\": {\"source_tool\": \"generate_quotation\", \"collection_mode\": \"tool_managed\", \"original_params\": {\"customer_identifier\": \"Grace Lee\", \"vehicle_requirements\": \"car\", \"additional_notes\": \"Employee needs quotation\", \"quotation_validity_days\": 30}}}",
+      "execution_time": 14.389039993286133,
+      "hitl_expected": true
+    },
+    {
+      "turn": 2,
+      "input": "Grace Lee, Toyota sedan",
+      "result": "HITL_REQUIRED:input:{\"prompt\": \"\\u26a1 **Critical Information Needed - Grace Lee**\\n\\nFor your Toyota sedan quotation, I need the following essential information:\\n\\n\\u2022 **Email**\\n\\u2022 **Phone**\\n\\n*This information is required to proceed with your quotation request.*\", \"input_type\": \"missing_quotation_information\", \"validation_hints\": [], \"awaiting_response\": false, \"context\": {\"source_tool\": \"generate_quotation\", \"collection_mode\": \"tool_managed\", \"original_params\": {\"customer_identifier\": \"Grace Lee\", \"vehicle_requirements\": \"Toyota sedan\", \"additional_notes\": \"Employee needs quotation\", \"quotation_validity_days\": 30}}}",
+      "execution_time": 17.809685945510864,
+      "hitl_expected": true
+    },
+    {
+      "turn": 3,
+      "input": "Grace Lee, Toyota Camry 2024",
+      "result": "HITL_REQUIRED:input:{\"prompt\": \"\\u26a1 **Critical Information Needed - Grace Lee**\\n\\nFor your Toyota Camry quotation, I need the following essential information:\\n\\n\\u2022 **Email**\\n\\u2022 **Phone**\\n\\n*This information is required to proceed with your quotation request.*\", \"input_type\": \"missing_quotation_information\", \"validation_hints\": [], \"awaiting_response\": false, \"context\": {\"source_tool\": \"generate_quotation\", \"collection_mode\": \"tool_managed\", \"original_params\": {\"customer_identifier\": \"Grace Lee\", \"vehicle_requirements\": \"Toyota Camry 2024\", \"additional_notes\": \"Employee needs quotation\", \"quotation_validity_days\": 30}}}",
+      "execution_time": 14.189341068267822,
+      "hitl_expected": true
+    },
+    {
+      "turn": 4,
+      "input": "Grace Lee with complete contact info, Toyota Camry 2024",
+      "result": "\ud83c\udfaf **Professional Vehicle Quotation**\n\n**Customer**: Grace Lee\n**Vehicle**: Toyota Camry 2024\n**Pricing Strategy**: Value-optimized with comprehensive benefits\n**Validity**: 30 days\n\n\ud83c\udf81 **Available Opportunities:**\n\u2022 Toyota's standard promotions\n\u2022 Trade-in opportunities for older models\n\u2022 Financing incentives through Toyota Financial Services\n\n\ud83d\udca1 **Recommendations:**\n\u2022 Offer value-based pricing to align with customer's standard tier\n\u2022 Negotiate within the range of standard Toyota incentives\n\n\ud83d\udcca **Pricing Analysis:**\n*The pricing strategy is based on the customer's standard tier and the value proposition of the Toyota Camry. The recommendations take into account the current market conditions and competitive landsca...*\n\n\u2705 **Your intelligent quotation has been prepared!**\n*\ud83c\udfaf High confidence analysis \u2022 Based on comprehensive market and customer analysis*\n\n\n\ud83c\udf89 **Your PDF quotation is ready!**\n\n\ud83d\udcc4 **[\ud83d\udce5 Download PDF Quotation](https://ovppegnboovxussasjff.supabase.co/storage/v1/object/sign/quotations/quotation_Grace%20Lee_20250811032343414556fbf07d.pdf?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV82YmUwYTA2ZC00YzhiLTQ2MDMtYmM4My04ODRiODk1MGQ0YjMiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJxdW90YXRpb25zL3F1b3RhdGlvbl9HcmFjZSBMZWVfMjAyNTA4MTEwMzIzNDM0MTQ1NTZmYmYwN2QucGRmIiwiaWF0IjoxNzU0ODUzODI0LCJleHAiOjE3NTU0NTg2MjR9.iwfLeIOrRbdrmhkNLUucnXrjkGHWv_p6YEHguVBn_20)**\n*Click the link above to download your professional quotation document.*\n\n\ud83d\udccb **Quotation Details:**\n\u2022 **ID**: Q1754853823\n\u2022 **Valid for**: 30 days\n\u2022 **Customer**: Grace Lee\n\u2022 **Vehicle**: Toyota Camry 2024\n\n\u2705 *PDF successfully generated and uploaded to secure storage.*",
+      "execution_time": 32.29421091079712,
+      "hitl_expected": false,
+      "pdf_expected": true
+    }
+  ],
+  "summary": {
+    "total_turns": 4,
+    "hitl_detections": 3,
+    "pdf_generations": 4,
+    "total_execution_time": 78.68227791786194,
+    "average_turn_time": 19.670569479465485,
+    "hitl_effectiveness": true,
+    "completion_success": true,
+    "overall_success": true
+  }
+}

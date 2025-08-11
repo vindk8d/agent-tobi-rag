@@ -107,7 +107,7 @@ async def reset_sql_connections(force: bool = True) -> bool:
     try:
         # Reset legacy global connections (if any)
         try:
-            from agents.tools import close_database_connections
+            from agents.toolbox.toolbox import close_database_connections
             await close_database_connections()
             logger.info("   ✅ Legacy SQL connections closed")
         except Exception as e:
@@ -285,17 +285,25 @@ async def emergency_connection_reset() -> dict:
         except Exception as e:
             results["errors"].append(f"Execution manager reset error: {e}")
         
-        # 3. Reset memory manager
+        # 3. Reset memory manager with improved timeout handling
         try:
             from agents.memory import memory_manager
             if hasattr(memory_manager, 'connection_pool') and memory_manager.connection_pool:
-                await memory_manager.connection_pool.close()
+                try:
+                    # Try graceful close first with short timeout
+                    await asyncio.wait_for(memory_manager.connection_pool.close(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    # Force close if timeout
+                    try:
+                        await memory_manager.connection_pool.close(timeout=1.0)
+                    except:
+                        pass  # Ignore force close errors
             memory_manager.connection_pool = None
             memory_manager.checkpointer = None
             memory_manager.db_manager = None
             memory_manager.long_term_store = None
             memory_manager.consolidator = None
-            results["actions_taken"].append("Memory manager reset")
+            results["actions_taken"].append("Memory manager reset with timeout handling")
         except Exception as e:
             results["errors"].append(f"Memory manager reset error: {e}")
         
@@ -314,6 +322,58 @@ async def emergency_connection_reset() -> dict:
     except Exception as e:
         results["errors"].append(f"Emergency reset error: {e}")
         return results
+
+async def diagnose_connection_issues() -> dict:
+    """
+    Diagnose common connection issues and provide recommendations.
+    """
+    diagnosis = {
+        "issues_found": [],
+        "recommendations": [],
+        "connection_status": {},
+        "pool_settings": {}
+    }
+    
+    try:
+        # Check connection status
+        status = await get_connection_status()
+        diagnosis["connection_status"] = status
+        
+        # Check for common issues
+        if status.get("execution_manager", {}).get("total_connections", 0) > 10:
+            diagnosis["issues_found"].append("High number of active connections detected")
+            diagnosis["recommendations"].append("Consider reducing connection pool size or checking for connection leaks")
+        
+        # Check memory manager
+        memory_status = status.get("memory_manager", {})
+        if not memory_status.get("initialized", False):
+            diagnosis["issues_found"].append("Memory manager not initialized")
+            diagnosis["recommendations"].append("Memory manager initialization may have failed - check logs for errors")
+        
+        # Check pool settings
+        try:
+            from agents.memory import memory_manager
+            if hasattr(memory_manager, 'connection_pool') and memory_manager.connection_pool:
+                pool = memory_manager.connection_pool
+                diagnosis["pool_settings"] = {
+                    "max_size": getattr(pool, "max_size", "unknown"),
+                    "min_size": getattr(pool, "min_size", "unknown"),
+                    "timeout": getattr(pool, "timeout", "unknown"),
+                    "max_idle": getattr(pool, "max_idle", "unknown"),
+                    "max_lifetime": getattr(pool, "max_lifetime", "unknown")
+                }
+        except Exception as e:
+            diagnosis["issues_found"].append(f"Could not inspect pool settings: {e}")
+        
+        # General recommendations
+        if len(diagnosis["issues_found"]) == 0:
+            diagnosis["recommendations"].append("No obvious issues detected - connections appear healthy")
+        
+        return diagnosis
+        
+    except Exception as e:
+        diagnosis["issues_found"].append(f"Diagnosis failed: {e}")
+        return diagnosis
 
 # Convenience functions for quick access
 async def quick_reset():

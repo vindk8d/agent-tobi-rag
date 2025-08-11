@@ -619,7 +619,7 @@ async def get_memory_stats():
 async def get_db_connection_pool_status():
     """Get current database connection pool status for monitoring connection usage."""
     try:
-        from agents.tools import get_connection_pool_status
+        from agents.toolbox.toolbox import get_connection_pool_status
         pool_status = await get_connection_pool_status()
         
         return APIResponse(
@@ -636,7 +636,7 @@ async def get_db_connection_pool_status():
 async def close_db_connections():
     """Close all database connections to free up the connection pool (use in emergencies)."""
     try:
-        from agents.tools import close_database_connections
+        from agents.toolbox.toolbox import close_database_connections
         await close_database_connections()
         
         return APIResponse(

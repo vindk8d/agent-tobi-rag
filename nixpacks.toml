@@ -1,0 +1,42 @@
+# Nixpacks Configuration for Railway Deployment
+# WeasyPrint system dependencies with correct Nix package names
+
+[phases.setup]
+nixPkgs = [
+    # Core WeasyPrint dependencies (proper Nix names)
+    "cairo", "pango", "gdk-pixbuf", "glib", "gobject-introspection",
+    # Text and font rendering
+    "harfbuzz", "fribidi", "fontconfig", "freetype",
+    # Image processing
+    "libjpeg", "libpng", "zlib",
+    # XML processing  
+    "libxml2", "libxslt",
+    # Development tools
+    "pkg-config", "gcc"
+]
+
+[phases.install]
+cmds = [
+    # Create library links for WeasyPrint to find
+    "echo '=== CREATING LIBRARY LINKS ==='",
+    "mkdir -p /usr/lib/x86_64-linux-gnu",
+    "find /nix/store -name 'libgobject-2.0.so*' -exec ln -sf {} /usr/lib/x86_64-linux-gnu/libgobject-2.0.so.0 \\; 2>/dev/null || true",
+    "find /nix/store -name 'libglib-2.0.so*' -exec ln -sf {} /usr/lib/x86_64-linux-gnu/libglib-2.0.so.0 \\; 2>/dev/null || true", 
+    "find /nix/store -name 'libcairo.so*' -exec ln -sf {} /usr/lib/x86_64-linux-gnu/libcairo.so.2 \\; 2>/dev/null || true",
+    "find /nix/store -name 'libpango-1.0.so*' -exec ln -sf {} /usr/lib/x86_64-linux-gnu/libpango-1.0.so.0 \\; 2>/dev/null || true",
+    "find /nix/store -name 'libgdk_pixbuf-2.0.so*' -exec ln -sf {} /usr/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0 \\; 2>/dev/null || true",
+    "echo '=== DEBUGGING LIBRARY SETUP ==='",
+    "ls -la /usr/lib/x86_64-linux-gnu/libgobject* || echo 'No libgobject links created'",
+    "ldconfig",
+    "echo '=== INSTALLING PYTHON PACKAGES ==='",
+    "python -m venv --copies /opt/venv",
+    ". /opt/venv/bin/activate && pip install --upgrade pip setuptools wheel", 
+    ". /opt/venv/bin/activate && pip install -r requirements.txt"
+]
+
+[start]
+cmd = "LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/store/*/lib:$LD_LIBRARY_PATH python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
+
+[variables]
+PORT = "8000"
+LD_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu:/nix/store/*/lib"

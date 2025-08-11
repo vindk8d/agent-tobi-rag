@@ -1,0 +1,32 @@
+{
+  "simulation_metadata": {
+    "conversation_id": "ee905445-9c9b-4ace-9d20-b78a77a590a0",
+    "employee_user_id": "cd15ede1-8102-4831-8695-e0374fc160ba",
+    "customer_name": "Robert Brown",
+    "vehicle_requirements": "Toyota Camry sedan, silver color",
+    "api_base_url": "http://localhost:8000",
+    "timestamp": "2025-08-11T00:54:23.205023",
+    "total_steps": 1
+  },
+  "step_responses": [
+    {
+      "step_name": "Initial Quotation Request",
+      "employee_message": "Generate a quotation for Robert Brown, they want Toyota Camry sedan, silver color",
+      "api_response": {
+        "message": "I apologize, but I'm unable to verify your access to the system.\n\nThis could be due to:\n- Your account may be inactive or suspended\n- You may not have the necessary permissions\n- There may be a temporary system issue\n\nPlease contact your system administrator for assistance, or try again later.",
+        "sources": [],
+        "is_interrupted": false,
+        "conversation_id": "ee905445-9c9b-4ace-9d20-b78a77a590a0",
+        "confirmation_id": null,
+        "error": false,
+        "error_type": null,
+        "hitl_phase": null,
+        "hitl_prompt": null,
+        "hitl_context": null
+      },
+      "timestamp": "2025-08-11T00:54:23.204868",
+      "conversation_id": "ee905445-9c9b-4ace-9d20-b78a77a590a0",
+      "response_time_ms": 2319.082
+    }
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "start_time": "2025-08-11T01:17:45.042988",
+  "conversation_id": "comprehensive-test-1754846265",
+  "steps": [
+    {
+      "step": "Initial Quotation Request",
+      "timestamp": "2025-08-11T01:17:45.043032",
+      "details": "Sending message: Hi! I need to generate a quotation for our customer Robert Brown. Here are the details:\n\nCustomer In...",
+      "api_response": {
+        "status_code": 200,
+        "response_preview": "\u26a1 **Critical Information Needed - Robert Brown**\n\nFor your Toyota Camry sedan quotation, I need the following essential information:\n\n\u2022 **Contact Method**\n\n*This information is required to proceed with your quotation request.*",
+        "is_interrupted": true,
+        "full_response": {
+          "message": "\u26a1 **Critical Information Needed - Robert Brown**\n\nFor your Toyota Camry sedan quotation, I need the following essential information:\n\n\u2022 **Contact Method**\n\n*This information is required to proceed with your quotation request.*",
+          "sources": [],
+          "is_interrupted": true,
+          "conversation_id": "comprehensive-test-1754846265",
+          "confirmation_id": null,
+          "error": false,
+          "error_type": null,
+          "hitl_phase": "needs_confirmation",
+          "hitl_prompt": "\u26a1 **Critical Information Needed - Robert Brown**\n\nFor your Toyota Camry sedan quotation, I need the following essential information:\n\n\u2022 **Contact Method**\n\n*This information is required to proceed with your quotation request.*",
+          "hitl_context": {
+            "source_tool": "generate_quotation",
+            "collection_mode": "tool_managed",
+            "original_params": {
+              "customer_identifier": "Robert Brown",
+              "vehicle_requirements": "Toyota Camry 2024 sedan, Silver color, Standard package",
+              "additional_notes": null,
+              "quotation_validity_days": 30
+            },
+            "legacy_type": "input"
+          }
+        }
+      }
+    },
+    {
+      "step": "Docker Log Analysis",
+      "timestamp": "2025-08-11T01:18:09.172613",
+      "details": "Checking for quotation generation activity",
+      "docker_logs": []
+    },
+    {
+      "step": "HITL Detected",
+      "timestamp": "2025-08-11T01:18:09.268939",
+      "details": "System is requesting human approval"
+    },
+    {
+      "step": "HITL Approval",
+      "timestamp": "2025-08-11T01:18:09.268980",
+      "details": "Sending message: Yes, go ahead and generate the quotation...",
+      "api_response": {
+        "status_code": 200,
+        "response_preview": "\ud83c\udfaf **Professional Vehicle Quotation**\n\n**Customer**: Robert Brown\n**Vehicle**: Toyota Camry 2024\n**Pricing Strategy**: Value-optimized with comprehensive benefits\n**Validity**: 30 days\n\n\ud83c\udf81 **Available Opportunities:**\n\u2022 Standard Toyota incentives\n\u2022 Trade-in opportunities available\n\u2022 0% APR for qualifi",
+        "is_interrupted": false,
+        "full_response": {
+          "message": "\ud83c\udfaf **Professional Vehicle Quotation**\n\n**Customer**: Robert Brown\n**Vehicle**: Toyota Camry 2024\n**Pricing Strategy**: Value-optimized with comprehensive benefits\n**Validity**: 30 days\n\n\ud83c\udf81 **Available Opportunities:**\n\u2022 Standard Toyota incentives\n\u2022 Trade-in opportunities available\n\u2022 0% APR for qualified buyers\n\n\ud83d\udca1 **Recommendations:**\n\u2022 Offer the vehicle at MSRP with standard incentives\n\u2022 Be prepared to negotiate within a 5% range\n\n\ud83d\udcca **Pricing Analysis:**\n*Given the customer's standard tier and the Camry's strong value proposition, a value-based pricing approach is recommended. The customer should be eligible for standard Toyota incentives, and financin...*\n\n\u2705 **Your intelligent quotation has been prepared!**\n*\ud83c\udfaf High confidence analysis \u2022 Based on comprehensive market and customer analysis*\n\n\ud83d\udcc4 *Professional PDF quotation will be generated and sent to you shortly.*\n*Note: PDF generation is being processed in the background.*",
+          "sources": [],
+          "is_interrupted": false,
+          "conversation_id": "comprehensive-test-1754846265",
+          "confirmation_id": null,
+          "error": false,
+          "error_type": null,
+          "hitl_phase": null,
+          "hitl_prompt": null,
+          "hitl_context": null
+        }
+      }
+    },
+    {
+      "step": "Docker Log Analysis",
+      "timestamp": "2025-08-11T01:18:35.946691",
+      "details": "Checking for quotation generation activity",
+      "docker_logs": []
+    },
+    {
+      "step": "Follow-up Request",
+      "timestamp": "2025-08-11T01:18:36.071729",
+      "details": "Requesting PDF link if not provided"
+    },
+    {
+      "step": "PDF Link Request",
+      "timestamp": "2025-08-11T01:18:36.071767",
+      "details": "Sending message: Can you provide the PDF download link for the quotation?...",
+      "api_response": {
+        "status_code": 200,
+        "response_preview": "\u26a1 **Critical Information Needed - None**\n\nFor your Toyota Camry sedan quotation, I need the following essential information:\n\n\u2022 **Customer Name**\n\u2022 **Contact Method**\n\n*This information is required to proceed with your quotation request.*",
+        "is_interrupted": true,
+        "full_response": {
+          "message": "\u26a1 **Critical Information Needed - None**\n\nFor your Toyota Camry sedan quotation, I need the following essential information:\n\n\u2022 **Customer Name**\n\u2022 **Contact Method**\n\n*This information is required to proceed with your quotation request.*",
+          "sources": [],
+          "is_interrupted": true,
+          "conversation_id": "comprehensive-test-1754846265",
+          "confirmation_id": null,
+          "error": false,
+          "error_type": null,
+          "hitl_phase": "needs_confirmation",
+          "hitl_prompt": "\u26a1 **Critical Information Needed - None**\n\nFor your Toyota Camry sedan quotation, I need the following essential information:\n\n\u2022 **Customer Name**\n\u2022 **Contact Method**\n\n*This information is required to proceed with your quotation request.*",
+          "hitl_context": {
+            "source_tool": "generate_quotation",
+            "collection_mode": "tool_managed",
+            "original_params": {
+              "customer_identifier": "robert.brown@email.com",
+              "vehicle_requirements": "Toyota Camry 2024 sedan, Silver color, Standard package",
+              "additional_notes": null,
+              "quotation_validity_days": 30
+            },
+            "legacy_type": "input"
+          }
+        }
+      }
+    },
+    {
+      "step": "Docker Log Analysis",
+      "timestamp": "2025-08-11T01:18:54.229359",
+      "details": "Checking for quotation generation activity",
+      "docker_logs": [
+        "\ud83d\udea8 [EMERGENCY] Function post_chat_message CALLED with message: 'Can you provide the PDF download link for the quotation?'"
+      ]
+    },
+    {
+      "step": "Final Status Check",
+      "timestamp": "2025-08-11T01:18:54.307429",
+      "details": "Checking final test results"
+    }
+  ],
+  "errors": [],
+  "quotation_created": true,
+  "pdf_generated": false,
+  "pdf_url": null
+}

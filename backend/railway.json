@@ -1,0 +1,61 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "nixpacksPlan": {
+      "phases": {
+        "setup": {
+          "nixPkgs": [
+            "python3",
+            "gcc",
+            "cairo",
+            "pango",
+            "gdk-pixbuf",
+            "glib",
+            "gobject-introspection",
+            "harfbuzz",
+            "fontconfig",
+            "freetype",
+            "libffi"
+          ]
+        },
+        "install": {
+          "cmds": [
+            "python -m venv --copies /opt/venv",
+            ". /opt/venv/bin/activate && pip install --upgrade pip setuptools wheel",
+            ". /opt/venv/bin/activate && pip install -r requirements.txt",
+            "echo '=== Debugging library locations ==='",
+            "find /nix/store -name 'libgobject-2.0.so*' 2>/dev/null | head -5",
+            "find /nix/store -name 'libcairo.so*' 2>/dev/null | head -5",
+            "echo '=== Setting up WeasyPrint libraries ==='",
+            "mkdir -p /usr/lib/x86_64-linux-gnu",
+            "cp -r /nix/store/*/lib/libgobject-2.0.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libglib-2.0.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libcairo.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libpango*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libgdk_pixbuf*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libharfbuzz*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libfontconfig*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libfreetype*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "echo '=== Verifying copied libraries ==='",
+            "ls -la /usr/lib/x86_64-linux-gnu/libgobject* 2>/dev/null || echo 'No libgobject found'",
+            "ls -la /usr/lib/x86_64-linux-gnu/libcairo* 2>/dev/null || echo 'No libcairo found'",
+            "ldconfig || true",
+            "echo '=== Testing WeasyPrint import with detailed error ==='",
+            ". /opt/venv/bin/activate && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/var/nix/profiles/default/lib:$LD_LIBRARY_PATH python -c 'import weasyprint; print(\"WeasyPrint imported successfully!\")' 2>&1 || true"
+          ]
+        }
+      },
+      "start": {
+        "cmd": ". /opt/venv/bin/activate && chmod +x start.sh && ./start.sh"
+      }
+    }
+  },
+  "deploy": {
+    "numReplicas": 1,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10,
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 30
+  }
+}

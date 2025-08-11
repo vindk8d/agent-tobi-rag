@@ -1,0 +1,45 @@
+{
+  "test_name": "Simple Multi-Turn Quotation Test",
+  "timestamp": "20250811_031822",
+  "results": [
+    {
+      "turn": 1,
+      "input": "Grace Lee, car",
+      "result": "\u26a0\ufe0f **Employee Access Required**\n\nQuotation generation is restricted to authorized employees only. \n\nIf you're a customer looking for pricing information, I can help you with:\n\u2022 Vehicle availability and specifications\n\u2022 General pricing ranges\n\u2022 Connecting you with a sales representative\n\n*Please let me know how I can assist you!*",
+      "execution_time": 0.0892801284790039,
+      "hitl_expected": true
+    },
+    {
+      "turn": 2,
+      "input": "Grace Lee, Toyota sedan",
+      "result": "\u26a0\ufe0f **Employee Access Required**\n\nQuotation generation is restricted to authorized employees only. \n\nIf you're a customer looking for pricing information, I can help you with:\n\u2022 Vehicle availability and specifications\n\u2022 General pricing ranges\n\u2022 Connecting you with a sales representative\n\n*Please let me know how I can assist you!*",
+      "execution_time": 0.001180887222290039,
+      "hitl_expected": true
+    },
+    {
+      "turn": 3,
+      "input": "Grace Lee, Toyota Camry 2024",
+      "result": "\u26a0\ufe0f **Employee Access Required**\n\nQuotation generation is restricted to authorized employees only. \n\nIf you're a customer looking for pricing information, I can help you with:\n\u2022 Vehicle availability and specifications\n\u2022 General pricing ranges\n\u2022 Connecting you with a sales representative\n\n*Please let me know how I can assist you!*",
+      "execution_time": 0.0009799003601074219,
+      "hitl_expected": true
+    },
+    {
+      "turn": 4,
+      "input": "Grace Lee with complete contact info, Toyota Camry 2024",
+      "result": "\u26a0\ufe0f **Employee Access Required**\n\nQuotation generation is restricted to authorized employees only. \n\nIf you're a customer looking for pricing information, I can help you with:\n\u2022 Vehicle availability and specifications\n\u2022 General pricing ranges\n\u2022 Connecting you with a sales representative\n\n*Please let me know how I can assist you!*",
+      "execution_time": 0.0009000301361083984,
+      "hitl_expected": false,
+      "pdf_expected": true
+    }
+  ],
+  "summary": {
+    "total_turns": 4,
+    "hitl_detections": 0,
+    "pdf_generations": 0,
+    "total_execution_time": 0.09234094619750977,
+    "average_turn_time": 0.02308523654937744,
+    "hitl_effectiveness": false,
+    "completion_success": false,
+    "overall_success": false
+  }
+}
