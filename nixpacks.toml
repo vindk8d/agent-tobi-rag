@@ -1,9 +1,0 @@
-# Minimal Nixpacks config - avoid library conflicts
-[variables]
-PORT = "8000"
-PYTHONDONTWRITEBYTECODE = "1"
-PYTHONUNBUFFERED = "1"
-ENVIRONMENT = "production"
-
-[start]
-cmd = "python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
