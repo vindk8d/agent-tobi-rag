@@ -14,14 +14,23 @@ from io import BytesIO
 from jinja2 import Environment, FileSystemLoader, Template
 import aiofiles
 
-# Try to import WeasyPrint, but make it optional
-try:
-    import weasyprint
-    WEASYPRINT_AVAILABLE = True
-except ImportError as e:
-    WEASYPRINT_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning(f"WeasyPrint not available: {e}. PDF generation will be disabled.")
+# Make WeasyPrint completely lazy - don't import at module level
+WEASYPRINT_AVAILABLE = None  # Will be determined when first needed
+
+def _check_weasyprint():
+    """Lazy check for WeasyPrint availability"""
+    global WEASYPRINT_AVAILABLE
+    if WEASYPRINT_AVAILABLE is None:
+        try:
+            import weasyprint
+            WEASYPRINT_AVAILABLE = True
+            return True
+        except Exception as e:
+            WEASYPRINT_AVAILABLE = False
+            logger = logging.getLogger(__name__)
+            logger.warning(f"WeasyPrint not available: {e}. PDF generation will be disabled.")
+            return False
+    return WEASYPRINT_AVAILABLE
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -233,10 +242,13 @@ class QuotationPDFGenerator:
         Raises:
             PDFGenerationError: If PDF generation fails
         """
-        if not WEASYPRINT_AVAILABLE:
+        if not _check_weasyprint():
             raise PDFGenerationError("WeasyPrint is not available. Cannot generate PDF.")
             
         try:
+            # Import WeasyPrint only when actually needed
+            import weasyprint
+            
             # Run PDF generation in executor to avoid blocking
             loop = asyncio.get_event_loop()
             
