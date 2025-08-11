@@ -24,22 +24,30 @@
             "python -m venv --copies /opt/venv",
             ". /opt/venv/bin/activate && pip install --upgrade pip setuptools wheel",
             ". /opt/venv/bin/activate && pip install -r requirements.txt",
+            "echo '=== Debugging library locations ==='",
+            "find /nix/store -name 'libgobject-2.0.so*' 2>/dev/null | head -5",
+            "find /nix/store -name 'libcairo.so*' 2>/dev/null | head -5",
             "echo '=== Setting up WeasyPrint libraries ==='",
             "mkdir -p /usr/lib/x86_64-linux-gnu",
-            "for lib in $(find /nix/store -name 'libgobject-2.0.so.0' 2>/dev/null); do cp -f $lib /usr/lib/x86_64-linux-gnu/libgobject-2.0.so.0 && echo \"Copied libgobject\"; done",
-            "for lib in $(find /nix/store -name 'libglib-2.0.so.0' 2>/dev/null); do cp -f $lib /usr/lib/x86_64-linux-gnu/libglib-2.0.so.0 && echo \"Copied libglib\"; done",
-            "for lib in $(find /nix/store -name 'libcairo.so.2' 2>/dev/null); do cp -f $lib /usr/lib/x86_64-linux-gnu/libcairo.so.2 && echo \"Copied libcairo\"; done",
-            "for lib in $(find /nix/store -name 'libpango-1.0.so.0' 2>/dev/null); do cp -f $lib /usr/lib/x86_64-linux-gnu/libpango-1.0.so.0 && echo \"Copied libpango\"; done",
-            "for lib in $(find /nix/store -name 'libpangocairo-1.0.so.0' 2>/dev/null); do cp -f $lib /usr/lib/x86_64-linux-gnu/libpangocairo-1.0.so.0 && echo \"Copied libpangocairo\"; done",
-            "for lib in $(find /nix/store -name 'libgdk_pixbuf-2.0.so.0' 2>/dev/null); do cp -f $lib /usr/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0 && echo \"Copied libgdk_pixbuf\"; done",
+            "cp -r /nix/store/*/lib/libgobject-2.0.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libglib-2.0.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libcairo.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libpango*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libgdk_pixbuf*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libharfbuzz*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libfontconfig*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "cp -r /nix/store/*/lib/libfreetype*.so* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || true",
+            "echo '=== Verifying copied libraries ==='",
+            "ls -la /usr/lib/x86_64-linux-gnu/libgobject* 2>/dev/null || echo 'No libgobject found'",
+            "ls -la /usr/lib/x86_64-linux-gnu/libcairo* 2>/dev/null || echo 'No libcairo found'",
             "ldconfig || true",
-            "echo '=== Testing WeasyPrint import ==='",
-            ". /opt/venv/bin/activate && python -c 'import weasyprint; print(\"WeasyPrint imported successfully!\")' || echo 'WeasyPrint import failed'"
+            "echo '=== Testing WeasyPrint import with detailed error ==='",
+            ". /opt/venv/bin/activate && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/var/nix/profiles/default/lib:$LD_LIBRARY_PATH python -c 'import weasyprint; print(\"WeasyPrint imported successfully!\")' 2>&1 || true"
           ]
         }
       },
       "start": {
-        "cmd": ". /opt/venv/bin/activate && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/var/nix/profiles/default/lib:$LD_LIBRARY_PATH python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+        "cmd": ". /opt/venv/bin/activate && chmod +x start.sh && ./start.sh"
       }
     }
   },
