@@ -3,21 +3,58 @@
 
 echo "=== Setting up WeasyPrint libraries at runtime ==="
 
-# Find and link all required libraries
-for dir in /nix/store/*/lib; do
-    if [ -d "$dir" ]; then
-        export LD_LIBRARY_PATH="$dir:$LD_LIBRARY_PATH"
+# Create directory for symlinks
+mkdir -p /app/libs
+
+# Find and symlink specific libraries WeasyPrint needs
+echo "Creating library symlinks..."
+
+# Find libgobject and create the symlink WeasyPrint expects
+for lib in /nix/store/*/lib/libgobject-2.0.so*; do
+    if [ -f "$lib" ]; then
+        ln -sf "$lib" /app/libs/libgobject-2.0-0
+        echo "Linked libgobject: $lib -> /app/libs/libgobject-2.0-0"
+        break
     fi
 done
 
-# Also add standard locations
-export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/lib:/usr/local/lib:$LD_LIBRARY_PATH"
+# Find libcairo
+for lib in /nix/store/*/lib/libcairo.so*; do
+    if [ -f "$lib" ]; then
+        ln -sf "$lib" /app/libs/libcairo.so.2
+        echo "Linked libcairo: $lib -> /app/libs/libcairo.so.2"
+        break
+    fi
+done
 
-echo "LD_LIBRARY_PATH set to: $LD_LIBRARY_PATH"
+# Find libpango
+for lib in /nix/store/*/lib/libpango-1.0.so*; do
+    if [ -f "$lib" ]; then
+        ln -sf "$lib" /app/libs/libpango-1.0.so.0
+        echo "Linked libpango: $lib -> /app/libs/libpango-1.0.so.0"
+        break
+    fi
+done
+
+# Set library paths - put our symlink directory first
+export LD_LIBRARY_PATH="/app/libs:$LD_LIBRARY_PATH"
+
+# Also add all Nix store library paths
+for dir in /nix/store/*/lib; do
+    if [ -d "$dir" ]; then
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$dir"
+    fi
+done
+
+echo "LD_LIBRARY_PATH includes /app/libs with symlinks"
+
+# List our symlinks
+echo "=== Library symlinks created ==="
+ls -la /app/libs/
 
 # Test WeasyPrint import
 echo "=== Testing WeasyPrint import ==="
-python -c "import weasyprint; print('WeasyPrint imported successfully!')" 2>&1 || echo "WeasyPrint import failed at runtime"
+python -c "import weasyprint; print('SUCCESS: WeasyPrint imported!')" 2>&1
 
 # Start the application
 echo "=== Starting application ==="
