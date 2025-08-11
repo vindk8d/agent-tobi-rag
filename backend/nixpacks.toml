@@ -1,74 +1,9 @@
 # Nixpacks Configuration for Railway Deployment
-# WeasyPrint system dependencies with correct Nix package names
+# Simple configuration for WeasyPrint
 
 [phases.setup]
-nixPkgs = [
-    # Python runtime
-    "python3",
-    # Core WeasyPrint dependencies (proper Nix names)
-    "cairo", "pango", "gdk-pixbuf", "glib", "gobject-introspection",
-    # Text and font rendering
-    "harfbuzz", "fribidi", "fontconfig", "freetype",
-    # Image processing
-    "libjpeg", "libpng", "zlib",
-    # XML processing  
-    "libxml2", "libxslt",
-    # Development tools
-    "pkg-config", "gcc",
-    # Additional libraries that might be needed
-    "glibc", "libffi"
-]
-
-[phases.install]
-cmds = [
-    # Show what we're working with
-    "echo '=== NIXPACKS CUSTOM INSTALL PHASE RUNNING ==='",
-    "echo 'Python version:' && python3 --version",
-    "echo 'Current directory:' && pwd",
-    
-    # Check what Nix packages were actually installed
-    "echo '=== CHECKING NIX PACKAGES ==='",
-    "which pango-view 2>/dev/null && echo 'Pango installed!' || echo 'WARNING: pango-view not found'",
-    "pkg-config --exists cairo && echo 'Cairo pkg-config found!' || echo 'WARNING: Cairo pkg-config not found'",
-    
-    # Find and link libraries
-    "echo '=== FINDING LIBRARIES IN NIX STORE ==='",
-    "find /nix/store -name 'libgobject-2.0.so*' 2>/dev/null | head -5 || echo 'No libgobject found'",
-    "find /nix/store -name 'libcairo.so*' 2>/dev/null | head -5 || echo 'No libcairo found'",
-    "find /nix/store -name 'libpango-1.0.so*' 2>/dev/null | head -5 || echo 'No libpango found'",
-    
-    # Create symlinks in standard locations
-    "echo '=== CREATING LIBRARY SYMLINKS ==='",
-    "mkdir -p /usr/lib /usr/lib/x86_64-linux-gnu",
-    # Use more specific patterns and create multiple symlinks
-    "for lib in $(find /nix/store -name 'libgobject-2.0.so.0*' 2>/dev/null); do ln -sf $lib /usr/lib/x86_64-linux-gnu/libgobject-2.0.so.0 && echo \"Linked: $lib\" && break; done",
-    "for lib in $(find /nix/store -name 'libglib-2.0.so.0*' 2>/dev/null); do ln -sf $lib /usr/lib/x86_64-linux-gnu/libglib-2.0.so.0 && echo \"Linked: $lib\" && break; done",
-    "for lib in $(find /nix/store -name 'libcairo.so.2*' 2>/dev/null); do ln -sf $lib /usr/lib/x86_64-linux-gnu/libcairo.so.2 && echo \"Linked: $lib\" && break; done",
-    "for lib in $(find /nix/store -name 'libpango-1.0.so.0*' 2>/dev/null); do ln -sf $lib /usr/lib/x86_64-linux-gnu/libpango-1.0.so.0 && echo \"Linked: $lib\" && break; done",
-    "for lib in $(find /nix/store -name 'libpangocairo-1.0.so.0*' 2>/dev/null); do ln -sf $lib /usr/lib/x86_64-linux-gnu/libpangocairo-1.0.so.0 && echo \"Linked: $lib\" && break; done",
-    "for lib in $(find /nix/store -name 'libgdk_pixbuf-2.0.so.0*' 2>/dev/null); do ln -sf $lib /usr/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0 && echo \"Linked: $lib\" && break; done",
-    
-    # Verify links
-    "echo '=== VERIFYING SYMLINKS ==='",
-    "ls -la /usr/lib/x86_64-linux-gnu/lib*.so* 2>/dev/null | head -10 || echo 'No library symlinks found'",
-    
-    # Update library cache
-    "ldconfig 2>/dev/null || echo 'ldconfig not available'",
-    
-    # Install Python packages
-    "echo '=== INSTALLING PYTHON PACKAGES ==='",
-    "python3 -m venv --copies /opt/venv",
-    ". /opt/venv/bin/activate && pip install --upgrade pip setuptools wheel", 
-    ". /opt/venv/bin/activate && pip install -r requirements.txt",
-    
-    # Test WeasyPrint import
-    "echo '=== TESTING WEASYPRINT IMPORT ==='",
-    ". /opt/venv/bin/activate && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/store/*/lib:$LD_LIBRARY_PATH python3 -c 'import weasyprint; print(\"SUCCESS: WeasyPrint imported!\")' 2>&1 || echo 'FAILED: Check error above'"
-]
+# WeasyPrint system dependencies
+nixPkgs = ["...", "cairo", "pango", "gdk-pixbuf", "libffi"]
 
 [start]
-cmd = ". /opt/venv/bin/activate && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/store/*/lib:$LD_LIBRARY_PATH python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
-
-[variables]
-PORT = "8000"
-LD_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu:/nix/store/*/lib"
+cmd = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
