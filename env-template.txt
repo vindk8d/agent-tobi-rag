@@ -75,11 +75,18 @@ FASTAPI_HOST=0.0.0.0
 FASTAPI_PORT=8000
 FASTAPI_DEBUG=false
 FASTAPI_CORS_ORIGINS=["http://localhost:3000", "http://localhost:3001"]
+# FASTAPI_CORS_ORIGINS=["https://tobi-frontend-production.up.railway.app"]  # Production
+
+# Railway Production URLs
+FRONTEND_URL=https://tobi-frontend-production.up.railway.app
+BACKEND_URL=https://tobi-backend-production.up.railway.app
 
 # Next.js Frontend Configuration
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:8000  # Development
+# NEXT_PUBLIC_API_URL=https://tobi-backend-production.up.railway.app  # Production
 NEXTAUTH_SECRET=your-nextauth-secret-for-production
-NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_URL=http://localhost:3000  # Development
+# NEXTAUTH_URL=https://tobi-frontend-production.up.railway.app  # Production
 
 # Redis Configuration (for caching)
 REDIS_URL=redis://localhost:6379

@@ -1,58 +1,66 @@
-# Consolidated Requirements - Supports Docker, LangGraph Studio & Production
-# Resolves conflicts between previous requirements files
+# Production Requirements - Optimized for Railway Deployment
+# Pinned versions for stability and reproducible builds
 
-# Core FastAPI and web framework
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-python-multipart>=0.0.6
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
+# ===== CORE WEB FRAMEWORK =====
+fastapi==0.115.4
+uvicorn[standard]==0.32.1
+python-multipart==0.0.17
+pydantic==2.10.3
+pydantic-settings==2.6.1
 
-# Database and Supabase
-supabase>=2.3.0
-redis>=5.0.1
-psycopg2-binary>=2.9.5
+# ===== DATABASE & STORAGE =====
+supabase==2.9.1
+psycopg2-binary==2.9.10
+redis==5.2.1
 
-# OpenAI and language model dependencies  
-openai>=1.10.0
-langchain>=0.1.0
-langchain-openai>=0.0.5
-langchain-community>=0.0.13
-langgraph>=0.0.26
-langgraph-checkpoint-postgres>=1.0.0
+# ===== AI & LANGUAGE MODELS =====
+openai==1.57.2
+langchain==0.3.9
+langchain-core==0.3.25
+langchain-openai==0.2.11
+langchain-community==0.3.8
+langgraph==0.5.16
+langgraph-checkpoint-postgres==2.0.7
+tiktoken==0.8.0
 
-# Document processing
-PyPDF2>=3.0.1
-python-docx>=1.1.0
-beautifulsoup4>=4.12.2
-lxml>=4.9.3
+# ===== DOCUMENT PROCESSING =====
+PyPDF2==3.0.1
+python-docx==1.1.2
+beautifulsoup4==4.12.3
+lxml==5.3.0
 
-# PDF generation
-weasyprint>=61.0
-cairocffi>=1.6.0
-cffi>=1.16.0
+# ===== PDF GENERATION =====
+weasyprint==63.1
+cairocffi==1.7.1
+cffi==1.17.1
 
-# Web scraping
-requests>=2.31.0
-httpx>=0.24.0
+# ===== HTTP & NETWORKING =====
+requests==2.32.3
+httpx==0.28.1
+aiohttp==3.11.10
+aiofiles==24.1.0
 
-# Utilities
-python-dotenv>=1.0.0
-pytest>=7.4.3
-pytest-asyncio>=0.21.1
+# ===== UTILITIES =====
+python-dotenv==1.0.1
+jinja2==3.1.4
+validators==0.34.0
 
-# Templating
-jinja2>=2.11.3
+# ===== TASK SCHEDULING =====
+apscheduler==3.11.0
 
-# Vector database support
-pgvector>=0.2.4
+# ===== VECTOR DATABASE =====
+pgvector==0.3.6
 
-# HTTP and async support  
-aiohttp>=3.9.1
-aiofiles>=23.0.0
+# ===== PRODUCTION OPTIMIZATIONS =====
+# Faster JSON parsing
+orjson==3.10.12
 
-# Validation utilities
-validators>=0.22.0
+# Better logging for production
+structlog==24.4.0
 
-# Task scheduling
-apscheduler>=3.10.0 
+# Performance monitoring (optional)
+# prometheus-client==0.21.0
+
+# ===== DEVELOPMENT/TESTING (only if needed in production) =====
+# pytest==8.3.4
+# pytest-asyncio==0.24.0 

@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
 import os
+import asyncio
 from contextlib import asynccontextmanager
 
 # Import models and responses
@@ -27,18 +28,34 @@ logging.getLogger('agents.tools').setLevel(logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
+    """Application lifespan manager with Railway optimizations"""
     # Startup
     logger.info("Starting RAG-Tobi API...")
+    logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    logger.info(f"Port: {os.getenv('PORT', '8000')}")
+    
+    # Test database connection with retries for Railway
+    max_retries = 3
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            if db_client.health_check():
+                logger.info("Database connection established successfully")
+                break
+            else:
+                logger.warning(f"Database connection failed (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+        except Exception as e:
+            logger.error(f"Database initialization error (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error("Failed to establish database connection after all retries")
 
-    # Test database connection
-    try:
-        if db_client.health_check():
-            logger.info("Database connection established")
-        else:
-            logger.warning("Database connection failed")
-    except Exception as e:
-        logger.error(f"Database initialization error: {e}")
+    # Log successful startup
+    logger.info("RAG-Tobi API startup completed")
 
     yield
 
@@ -54,13 +71,37 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Configure CORS
+# Configure CORS for Railway deployment
+allowed_origins = [
+    "http://localhost:3000",  # Local development
+    "http://localhost:3001",  # Alternative local port
+    "https://tobi-frontend-production.up.railway.app",  # Production frontend
+    "https://*.railway.app",  # Railway frontend deployments
+    "https://*.up.railway.app",  # Railway legacy domains
+]
+
+# Add environment-specific origins
+if os.getenv("FRONTEND_URL"):
+    allowed_origins.append(os.getenv("FRONTEND_URL"))
+
+if os.getenv("ENVIRONMENT") == "production":
+    # In production, keep specific Railway URLs and remove localhost
+    production_origins = [
+        "https://tobi-frontend-production.up.railway.app",
+        "https://*.railway.app",
+        "https://*.up.railway.app"
+    ]
+    if os.getenv("FRONTEND_URL"):
+        production_origins.append(os.getenv("FRONTEND_URL"))
+    allowed_origins = production_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include API routes
@@ -69,20 +110,56 @@ app.include_router(api_router)
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for Docker and monitoring"""
+    """Enhanced health check endpoint for Railway and monitoring"""
+    import time
+    start_time = time.time()
+    
     try:
+        # Check database connection
         db_healthy = db_client.health_check()
-        return APIResponse.success_response(
-            data={
-                "service": "RAG-Tobi API",
-                "status": "healthy",
-                "environment": os.getenv("ENVIRONMENT", "development"),
-                "database": "healthy" if db_healthy else "unhealthy"
-            }
-        )
+        
+        # Basic system checks
+        checks = {
+            "database": "healthy" if db_healthy else "unhealthy",
+            "environment": os.getenv("ENVIRONMENT", "development"),
+            "port": os.getenv("PORT", "8000"),
+            "python_path": os.getenv("PYTHONPATH", "not_set"),
+        }
+        
+        # Calculate response time
+        response_time = round((time.time() - start_time) * 1000, 2)
+        
+        # Overall health status
+        overall_healthy = db_healthy
+        status_code = 200 if overall_healthy else 503
+        
+        response_data = {
+            "service": "RAG-Tobi API",
+            "status": "healthy" if overall_healthy else "unhealthy",
+            "timestamp": int(time.time()),
+            "response_time_ms": response_time,
+            "checks": checks,
+            "version": "1.0.0"
+        }
+        
+        if overall_healthy:
+            return APIResponse.success_response(data=response_data)
+        else:
+            from fastapi import Response
+            return Response(
+                content=APIResponse.error_response("Service unhealthy", response_data).json(),
+                status_code=status_code,
+                media_type="application/json"
+            )
+            
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return APIResponse.error_response(f"Health check failed: {str(e)}")
+        from fastapi import Response
+        return Response(
+            content=APIResponse.error_response(f"Health check failed: {str(e)}").json(),
+            status_code=503,
+            media_type="application/json"
+        )
 
 
 # Root endpoint
