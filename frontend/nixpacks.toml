@@ -1,0 +1,24 @@
+# Nixpacks Configuration for Frontend (Next.js)
+# Optimized for Railway deployment
+
+[phases.setup]
+nixPkgs = ["nodejs_18", "npm-9_x"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm run start"
+
+[variables]
+NODE_ENV = "production"
+NEXT_TELEMETRY_DISABLED = "1"
+PORT = "3000"
+
+# Default environment variables (will be overridden by Railway)
+NEXT_PUBLIC_API_URL = "https://tobi-backend-production.up.railway.app"
+NEXT_PUBLIC_SUPABASE_URL = "https://placeholder.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY = "placeholder-key"
