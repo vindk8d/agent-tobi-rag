@@ -14,12 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev shared-mime-info fontconfig fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
-COPY requirements.txt .
+# Copy backend files
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY backend/ .
 
 # Create non-root user
 RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
