@@ -1,43 +1,12 @@
 # Nixpacks Configuration for Railway Deployment
-# This file configures the NIXPACKS build process for optimal Railway deployment
-
-[phases.setup]
-nixPkgs = [
-  "python311",
-  "pip",
-  "gcc",
-  "glibc",
-  "libffi",
-  "cairo",
-  "pango", 
-  "gdk-pixbuf",
-  "fontconfig",
-  "freetype",
-  "pkg-config"
-]
-
-[phases.install]
-cmds = [
-  "pip install --upgrade pip setuptools wheel",
-  "pip install --no-cache-dir -r requirements.txt"
-]
-
-[phases.build]
-cmds = [
-  "python -m compileall backend/",
-  "echo 'Build completed successfully'"
-]
+# Simplified configuration to let NIXPACKS auto-detect Python project
 
 [start]
 cmd = "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
 
 [variables]
-PYTHONPATH = "backend"
+PYTHONPATH = "/app/backend:/app"
 PYTHONUNBUFFERED = "1" 
 PYTHONDONTWRITEBYTECODE = "1"
-PIP_NO_CACHE_DIR = "1"
-PIP_DISABLE_PIP_VERSION_CHECK = "1"
-
-# Railway-specific optimizations
 PORT = "8000"
 ENVIRONMENT = "production"
