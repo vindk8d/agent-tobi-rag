@@ -4,10 +4,10 @@ Provides endpoints for testing PDF generation and HTML preview.
 """
 
 import logging
-from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Response
+from typing import Dict, Any, List
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from io import BytesIO
 import asyncio
 
@@ -55,7 +55,7 @@ class PricingData(BaseModel):
     lto_fees: float = Field(default=0.0, ge=0)
     discounts: float = Field(default=0.0, ge=0)
     total_amount: float = Field(..., ge=0)
-    add_ons: list[AddOn] = Field(default_factory=list)
+    add_ons: List[AddOn] = Field(default_factory=list)
     discount_description: str = Field(default="", max_length=255)
 
 class EmployeeData(BaseModel):
@@ -73,14 +73,16 @@ class QuotationTestRequest(BaseModel):
     pricing: PricingData
     employee: EmployeeData
 
-    @validator('quotation_number')
+    @field_validator('quotation_number')
+    @classmethod
     def validate_quotation_number(cls, v):
         # Basic validation for quotation number format
         if not v.startswith('Q'):
             raise ValueError('Quotation number must start with "Q"')
         return v
 
-    @validator('pricing')
+    @field_validator('pricing')
+    @classmethod
     def validate_pricing_total(cls, v):
         # Calculate expected total
         add_on_total = sum(addon.price for addon in v.add_ons)

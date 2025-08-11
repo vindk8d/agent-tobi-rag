@@ -132,7 +132,7 @@ export default function PDFTestPage() {
     setFormData(prev => ({
       ...prev,
       [section]: {
-        ...(prev[section] || {}),
+        ...(prev[section] as Record<string, any> || {}),
         [field]: value
       }
     }));
@@ -142,9 +142,9 @@ export default function PDFTestPage() {
     setFormData(prev => ({
       ...prev,
       [section]: {
-        ...(prev[section] || {}),
+        ...(prev[section] as Record<string, any> || {}),
         [subSection]: {
-          ...((prev[section] as any)?.[subSection] || {}),
+          ...((prev[section] as Record<string, any>)?.[subSection] as Record<string, any> || {}),
           [field]: value
         }
       }
