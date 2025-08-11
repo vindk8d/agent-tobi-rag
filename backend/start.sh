@@ -54,15 +54,12 @@ ls -la /app/libs/
 
 # Test WeasyPrint import
 echo "=== Testing WeasyPrint import ==="
-/opt/venv/bin/python -c "import weasyprint; print('SUCCESS: WeasyPrint imported!')" 2>&1
+python -c "import weasyprint; print('SUCCESS: WeasyPrint imported!')" 2>&1
 
 # Start the application
 echo "=== Starting application ==="
 echo "PORT environment variable: $PORT"
 echo "Will listen on port: ${PORT:-8000}"
 
-# Ensure we're in the virtual environment
-source /opt/venv/bin/activate
-
-# Start uvicorn with the PORT Railway provides
+# Start uvicorn with the PORT Railway provides (venv should already be activated)
 exec python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1

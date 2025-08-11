@@ -11,6 +11,8 @@ nixPkgs = [
     "libjpeg", "libpng", "zlib",
     # XML processing  
     "libxml2", "libxslt",
+    # Database connectivity
+    "postgresql",
     # Development tools
     "pkg-config", "gcc"
 ]
@@ -35,8 +37,11 @@ cmds = [
 ]
 
 [start]
-cmd = "LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/store/*/lib:$LD_LIBRARY_PATH python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
+cmd = ". /opt/venv/bin/activate && ./start.sh"
 
 [variables]
 PORT = "8000"
+PYTHONDONTWRITEBYTECODE = "1"
+PYTHONUNBUFFERED = "1" 
+ENVIRONMENT = "production"
 LD_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu:/nix/store/*/lib"
