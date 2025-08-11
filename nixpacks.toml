@@ -1,11 +1,11 @@
 # Nixpacks Configuration for Railway Deployment
-# Simplified configuration to let NIXPACKS auto-detect Python project
+# Properly configure paths for backend directory structure
 
 [start]
-cmd = "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
+cmd = "cd /app/backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
 
 [variables]
-PYTHONPATH = "/app/backend:/app"
+PYTHONPATH = "/app/backend"
 PYTHONUNBUFFERED = "1" 
 PYTHONDONTWRITEBYTECODE = "1"
 PORT = "8000"
