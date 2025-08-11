@@ -36,6 +36,10 @@ Based on the PRD for the AI Agent Quotation Generation System, this document out
 - `tests/test_security_and_data_protection.py` - Security and data protection validation including SQL injection prevention, malicious input testing, access control validation, data exposure prevention, and logging security
 - `tests/test_vehicle_search_performance.py` - Performance benchmarks comparing old complex system vs new unified LLM approach
 - `tests/test_vehicle_search_security.py` - Security testing for SQL injection prevention and data protection in LLM-generated queries
+- `tests/test_quotation_completeness_assessment.py` - Unit tests for information completeness assessment and scoring algorithms
+- `tests/test_quotation_correction_handling.py` - Comprehensive tests for correction intent detection, processing, and application
+- `tests/test_enhanced_quotation_flow.py` - Integration tests for complete enhanced quotation flow with pre-approval and corrections
+- `tests/test_quotation_state_management.py` - Tests for enhanced state management and HITL flow integration
 - `evaluation_generate_quotation_hitl.md` - HITL architecture compliance evaluation and identified issues
 
 ### Notes
@@ -46,6 +50,12 @@ Based on the PRD for the AI Agent Quotation Generation System, this document out
 - Database helper functions should be reusable across multiple tools
 - Tests should cover both successful flows and error scenarios
 - **CRITICAL**: HITL resume logic is required for proper agent architecture compliance (identified in evaluation_generate_quotation_hitl.md)
+- **NEW**: Enhanced quotation flow introduces pre-approval step before PDF generation to improve customer experience
+- **NEW**: Information correction handling requires LLM-based intent detection and multi-stage processing
+- **NEW**: Completeness assessment must be simple and straightforward - avoid complex scoring or over-collection
+- **NEW**: State management becomes more complex with correction history and multi-step approval processes
+- **NEW**: All correction and pre-approval flows must preserve existing HITL helper function usage patterns
+- **NEW**: Performance optimization critical for correction detection - use keyword filtering before LLM calls
 
 ## Tasks
 
@@ -232,6 +242,81 @@ Based on the PRD for the AI Agent Quotation Generation System, this document out
       - [ ] Agent tool registration and discovery
       - [ ] Memory and conversation context handling
       - [ ] Error propagation and user feedback mechanisms
+
+- [ ] 7.6 Simplified Quotation Flow Enhancement (Single Enhanced Approval)
+  - [ ] 7.6.1 Enhanced Existing Approval Step (No Additional HITL Interactions)
+    - [ ] 7.6.1.1 Enhance existing approval prompt with completeness information
+      - [ ] Add completeness check before showing quotation preview to user
+      - [ ] Include missing information warnings in the existing approval prompt
+      - [ ] Show clear "completeness status" in the approval request
+      - [ ] Keep existing single approval interaction - no new HITL steps
+    - [ ] 7.6.1.2 Add basic completeness validation helper
+      - [ ] Create simple _check_quotation_completeness() helper function
+      - [ ] Essential fields only: customer contact info, vehicle selection, employee info  
+      - [ ] Return simple boolean + list of missing items
+      - [ ] Use existing missing information detection logic (_identify_missing_quotation_information)
+  - [ ] 7.6.2 Enhanced Existing Approval Prompt (No New Functions Needed)
+    - [ ] 7.6.2.1 Modify existing approval prompt to include completeness status
+      - [ ] Add completeness warning section to existing approval request
+      - [ ] Include clear correction instructions in the existing prompt
+      - [ ] Keep using existing _create_quotation_preview() function (no changes needed)
+      - [ ] Maintain same professional format and user experience
+    - [ ] 7.6.2.2 Enhance existing approval response handling  
+      - [ ] Update existing _resume_quotation_approval() to detect corrections
+      - [ ] Use existing LLM intent classification with CORRECTION category added
+      - [ ] Keep same state management - no new HITL phases needed
+      - [ ] Handle corrections by regenerating quotation and re-requesting approval
+
+- [ ] 7.7 Simple Correction Handling Within Existing Approval Flow
+  - [ ] 7.7.1 Add Correction Detection to Existing Approval Response Handler
+    - [ ] 7.7.1.1 Enhance existing _resume_quotation_approval() with correction detection
+      - [ ] Add CORRECTION to existing LLM intent classification (APPROVAL, DENIAL, CORRECTION)
+      - [ ] Use existing _interpret_user_intent_with_llm() infrastructure
+      - [ ] No new HITL phases - handle corrections within existing approval step
+      - [ ] Keep same state management and resume logic
+    - [ ] 7.7.1.2 Add simple correction processing helper
+      - [ ] Create _process_correction_in_approval() helper function
+      - [ ] Use LLM to extract what needs correcting from user response
+      - [ ] Apply corrections to quotation data and regenerate preview
+      - [ ] Re-request approval with updated quotation (same approval flow)
+
+
+- [ ] 7.8 Simple Integration Testing (No Complex State Management Needed)  
+  - [ ] 7.8.1 Test enhanced approval flow with completeness and corrections
+    - [ ] Test existing approval flow with completeness warnings in prompt
+    - [ ] Test correction detection within existing _resume_quotation_approval()
+    - [ ] Test quotation regeneration and re-approval after corrections
+    - [ ] Verify existing HITL state management works with corrections
+
+- [ ] 7.9 Testing Suite for Enhanced Quotation Flow
+  - [ ] 7.9.1 Unit tests for enhanced approval flow helpers
+    - [ ] 7.9.1.1 Test simple completeness check helper
+      - [ ] Test _check_quotation_completeness() with essential fields present/missing
+      - [ ] Validate basic field validation (non-empty strings, basic formats)
+      - [ ] Test edge cases with missing customer/vehicle/employee data
+      - [ ] Keep tests simple and focused on core functionality
+    - [ ] 7.9.1.2 Test correction processing within approval
+      - [ ] Test _process_correction_in_approval() helper function
+      - [ ] Test LLM correction extraction and application to quotation data
+      - [ ] Test quotation regeneration after corrections
+      - [ ] Test re-approval request generation
+  - [ ] 7.9.2 Integration tests for single enhanced approval flow
+    - [ ] 7.9.2.1 Test enhanced approval with completeness warnings
+      - [ ] Test existing approval flow with completeness status in prompt
+      - [ ] Test approval with complete information (normal existing flow)
+      - [ ] Test approval with missing information warnings shown
+      - [ ] Validate existing state preservation works
+    - [ ] 7.9.2.2 Test correction handling within approval step
+      - [ ] Test correction detection within existing approval response handler
+      - [ ] Test correction processing and quotation regeneration
+      - [ ] Test re-approval request after corrections (same approval flow)
+      - [ ] Test multiple correction rounds within same approval step
+  - [ ] 7.9.3 End-to-end testing for simplified enhanced approval flow
+    - [ ] 7.9.3.1 Test complete quotation scenarios with single enhanced approval
+      - [ ] Normal flow: data collection → enhanced approval (shows completeness) → PDF
+      - [ ] Correction flow: enhanced approval → correction detected → regenerate → re-approve → PDF
+      - [ ] Missing data flow: enhanced approval shows warnings → user proceeds anyway → PDF
+      - [ ] Test existing performance and error handling still works correctly
 
 - [ ] 8.0 Agent Integration and Final Testing
   - [x] 8.1 Add generate_quotation tool to employee agent toolset in agent.py

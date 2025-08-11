@@ -34,7 +34,7 @@ if str(backend_path) not in sys.path:
 # Now use absolute imports
 from agents.tobi_sales_copilot.state import AgentState
 from agents.tobi_sales_copilot.language import detect_user_language, detect_user_language_from_context, get_employee_system_prompt, get_customer_system_prompt
-from agents.tools import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
+from agents.toolbox import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
 from agents.memory import memory_manager, memory_scheduler, context_manager
 from agents.hitl import parse_tool_response, hitl_node
 from core.config import get_settings, setup_langsmith_tracing
@@ -1422,10 +1422,8 @@ This information from your past interactions may help me better assist you.
             tool_params.update({
                 "user_response": user_response,
                 "hitl_phase": hitl_phase,
-                # Use step from HITL context so the tool can route correctly
-                "current_step": hitl_context.get("current_step", ""),
-                # Pass preserved quotation state when available
-                "quotation_state": hitl_context.get("quotation_state"),
+                # UNIVERSAL CONTEXT UNDERSTANDING (Task 15.5.3): 
+                # Eliminated step-specific parameters in favor of universal context
                 "conversation_context": ""  # Could be populated from messages if needed
             })
             
@@ -1441,7 +1439,7 @@ This information from your past interactions may help me better assist you.
             user_type = "employee" if employee_id else "unknown"
 
             # Prefer ainvoke/invoke on the tool wrapper to avoid .func mismatches
-            from agents.tools import UserContext
+            from agents.toolbox import UserContext
             with UserContext(user_id=user_id, conversation_id=conversation_id, user_type=user_type, employee_id=employee_id):
                 if hasattr(selected_tool, 'ainvoke'):
                     tool_result = await selected_tool.ainvoke(tool_params)
@@ -3303,7 +3301,8 @@ Important: Use the tools to help you provide the best possible assistance to the
                     
                     context = {
                         "source_tool": "agent_resume",
-                        "current_step": "hitl_response",
+                        # UNIVERSAL CONTEXT UNDERSTANDING (Task 15.5.3):
+                        # Eliminated step-specific "current_step" in favor of universal context
                         "interaction_type": "approval_request"
                     }
                     

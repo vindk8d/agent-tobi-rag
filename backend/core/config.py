@@ -180,8 +180,8 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")
     openai_embedding_model: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     openai_chat_model: str = Field(default="gpt-4o-mini", env="OPENAI_CHAT_MODEL")
-    openai_simple_model: str = Field(default="gpt-3.5-turbo", env="OPENAI_SIMPLE_MODEL")
-    openai_complex_model: str = Field(default="gpt-4", env="OPENAI_COMPLEX_MODEL")
+    openai_simple_model: str = Field(default="gpt-4o-mini", env="OPENAI_SIMPLE_MODEL")
+    openai_complex_model: str = Field(default="gpt-4o", env="OPENAI_COMPLEX_MODEL")
     openai_max_tokens: int = Field(default=1500, env="OPENAI_MAX_TOKENS")
     openai_temperature: float = Field(default=0.3, env="OPENAI_TEMPERATURE")
 

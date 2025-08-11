@@ -306,7 +306,7 @@ class ContextWindowManager:
             def _get_tokenizer():
                 try:
                     # Use tiktoken for accurate token counting
-                    return tiktoken.encoding_for_model("gpt-3.5-turbo")
+                    return tiktoken.encoding_for_model("gpt-4o-mini")
                 except KeyError:
                     # Fallback encoding
                     return tiktoken.get_encoding("cl100k_base")
@@ -2111,7 +2111,7 @@ class MemoryManager:
             self.settings = settings
 
             # Initialize ModelSelector for dynamic model selection
-            from .tools import ModelSelector
+            from .toolbox.toolbox import ModelSelector
             self.model_selector = ModelSelector(settings)
 
             # Initialize default LLM with dynamic model selection capability
@@ -2160,9 +2160,9 @@ class MemoryManager:
         """
         try:
             if complexity == "complex":
-                model = getattr(self.settings, 'openai_complex_model', 'gpt-4')
+                model = getattr(self.settings, 'openai_complex_model', 'gpt-4o')
             else:
-                model = getattr(self.settings, 'openai_simple_model', 'gpt-3.5-turbo')
+                model = getattr(self.settings, 'openai_simple_model', 'gpt-4o-mini')
 
             logger.debug(f"Creating memory LLM with model: {model} (complexity: {complexity})")
 
@@ -2176,7 +2176,7 @@ class MemoryManager:
             logger.error(f"Error creating memory LLM: {e}")
             # Fallback to simple model
             return ChatOpenAI(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 temperature=0.1,
                 max_tokens=1000,
                 api_key=self.settings.openai_api_key

@@ -1,13 +1,31 @@
 """
-Tools for Sales Copilot
+DEPRECATED BACKUP FILE - Task 15.6.2 CLEANUP
 
-This module provides:
-1. User context management (consolidated from user_context.py)
-2. Simplified SQL tools following LangChain best practices
-3. Modern LCEL-based RAG tools
-4. Natural language capabilities over hard-coded logic
+⚠️  WARNING: THIS FILE CONTAINS DEPRECATED CODE ⚠️
 
-Following the principle: Use LLM intelligence rather than keyword matching or complex logic.
+This file contains unused resume handler functions and complex state management code
+that have been ELIMINATED in Task 15.6.2:
+
+DEPRECATED FUNCTIONS (NO LONGER USED):
+- _handle_quotation_resume() → Replaced by universal handle_quotation_resume()
+- _resume_customer_lookup() → Eliminated in favor of LLM-driven context understanding
+- _resume_vehicle_requirements() → Eliminated in favor of LLM-driven context understanding
+- _resume_employee_data() → Eliminated in favor of LLM-driven context understanding
+- _resume_missing_information() → Eliminated in favor of LLM-driven context understanding
+- _resume_pricing_issues() → Eliminated in favor of LLM-driven context understanding
+- _resume_quotation_approval() → Eliminated in favor of LLM-driven context understanding
+
+DEPRECATED STATE MANAGEMENT (NO LONGER USED):
+- quotation_state dictionaries → Eliminated in favor of universal context
+- current_step tracking → Eliminated in favor of step-agnostic processing
+- Complex state preservation → Simplified to LLM-driven context understanding
+
+🚨 THIS FILE SHOULD BE REMOVED AFTER CONFIRMING NO DEPENDENCIES 🚨
+
+Current system uses:
+- backend/agents/toolbox/generate_quotation.py (universal resume handler)
+- LLM-driven context understanding
+- Universal HITL system integration
 """
 
 import asyncio
@@ -17,7 +35,8 @@ import json
 import uuid
 from datetime import datetime, date
 from enum import Enum
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
+from dataclasses import dataclass, field, asdict
 from langchain_core.tools import tool
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -31,6 +50,8 @@ from rag.retriever import SemanticRetriever
 from core.config import get_settings
 from agents.hitl import request_approval, request_input, request_selection, hitl_recursive_tool
 import re
+from dataclasses import dataclass
+from typing import Union
 
 # NOTE: LangGraph interrupt functionality is now handled by the centralized HITL system in hitl.py
 # No direct interrupt handling needed in individual tools - they use dedicated HITL request tools instead
@@ -38,6 +59,1355 @@ import re
 
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# REVOLUTIONARY LLM-DRIVEN QUOTATION INTELLIGENCE CLASSES (Task 15.2)
+# =============================================================================
+
+@dataclass
+class ExtractedContext:
+    """Structured extracted context from conversation analysis."""
+    customer_info: Dict[str, Optional[str]] = field(default_factory=dict)
+    vehicle_requirements: Dict[str, Optional[Union[str, List[str]]]] = field(default_factory=dict)
+    purchase_preferences: Dict[str, Optional[str]] = field(default_factory=dict)
+    timeline_info: Dict[str, Optional[Union[str, List[str]]]] = field(default_factory=dict)
+    contact_preferences: Dict[str, Optional[str]] = field(default_factory=dict)
+
+@dataclass
+class FieldMappings:
+    """Structured field mappings for different system integrations."""
+    database_fields: Dict[str, Optional[str]] = field(default_factory=dict)
+    pdf_fields: Dict[str, Optional[str]] = field(default_factory=dict)
+    api_fields: Dict[str, Optional[str]] = field(default_factory=dict)
+
+@dataclass
+class CompletenessAssessment:
+    """Assessment of information completeness for quotation generation."""
+    overall_completeness: str = "low"  # high|medium|low
+    quotation_ready: bool = False
+    minimum_viable_info: bool = False
+    risk_level: str = "high"  # low|medium|high
+    business_impact: str = "gather_more"  # proceed|gather_more|escalate
+    completion_percentage: int = 0
+
+@dataclass
+class MissingInfoAnalysis:
+    """Analysis of missing information with business priorities."""
+    critical_missing: List[str] = field(default_factory=list)
+    important_missing: List[str] = field(default_factory=list)
+    helpful_missing: List[str] = field(default_factory=list)
+    optional_missing: List[str] = field(default_factory=list)
+    inferable_from_context: List[str] = field(default_factory=list)
+    alternative_sources: Dict[str, str] = field(default_factory=dict)
+
+@dataclass
+class ValidationResults:
+    """Results from data validation and business rule checks."""
+    data_quality: str = "poor"  # excellent|good|fair|poor
+    consistency_check: bool = False
+    business_rule_compliance: bool = False
+    issues_found: List[str] = field(default_factory=list)
+    recommendations: List[str] = field(default_factory=list)
+
+@dataclass
+class BusinessRecommendations:
+    """Business intelligence recommendations and next actions."""
+    next_action: str = "gather_info"  # generate_quotation|gather_info|escalate|offer_alternatives
+    priority_actions: List[str] = field(default_factory=list)
+    upsell_opportunities: List[str] = field(default_factory=list)
+    customer_tier_assessment: str = "basic"  # premium|standard|basic
+    urgency_level: str = "low"  # high|medium|low
+    sales_strategy: str = "consultative"  # consultative|transactional|relationship|educational
+
+@dataclass
+class ConfidenceScores:
+    """Confidence scores for different analysis aspects."""
+    extraction_confidence: float = 0.0
+    completeness_confidence: float = 0.0
+    business_assessment_confidence: float = 0.0
+
+@dataclass
+class ContextAnalysisResult:
+    """Comprehensive result from QuotationContextIntelligence analysis."""
+    extracted_context: ExtractedContext = field(default_factory=ExtractedContext)
+    field_mappings: FieldMappings = field(default_factory=FieldMappings)
+    completeness_assessment: CompletenessAssessment = field(default_factory=CompletenessAssessment)
+    missing_info_analysis: MissingInfoAnalysis = field(default_factory=MissingInfoAnalysis)
+    validation_results: ValidationResults = field(default_factory=ValidationResults)
+    business_recommendations: BusinessRecommendations = field(default_factory=BusinessRecommendations)
+    confidence_scores: ConfidenceScores = field(default_factory=ConfidenceScores)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return asdict(self)
+    
+    def is_quotation_ready(self) -> bool:
+        """Check if analysis indicates readiness for quotation generation."""
+        return (
+            self.completeness_assessment.quotation_ready and
+            self.completeness_assessment.overall_completeness in ["high", "medium"] and
+            self.validation_results.data_quality in ["excellent", "good"] and
+            len(self.missing_info_analysis.critical_missing) == 0
+        )
+    
+    def get_next_required_info(self) -> List[str]:
+        """Get prioritized list of next required information."""
+        next_info = []
+        if self.missing_info_analysis.critical_missing:
+            next_info.extend(self.missing_info_analysis.critical_missing)
+        elif self.missing_info_analysis.important_missing:
+            next_info.extend(self.missing_info_analysis.important_missing[:2])  # Top 2 important items
+        elif self.missing_info_analysis.helpful_missing:
+            next_info.extend(self.missing_info_analysis.helpful_missing[:1])  # Top helpful item
+        return next_info
+    
+    def get_confidence_level(self) -> str:
+        """Get overall confidence level based on individual scores."""
+        avg_confidence = (
+            self.confidence_scores.extraction_confidence +
+            self.confidence_scores.completeness_confidence +
+            self.confidence_scores.business_assessment_confidence
+        ) / 3
+        
+        if avg_confidence >= 0.8:
+            return "high"
+        elif avg_confidence >= 0.6:
+            return "medium"
+        else:
+            return "low"
+
+class QuotationContextIntelligence:
+    """
+    Revolutionary LLM-driven context intelligence for quotation generation.
+    
+    Consolidates 3 brittle processes into unified intelligent analysis:
+    - Process #4: Field mapping and data transformation
+    - Process #5: Missing information detection and context analysis  
+    - Process #7: Data completeness validation with business priorities
+    
+    This replaces fragmented logic with single comprehensive context understanding.
+    """
+    
+    def __init__(self):
+        self.settings = get_settings()
+        # Use simple model for cost-effective context analysis
+        self.llm = ChatOpenAI(
+            model=self.settings.openai_simple_model,  # gpt-4o-mini
+            temperature=0.1  # Low temperature for consistent analysis
+        )
+        
+    async def analyze_complete_context(
+        self,
+        conversation_history: List[Dict[str, Any]],
+        current_user_input: str,
+        existing_context: Optional[Dict[str, Any]] = None,
+        business_requirements: Optional[Dict[str, Any]] = None
+    ) -> ContextAnalysisResult:
+        """
+        Single LLM call that provides comprehensive context intelligence.
+        
+        Replaces multiple brittle processes with unified intelligent analysis:
+        1. Extracts and maps all information from conversation
+        2. Identifies missing information with business priority
+        3. Assesses completeness for quotation generation
+        4. Provides business recommendations and next steps
+        
+        Args:
+            conversation_history: Full conversation context
+            current_user_input: Latest user message
+            existing_context: Previously extracted context (if any)
+            business_requirements: Business rules and requirements
+            
+        Returns:
+            ContextAnalysisResult with comprehensive analysis
+        """
+        try:
+            # Enhanced conversation analysis with stage-aware context preparation
+            conversation_analysis = self._prepare_enhanced_conversation_context(
+                conversation_history, current_user_input, existing_context
+            )
+            
+            # Prepare context for LLM analysis with enhanced conversation awareness
+            context_data = {
+                "conversation_history": conversation_analysis["formatted_history"],
+                "current_user_input": current_user_input,
+                "existing_context": existing_context or {},
+                "business_requirements": business_requirements or self._get_default_business_requirements(),
+                "conversation_stage": conversation_analysis["stage_info"],
+                "context_continuity": conversation_analysis["continuity_info"]
+            }
+            
+            # Create unified LLM template for context intelligence
+            template = self._create_context_intelligence_template()
+            
+            # Execute comprehensive context analysis
+            prompt = template.format(**context_data)
+            
+            logger.info("[CONTEXT_INTELLIGENCE] Executing comprehensive context analysis")
+            response = await self.llm.ainvoke([{"role": "user", "content": prompt}])
+            
+            # Parse structured response
+            analysis_result = self._parse_context_analysis_response(response.content)
+            
+            logger.info(f"[CONTEXT_INTELLIGENCE] ✅ Analysis complete - extracted context fields")
+            
+            # Apply intelligent merging if existing context is provided
+            if existing_context:
+                logger.info("[CONTEXT_INTELLIGENCE] Applying intelligent context merging")
+                analysis_result = await self.merge_context_intelligently(
+                    existing_context=existing_context,
+                    new_analysis=analysis_result,
+                    merge_strategy="intelligent"
+                )
+                logger.info("[CONTEXT_INTELLIGENCE] ✅ Context merging completed")
+            
+            return analysis_result
+            
+        except Exception as e:
+            logger.error(f"[CONTEXT_INTELLIGENCE] Analysis failed: {e}")
+            # Return fallback result with basic information
+            return self._create_fallback_analysis_result(current_user_input, existing_context)
+    
+    async def merge_context_intelligently(
+        self,
+        existing_context: Dict[str, Any],
+        new_analysis: ContextAnalysisResult,
+        merge_strategy: str = "intelligent"
+    ) -> ContextAnalysisResult:
+        """
+        Intelligently merge existing context with newly extracted information.
+        
+        Handles conflicts using business rules and LLM intelligence to determine
+        the most accurate and up-to-date information.
+        
+        Args:
+            existing_context: Previously extracted context
+            new_analysis: Newly analyzed context from current conversation
+            merge_strategy: Strategy for merging ("intelligent", "prioritize_new", "prioritize_existing")
+            
+        Returns:
+            ContextAnalysisResult with intelligently merged context
+        """
+        try:
+            logger.info("[CONTEXT_MERGE] Starting intelligent context merging")
+            
+            if not existing_context or merge_strategy == "prioritize_new":
+                logger.info("[CONTEXT_MERGE] Using new analysis (no existing context or prioritize_new strategy)")
+                return new_analysis
+            
+            if merge_strategy == "prioritize_existing":
+                logger.info("[CONTEXT_MERGE] Prioritizing existing context with minimal updates")
+                return await self._merge_with_existing_priority(existing_context, new_analysis)
+            
+            # Default: intelligent merging with conflict resolution
+            logger.info("[CONTEXT_MERGE] Performing intelligent merge with conflict resolution")
+            return await self._perform_intelligent_merge(existing_context, new_analysis)
+            
+        except Exception as e:
+            logger.error(f"[CONTEXT_MERGE] Merge failed: {e}")
+            # Fallback to new analysis if merge fails
+            return new_analysis
+    
+    async def _perform_intelligent_merge(
+        self,
+        existing_context: Dict[str, Any],
+        new_analysis: ContextAnalysisResult
+    ) -> ContextAnalysisResult:
+        """
+        Perform intelligent merging with LLM-driven conflict resolution.
+        """
+        # Detect conflicts between existing and new context
+        conflicts = self._detect_context_conflicts(existing_context, new_analysis.extracted_context)
+        
+        if not conflicts:
+            # No conflicts - simple merge
+            logger.info("[CONTEXT_MERGE] No conflicts detected - performing simple merge")
+            return self._merge_without_conflicts(existing_context, new_analysis)
+        
+        logger.info(f"[CONTEXT_MERGE] Detected {len(conflicts)} conflicts - resolving with LLM intelligence")
+        
+        # Use LLM to resolve conflicts intelligently
+        resolved_context = await self._resolve_conflicts_with_llm(
+            existing_context, 
+            new_analysis.extracted_context.to_dict(), 
+            conflicts
+        )
+        
+        # Create merged analysis result
+        merged_analysis = ContextAnalysisResult(
+            extracted_context=self._dict_to_extracted_context(resolved_context),
+            field_mappings=new_analysis.field_mappings,  # Use new mappings
+            completeness_assessment=new_analysis.completeness_assessment,  # Use new assessment
+            missing_info_analysis=new_analysis.missing_info_analysis,  # Use new analysis
+            validation_results=new_analysis.validation_results,  # Use new validation
+            business_recommendations=new_analysis.business_recommendations,  # Use new recommendations
+            confidence_scores=self._calculate_merged_confidence_scores(existing_context, new_analysis)
+        )
+        
+        logger.info("[CONTEXT_MERGE] ✅ Intelligent merge completed successfully")
+        return merged_analysis
+    
+    def _detect_context_conflicts(
+        self,
+        existing_context: Dict[str, Any],
+        new_context: ExtractedContext
+    ) -> List[Dict[str, Any]]:
+        """
+        Detect conflicts between existing and new context information.
+        """
+        conflicts = []
+        new_dict = new_context.to_dict() if hasattr(new_context, 'to_dict') else asdict(new_context)
+        
+        # Check for conflicts in each context category
+        for category in ["customer_info", "vehicle_requirements", "purchase_preferences", "timeline_info", "contact_preferences"]:
+            existing_cat = existing_context.get(category, {})
+            new_cat = new_dict.get(category, {})
+            
+            for field, new_value in new_cat.items():
+                existing_value = existing_cat.get(field)
+                
+                # Detect conflicts (both values exist and are different)
+                if (existing_value and new_value and 
+                    existing_value != new_value and 
+                    str(existing_value).lower() != str(new_value).lower()):
+                    
+                    conflicts.append({
+                        "category": category,
+                        "field": field,
+                        "existing_value": existing_value,
+                        "new_value": new_value,
+                        "conflict_type": self._classify_conflict_type(field, existing_value, new_value)
+                    })
+        
+        return conflicts
+    
+    def _classify_conflict_type(self, field: str, existing_value: Any, new_value: Any) -> str:
+        """
+        Classify the type of conflict for intelligent resolution.
+        """
+        # Vehicle specification conflicts
+        if field in ["make", "model", "type", "year"]:
+            return "vehicle_specification"
+        
+        # Customer information conflicts
+        if field in ["name", "email", "phone", "company"]:
+            return "customer_identity"
+        
+        # Preference conflicts (usually newer is better)
+        if field in ["budget_min", "budget_max", "financing_type", "delivery_timeline"]:
+            return "preference_update"
+        
+        # Contact preference conflicts
+        if field in ["preferred_contact", "delivery_location"]:
+            return "contact_preference"
+        
+        return "general"
+    
+    async def _resolve_conflicts_with_llm(
+        self,
+        existing_context: Dict[str, Any],
+        new_context: Dict[str, Any],
+        conflicts: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Use LLM intelligence to resolve conflicts between contexts.
+        """
+        try:
+            conflict_resolution_prompt = f"""
+You are an expert context analyst resolving information conflicts in automotive sales conversations.
+
+EXISTING CONTEXT:
+{json.dumps(existing_context, indent=2)}
+
+NEW CONTEXT:
+{json.dumps(new_context, indent=2)}
+
+DETECTED CONFLICTS:
+{json.dumps(conflicts, indent=2)}
+
+Resolve these conflicts using business intelligence and conversation context understanding:
+
+RESOLUTION RULES:
+1. **Vehicle Specifications**: If new info is more specific or corrects obvious errors, prefer new
+2. **Customer Identity**: Prefer more complete/accurate information, consider typo corrections  
+3. **Preference Updates**: Usually prefer newer preferences (customers change their minds)
+4. **Contact Preferences**: Prefer newer preferences for delivery/communication
+5. **Business Context**: Consider customer tier and urgency in decision making
+
+For each conflict, determine the most accurate value based on:
+- Information specificity and completeness
+- Likely customer intent and conversation flow
+- Business context and customer relationship
+- Temporal relevance (newer preferences vs. established facts)
+
+Return a JSON object with the resolved context, merging non-conflicting information and resolving conflicts intelligently:
+
+{{
+    "customer_info": {{}},
+    "vehicle_requirements": {{}},
+    "purchase_preferences": {{}},
+    "timeline_info": {{}},
+    "contact_preferences": {{}},
+    "resolution_reasoning": {{
+        "field_name": "reason for resolution decision"
+    }}
+}}
+"""
+            
+            response = await self.llm.ainvoke([{"role": "user", "content": conflict_resolution_prompt}])
+            
+            # Parse LLM response
+            import re
+            json_match = re.search(r'\{.*\}', response.content, re.DOTALL)
+            if json_match:
+                resolved_data = json.loads(json_match.group())
+                
+                # Log resolution reasoning
+                if "resolution_reasoning" in resolved_data:
+                    for field, reason in resolved_data["resolution_reasoning"].items():
+                        logger.info(f"[CONTEXT_MERGE] Resolved '{field}': {reason}")
+                    del resolved_data["resolution_reasoning"]  # Remove from final context
+                
+                return resolved_data
+            
+        except Exception as e:
+            logger.warning(f"[CONTEXT_MERGE] LLM conflict resolution failed: {e}")
+        
+        # Fallback: Use business rule-based resolution
+        return self._resolve_conflicts_with_business_rules(existing_context, new_context, conflicts)
+    
+    def _resolve_conflicts_with_business_rules(
+        self,
+        existing_context: Dict[str, Any],
+        new_context: Dict[str, Any],
+        conflicts: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Fallback conflict resolution using predefined business rules.
+        """
+        # Start with existing context as base
+        resolved_context = dict(existing_context)
+        
+        for conflict in conflicts:
+            category = conflict["category"]
+            field = conflict["field"]
+            existing_value = conflict["existing_value"]
+            new_value = conflict["new_value"]
+            conflict_type = conflict["conflict_type"]
+            
+            # Apply business rules for resolution
+            if conflict_type == "preference_update":
+                # Prefer newer preferences
+                if category not in resolved_context:
+                    resolved_context[category] = {}
+                resolved_context[category][field] = new_value
+                logger.info(f"[CONTEXT_MERGE] Rule: Preference update - using new value for {field}")
+                
+            elif conflict_type == "vehicle_specification":
+                # Prefer more specific information
+                if len(str(new_value)) > len(str(existing_value)):
+                    if category not in resolved_context:
+                        resolved_context[category] = {}
+                    resolved_context[category][field] = new_value
+                    logger.info(f"[CONTEXT_MERGE] Rule: More specific vehicle info - using new value for {field}")
+                    
+            elif conflict_type == "customer_identity":
+                # Prefer more complete information
+                if "@" in str(new_value) or len(str(new_value)) > len(str(existing_value)):
+                    if category not in resolved_context:
+                        resolved_context[category] = {}
+                    resolved_context[category][field] = new_value
+                    logger.info(f"[CONTEXT_MERGE] Rule: More complete customer info - using new value for {field}")
+            
+            # For other conflicts, keep existing value as conservative approach
+        
+        # Merge non-conflicting new information
+        for category, fields in new_context.items():
+            if category not in resolved_context:
+                resolved_context[category] = {}
+            
+            for field, value in fields.items():
+                if field not in resolved_context[category] and value:
+                    resolved_context[category][field] = value
+        
+        return resolved_context
+    
+    def _merge_without_conflicts(
+        self,
+        existing_context: Dict[str, Any],
+        new_analysis: ContextAnalysisResult
+    ) -> ContextAnalysisResult:
+        """
+        Simple merge when no conflicts are detected.
+        """
+        new_dict = asdict(new_analysis.extracted_context)
+        
+        # Merge existing context with new context
+        merged_context = dict(existing_context)
+        
+        for category, fields in new_dict.items():
+            if category not in merged_context:
+                merged_context[category] = {}
+            
+            for field, value in fields.items():
+                if value and not merged_context[category].get(field):
+                    merged_context[category][field] = value
+        
+        # Create merged analysis result
+        return ContextAnalysisResult(
+            extracted_context=self._dict_to_extracted_context(merged_context),
+            field_mappings=new_analysis.field_mappings,
+            completeness_assessment=new_analysis.completeness_assessment,
+            missing_info_analysis=new_analysis.missing_info_analysis,
+            validation_results=new_analysis.validation_results,
+            business_recommendations=new_analysis.business_recommendations,
+            confidence_scores=new_analysis.confidence_scores
+        )
+    
+    def _dict_to_extracted_context(self, context_dict: Dict[str, Any]) -> ExtractedContext:
+        """
+        Convert dictionary back to ExtractedContext dataclass.
+        """
+        return ExtractedContext(
+            customer_info=context_dict.get("customer_info", {}),
+            vehicle_requirements=context_dict.get("vehicle_requirements", {}),
+            purchase_preferences=context_dict.get("purchase_preferences", {}),
+            timeline_info=context_dict.get("timeline_info", {}),
+            contact_preferences=context_dict.get("contact_preferences", {})
+        )
+    
+    def _calculate_merged_confidence_scores(
+        self,
+        existing_context: Dict[str, Any],
+        new_analysis: ContextAnalysisResult
+    ) -> ConfidenceScores:
+        """
+        Calculate confidence scores for merged context.
+        """
+        # Base confidence on new analysis but boost if existing context supports it
+        base_confidence = new_analysis.confidence_scores
+        
+        # Boost confidence if existing context provides supporting evidence
+        boost_factor = 1.1 if existing_context else 1.0
+        
+        return ConfidenceScores(
+            extraction_confidence=min(1.0, base_confidence.extraction_confidence * boost_factor),
+            completeness_confidence=min(1.0, base_confidence.completeness_confidence * boost_factor),
+            business_assessment_confidence=min(1.0, base_confidence.business_assessment_confidence * boost_factor)
+        )
+    
+    async def _merge_with_existing_priority(
+        self,
+        existing_context: Dict[str, Any],
+        new_analysis: ContextAnalysisResult
+    ) -> ContextAnalysisResult:
+        """
+        Merge with priority given to existing context (conservative approach).
+        """
+        new_dict = asdict(new_analysis.extracted_context)
+        
+        # Start with existing context and only add truly new information
+        merged_context = dict(existing_context)
+        
+        for category, fields in new_dict.items():
+            if category not in merged_context:
+                merged_context[category] = fields
+            else:
+                for field, value in fields.items():
+                    if value and not merged_context[category].get(field):
+                        merged_context[category][field] = value
+        
+        return ContextAnalysisResult(
+            extracted_context=self._dict_to_extracted_context(merged_context),
+            field_mappings=new_analysis.field_mappings,
+            completeness_assessment=new_analysis.completeness_assessment,
+            missing_info_analysis=new_analysis.missing_info_analysis,
+            validation_results=new_analysis.validation_results,
+            business_recommendations=new_analysis.business_recommendations,
+            confidence_scores=self._calculate_merged_confidence_scores(existing_context, new_analysis)
+        )
+    
+    def _create_context_intelligence_template(self) -> str:
+        """Create unified LLM template for comprehensive context analysis."""
+        return """
+You are an expert automotive sales quotation analyst with deep understanding of customer communication patterns, vehicle specifications, and automotive business processes. Your role is to provide comprehensive context intelligence that replaces multiple fragmented processes with unified intelligent analysis.
+
+=== CONVERSATION ANALYSIS INPUT ===
+
+CONVERSATION HISTORY WITH CONTEXT AWARENESS:
+{conversation_history}
+
+CURRENT USER INPUT:
+{current_user_input}
+
+EXISTING CONTEXT (if any):
+{existing_context}
+
+CONVERSATION STAGE & CONTINUITY:
+Stage: {conversation_stage[stage]} - {conversation_stage[description]}
+Key Topics Discussed: {conversation_stage[key_topics]}
+Context Evolution: {context_continuity[context_evolution]}
+Information Progression: {context_continuity[information_progression]}
+Relationship Development: {context_continuity[relationship_development]}
+Topic Consistency: {context_continuity[topic_consistency]}
+
+BUSINESS REQUIREMENTS & RULES:
+{business_requirements}
+
+=== COMPREHENSIVE CONTEXT INTELLIGENCE ANALYSIS ===
+
+Perform unified analysis covering all aspects in ONE comprehensive evaluation:
+
+## 1. CONVERSATION ANALYSIS & INFORMATION EXTRACTION
+Analyze the ENTIRE conversation flow to extract ALL available information:
+
+**Customer Information Extraction:**
+- Full name, contact details (email, phone), company/organization
+- Customer type indicators (individual, small business, fleet, enterprise)
+- Relationship history clues (existing customer, referral, new prospect)
+- Communication style and preferences (formal/informal, technical/simple)
+
+**Vehicle Requirements Analysis:**
+- Specific vehicle mentions (make, model, year, trim, color)
+- Vehicle type preferences (sedan, SUV, truck, van, motorcycle)
+- Usage patterns (daily commuting, business use, family transport, commercial)
+- Feature requirements (automatic/manual, fuel type, seating capacity, cargo space)
+- Budget constraints and financial preferences
+
+**Purchase Context Understanding:**
+- Timeline urgency (immediate, within weeks, flexible, future planning)
+- Decision-making process (individual, committee, family decision)
+- Trade-in mentions or existing vehicle situation
+- Financing preferences (cash, loan, lease, business financing)
+- Delivery and location preferences
+
+## 2. INTELLIGENT FIELD MAPPING & DATA TRANSFORMATION
+Map extracted information to structured quotation system fields:
+
+**Database Field Mapping:**
+- customer_name, customer_email, customer_phone, customer_type
+- vehicle_make, vehicle_model, vehicle_year, vehicle_type, vehicle_color
+- budget_min, budget_max, financing_type, trade_in_vehicle
+- delivery_timeline, delivery_address, pickup_location
+- special_requirements, additional_notes
+
+**PDF Quotation Fields:**
+- customer_display_name, customer_address_block, customer_contact_block
+- vehicle_specification_block, pricing_breakdown_section
+- terms_and_conditions_applicable, validity_period, special_offers
+
+**API Integration Fields:**
+- crm_customer_id, vehicle_inventory_id, pricing_tier_code
+- sales_rep_assignment, lead_source, opportunity_stage
+
+**Semantic Mapping Intelligence:**
+- "Honda" → vehicle_make: "Honda"
+- "CR-V" → vehicle_model: "CR-V" 
+- "SUV" → vehicle_type: "SUV"
+- "under $30k" → budget_max: 30000
+- "next month" → delivery_timeline: "30_days"
+- "financing" → financing_type: "loan"
+
+## 3. MISSING INFORMATION ANALYSIS WITH BUSINESS PRIORITY
+Intelligently assess what information is missing vs. inferable:
+
+**Critical Missing (Quotation Blocker):**
+- Customer contact method (email OR phone required)
+- Vehicle selection or specific requirements
+- Basic timeline indication
+
+**Important Missing (Affects Quotation Quality):**
+- Specific budget range or financing approach
+- Delivery location and timeline details
+- Customer company/business context for pricing tier
+
+**Helpful Missing (Enhances Customer Experience):**
+- Trade-in vehicle details for better total cost calculation
+- Specific feature preferences for targeted recommendations
+- Previous purchase history for relationship context
+
+**Optional Missing (Nice to Have):**
+- Extended warranty preferences
+- Additional accessory interests
+- Future purchase plans
+
+**Inferable from Context:**
+- Business customer (company email domain, fleet terminology)
+- Premium customer (luxury vehicle interest, immediate timeline)
+- Price-sensitive customer (budget mentions, comparison shopping)
+
+## 4. DATA VALIDATION & BUSINESS RULE ASSESSMENT
+Validate extracted information against automotive business logic:
+
+**Data Quality Checks:**
+- Email format validation and domain reasonableness
+- Phone number format and regional consistency  
+- Vehicle make/model combinations exist in inventory
+- Budget ranges align with vehicle type expectations
+- Timeline feasibility for vehicle availability
+
+**Business Rule Compliance:**
+- Minimum information threshold met for customer tier
+- Vehicle availability in requested timeline
+- Financing options available for customer profile
+- Delivery location within service area
+- Special requirements feasible with current inventory
+
+**Consistency Validation:**
+- Customer type aligns with vehicle selection and budget
+- Timeline urgency matches communication style
+- Financing preference consistent with purchase amount
+- Delivery preferences align with customer location context
+
+## 5. BUSINESS CONTEXT UNDERSTANDING & OPPORTUNITY ASSESSMENT
+Assess customer profile and identify business opportunities:
+
+**Customer Tier Assessment:**
+- Premium: Luxury vehicle interest, immediate timeline, business customer
+- Standard: Mid-range vehicles, normal timeline, individual customer  
+- Basic: Budget-focused, extended timeline, price comparison shopping
+
+**Urgency Level Evaluation:**
+- High: "need immediately", "current vehicle broken", "urgent business need"
+- Medium: "within month", "planning ahead", "when available"
+- Low: "just looking", "future consideration", "comparing options"
+
+**Upselling Opportunities:**
+- Extended warranty based on vehicle type and customer profile
+- Premium features if budget allows and usage patterns indicate value
+- Additional vehicles for fleet customers or family situations
+- Service packages for business customers
+
+**Risk Assessment:**
+- Low Risk: Complete information, established customer, standard request
+- Medium Risk: Some missing info but inferable, new customer, complex needs
+- High Risk: Critical information missing, unusual request, timeline pressure
+
+=== RESPONSE FORMAT ===
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no explanations):
+
+{{
+    "extracted_context": {{
+        "customer_info": {{
+            "name": "extracted customer name or null",
+            "email": "extracted email or null", 
+            "phone": "extracted phone or null",
+            "company": "company name if business customer or null",
+            "customer_type": "individual|small_business|enterprise|fleet|null",
+            "communication_style": "formal|informal|technical|simple|null"
+        }},
+        "vehicle_requirements": {{
+            "make": "vehicle make or null",
+            "model": "vehicle model or null", 
+            "year": "vehicle year or null",
+            "type": "sedan|suv|truck|van|motorcycle|null",
+            "color": "preferred color or null",
+            "features": ["list of mentioned features"],
+            "usage_type": "daily_commute|business|family|commercial|null"
+        }},
+        "purchase_preferences": {{
+            "budget_min": "minimum budget number or null",
+            "budget_max": "maximum budget number or null",
+            "financing_type": "cash|loan|lease|business_financing|null",
+            "trade_in_vehicle": "trade-in vehicle description or null",
+            "payment_timeline": "immediate|monthly|deferred|null"
+        }},
+        "timeline_info": {{
+            "delivery_timeline": "immediate|7_days|30_days|60_days|flexible|null",
+            "decision_timeline": "immediate|days|weeks|months|null",
+            "urgency_indicators": ["list of urgency clues from conversation"]
+        }},
+        "contact_preferences": {{
+            "preferred_contact": "email|phone|text|in_person|null",
+            "best_time": "morning|afternoon|evening|weekends|null",
+            "delivery_location": "customer address or pickup preference or null",
+            "follow_up_preference": "immediate|scheduled|minimal|null"
+        }}
+    }},
+    "field_mappings": {{
+        "database_fields": {{
+            "customer_name": "mapped value or null",
+            "customer_email": "mapped value or null",
+            "customer_phone": "mapped value or null",
+            "customer_type": "mapped value or null",
+            "vehicle_make": "mapped value or null",
+            "vehicle_model": "mapped value or null",
+            "vehicle_year": "mapped value or null",
+            "vehicle_type": "mapped value or null",
+            "budget_max": "mapped numeric value or null",
+            "financing_type": "mapped value or null",
+            "delivery_timeline": "mapped value or null"
+        }},
+        "pdf_fields": {{
+            "customer_display_name": "formatted name for PDF or null",
+            "customer_contact_block": "formatted contact info for PDF or null",
+            "vehicle_specification": "formatted vehicle spec for PDF or null",
+            "pricing_context": "pricing tier or special considerations or null"
+        }},
+        "api_fields": {{
+            "lead_source": "conversation|referral|web|phone|null",
+            "opportunity_stage": "inquiry|qualified|negotiation|closing|null",
+            "customer_segment": "premium|standard|budget|fleet|null"
+        }}
+    }},
+    "completeness_assessment": {{
+        "overall_completeness": "high|medium|low",
+        "quotation_ready": true|false,
+        "minimum_viable_info": true|false,
+        "risk_level": "low|medium|high",
+        "business_impact": "proceed|gather_more|escalate",
+        "completion_percentage": "estimated percentage 0-100"
+    }},
+    "missing_info_analysis": {{
+        "critical_missing": ["list of critical missing information"],
+        "important_missing": ["list of important missing information"],
+        "helpful_missing": ["list of helpful missing information"],
+        "optional_missing": ["list of optional missing information"],
+        "inferable_from_context": ["list of information that can be inferred"],
+        "alternative_sources": {{
+            "crm_lookup": "possible if customer name/email available",
+            "inventory_check": "possible if vehicle requirements clear",
+            "market_research": "possible for pricing context"
+        }}
+    }},
+    "validation_results": {{
+        "data_quality": "excellent|good|fair|poor",
+        "consistency_check": true|false,
+        "business_rule_compliance": true|false,
+        "issues_found": ["list of specific data quality or consistency issues"],
+        "recommendations": ["list of specific recommendations to improve data quality"]
+    }},
+    "business_recommendations": {{
+        "next_action": "generate_quotation|gather_info|escalate|offer_alternatives",
+        "priority_actions": ["ordered list of next steps"],
+        "upsell_opportunities": ["list of potential upselling opportunities"],
+        "customer_tier_assessment": "premium|standard|basic",
+        "urgency_level": "high|medium|low",
+        "sales_strategy": "consultative|transactional|relationship|educational"
+    }},
+    "confidence_scores": {{
+        "extraction_confidence": "0.0 to 1.0 confidence in information extraction",
+        "completeness_confidence": "0.0 to 1.0 confidence in completeness assessment", 
+        "business_assessment_confidence": "0.0 to 1.0 confidence in business recommendations"
+    }}
+}}
+"""
+    
+    def _format_conversation_history(self, conversation_history: List[Dict[str, Any]]) -> str:
+        """
+        Enhanced conversation history formatting with stage detection and context awareness.
+        
+        Provides comprehensive conversation context that enables the LLM to understand:
+        - Conversation stage and progression
+        - Customer relationship development
+        - Information evolution over time
+        - Context continuity across sessions
+        """
+        if not conversation_history:
+            return "No previous conversation history."
+        
+        # Analyze conversation stage and context
+        stage_info = self._analyze_conversation_stage(conversation_history)
+        
+        # Format messages with enhanced context awareness
+        formatted_history = []
+        
+        # Add conversation stage summary
+        if stage_info["stage"] != "initial":
+            formatted_history.append(f"=== CONVERSATION CONTEXT ===")
+            formatted_history.append(f"Stage: {stage_info['stage'].title()} ({stage_info['description']})")
+            formatted_history.append(f"Messages: {len(conversation_history)} total, showing last {min(15, len(conversation_history))}")
+            if stage_info["key_topics"]:
+                formatted_history.append(f"Key Topics: {', '.join(stage_info['key_topics'])}")
+            formatted_history.append("")
+        
+        # Enhanced message formatting with context indicators
+        recent_messages = conversation_history[-15:]  # Show more messages for better context
+        
+        for i, message in enumerate(recent_messages):
+            role = message.get('role', 'unknown')
+            content = message.get('content', '')
+            timestamp = message.get('timestamp', f'Message {i+1}')
+            
+            # Add context indicators for important messages
+            context_indicator = self._get_message_context_indicator(message, i, recent_messages)
+            
+            # Format with enhanced context
+            if context_indicator:
+                formatted_history.append(f"[{timestamp}] {role.upper()}: {content} {context_indicator}")
+            else:
+                formatted_history.append(f"[{timestamp}] {role.upper()}: {content}")
+        
+        # Add conversation continuity summary
+        if len(conversation_history) > 15:
+            formatted_history.append("")
+            formatted_history.append(f"=== EARLIER CONTEXT ===")
+            formatted_history.append(f"Previous {len(conversation_history) - 15} messages contain: {stage_info['earlier_context']}")
+        
+        return "\n".join(formatted_history)
+    
+    def _analyze_conversation_stage(self, conversation_history: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Analyze conversation stage and extract key contextual information.
+        """
+        if not conversation_history:
+            return {"stage": "initial", "description": "New conversation", "key_topics": [], "earlier_context": ""}
+        
+        total_messages = len(conversation_history)
+        recent_content = " ".join([msg.get('content', '') for msg in conversation_history[-5:]])
+        all_content = " ".join([msg.get('content', '') for msg in conversation_history])
+        
+        # Detect conversation stage based on content patterns
+        stage = "initial"
+        description = "New conversation"
+        key_topics = []
+        
+        # Stage detection logic
+        if total_messages >= 10:
+            stage = "advanced"
+            description = "Ongoing detailed discussion"
+        elif total_messages >= 5:
+            stage = "developing"
+            description = "Active conversation with context"
+        elif total_messages >= 2:
+            stage = "early"
+            description = "Initial exchanges"
+        
+        # Extract key topics from conversation
+        content_lower = all_content.lower()
+        
+        # Vehicle-related topics
+        if any(term in content_lower for term in ["quotation", "quote", "pricing", "price"]):
+            key_topics.append("quotation_request")
+        if any(term in content_lower for term in ["honda", "toyota", "nissan", "ford", "bmw", "mercedes"]):
+            key_topics.append("vehicle_brands")
+        if any(term in content_lower for term in ["suv", "sedan", "hatchback", "pickup", "truck"]):
+            key_topics.append("vehicle_types")
+        if any(term in content_lower for term in ["budget", "financing", "loan", "cash", "payment"]):
+            key_topics.append("financing")
+        if any(term in content_lower for term in ["delivery", "pickup", "timeline", "urgent", "asap"]):
+            key_topics.append("delivery_timeline")
+        if any(term in content_lower for term in ["email", "phone", "contact", "address"]):
+            key_topics.append("contact_info")
+        
+        # Earlier context summary for long conversations
+        earlier_context = ""
+        if total_messages > 15:
+            earlier_messages = conversation_history[:-15]
+            earlier_content = " ".join([msg.get('content', '') for msg in earlier_messages])
+            
+            # Summarize earlier context
+            context_elements = []
+            if "quotation" in earlier_content.lower():
+                context_elements.append("quotation discussions")
+            if any(brand in earlier_content.lower() for brand in ["honda", "toyota", "nissan"]):
+                context_elements.append("vehicle brand preferences")
+            if "customer" in earlier_content.lower():
+                context_elements.append("customer information")
+            
+            earlier_context = ", ".join(context_elements) if context_elements else "general conversation"
+        
+        return {
+            "stage": stage,
+            "description": description,
+            "key_topics": key_topics,
+            "earlier_context": earlier_context
+        }
+    
+    def _get_message_context_indicator(
+        self, 
+        message: Dict[str, Any], 
+        index: int, 
+        recent_messages: List[Dict[str, Any]]
+    ) -> str:
+        """
+        Generate context indicators for important messages.
+        """
+        content = message.get('content', '').lower()
+        role = message.get('role', '').lower()
+        
+        indicators = []
+        
+        # Identify key information types
+        if any(term in content for term in ["quotation", "quote", "pricing"]):
+            indicators.append("[QUOTATION_REQUEST]")
+        
+        if any(term in content for term in ["honda", "toyota", "nissan", "ford", "bmw"]):
+            indicators.append("[VEHICLE_BRAND]")
+        
+        if any(term in content for term in ["suv", "sedan", "hatchback", "pickup"]):
+            indicators.append("[VEHICLE_TYPE]")
+        
+        if any(term in content for term in ["budget", "financing", "loan", "payment"]):
+            indicators.append("[FINANCIAL_INFO]")
+        
+        if any(term in content for term in ["email", "phone", "@"]):
+            indicators.append("[CONTACT_INFO]")
+        
+        if any(term in content for term in ["urgent", "asap", "immediately", "soon"]):
+            indicators.append("[URGENT]")
+        
+        # Identify conversation flow indicators
+        if role == "human" and index == len(recent_messages) - 1:
+            indicators.append("[LATEST_INPUT]")
+        
+        if role == "ai" and any(term in content for term in ["missing", "need more", "clarification"]):
+            indicators.append("[INFO_REQUEST]")
+        
+        return " ".join(indicators) if indicators else ""
+    
+    def _prepare_enhanced_conversation_context(
+        self,
+        conversation_history: List[Dict[str, Any]],
+        current_user_input: str,
+        existing_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Prepare enhanced conversation context with full stage awareness.
+        
+        This method provides comprehensive conversation analysis that enables
+        the LLM to work effectively at any conversation stage.
+        """
+        # Format conversation history with enhanced context
+        formatted_history = self._format_conversation_history(conversation_history)
+        
+        # Analyze conversation stage and progression
+        stage_info = self._analyze_conversation_stage(conversation_history)
+        
+        # Detect conversation continuity patterns
+        continuity_info = self._analyze_conversation_continuity(
+            conversation_history, current_user_input, existing_context
+        )
+        
+        return {
+            "formatted_history": formatted_history,
+            "stage_info": stage_info,
+            "continuity_info": continuity_info
+        }
+    
+    def _analyze_conversation_continuity(
+        self,
+        conversation_history: List[Dict[str, Any]],
+        current_user_input: str,
+        existing_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Analyze conversation continuity and context evolution patterns.
+        """
+        continuity_info = {
+            "is_continuation": False,
+            "context_evolution": "new",
+            "information_progression": [],
+            "relationship_development": "initial",
+            "topic_consistency": "single_topic"
+        }
+        
+        if not conversation_history:
+            return continuity_info
+        
+        # Detect if this is a continuation of an existing conversation
+        total_messages = len(conversation_history)
+        if total_messages > 3:
+            continuity_info["is_continuation"] = True
+            
+        # Analyze context evolution patterns
+        if existing_context:
+            continuity_info["context_evolution"] = "evolving"
+            
+            # Check for information refinement vs. completely new information
+            current_lower = current_user_input.lower()
+            context_str = str(existing_context).lower()
+            
+            # Detect refinement patterns
+            if any(term in current_lower for term in ["actually", "correction", "change", "update", "instead"]):
+                continuity_info["context_evolution"] = "refinement"
+            elif any(term in current_lower for term in ["also", "additionally", "and", "plus"]):
+                continuity_info["context_evolution"] = "expansion"
+        
+        # Track information progression through conversation
+        progression_indicators = []
+        all_content = " ".join([msg.get('content', '') for msg in conversation_history])
+        
+        if "quotation" in all_content.lower() or "quote" in all_content.lower():
+            progression_indicators.append("quotation_initiated")
+        if any(brand in all_content.lower() for brand in ["honda", "toyota", "nissan"]):
+            progression_indicators.append("vehicle_specified")
+        if any(term in all_content.lower() for term in ["budget", "financing", "payment"]):
+            progression_indicators.append("financial_discussed")
+        if any(term in all_content.lower() for term in ["delivery", "timeline", "when"]):
+            progression_indicators.append("timeline_addressed")
+        
+        continuity_info["information_progression"] = progression_indicators
+        
+        # Assess relationship development
+        if total_messages >= 15:
+            continuity_info["relationship_development"] = "established"
+        elif total_messages >= 8:
+            continuity_info["relationship_development"] = "developing"
+        elif total_messages >= 3:
+            continuity_info["relationship_development"] = "building"
+        
+        # Analyze topic consistency
+        recent_content = " ".join([msg.get('content', '') for msg in conversation_history[-5:]])
+        if len(set(recent_content.lower().split()) & {"quotation", "vehicle", "car", "price"}) >= 2:
+            continuity_info["topic_consistency"] = "focused_automotive"
+        elif "quotation" in recent_content.lower() or "quote" in recent_content.lower():
+            continuity_info["topic_consistency"] = "quotation_focused"
+        
+        return continuity_info
+    
+    def _get_default_business_requirements(self) -> Dict[str, Any]:
+        """Get default business requirements for quotation generation."""
+        return {
+            "required_fields": {
+                "critical": ["customer_name", "customer_contact", "vehicle_selection"],
+                "important": ["delivery_timeline", "payment_preference"],
+                "helpful": ["delivery_address", "additional_requirements"],
+                "optional": ["trade_in_info", "financing_details"]
+            },
+            "customer_tiers": {
+                "premium": {"min_info_threshold": 0.7, "expedite": True},
+                "standard": {"min_info_threshold": 0.8, "expedite": False},
+                "basic": {"min_info_threshold": 0.9, "expedite": False}
+            },
+            "business_rules": {
+                "allow_partial_info": True,
+                "require_contact_method": True,
+                "validate_vehicle_availability": True,
+                "apply_promotional_offers": True
+            }
+        }
+    
+    def _parse_context_analysis_response(self, response_content: str) -> ContextAnalysisResult:
+        """Parse LLM response into structured ContextAnalysisResult with comprehensive validation."""
+        try:
+            # Clean response and extract JSON
+            cleaned_response = self._extract_json_from_response(response_content)
+            
+            # Parse JSON response
+            analysis_data = json.loads(cleaned_response)
+            
+            # Validate and create structured result with comprehensive error handling
+            result = self._build_context_analysis_result(analysis_data)
+            
+            logger.info(f"[CONTEXT_INTELLIGENCE] ✅ Successfully parsed analysis result with confidence: {result.get_confidence_level()}")
+            return result
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"[CONTEXT_INTELLIGENCE] JSON parsing failed: {e}")
+            logger.debug(f"[CONTEXT_INTELLIGENCE] Cleaned response: {cleaned_response}")
+            return self._create_parsing_error_fallback("Invalid JSON format", response_content)
+            
+        except Exception as e:
+            logger.error(f"[CONTEXT_INTELLIGENCE] Unexpected parsing error: {e}")
+            logger.debug(f"[CONTEXT_INTELLIGENCE] Raw response: {response_content}")
+            return self._create_parsing_error_fallback("Unexpected parsing error", response_content)
+    
+    def _extract_json_from_response(self, response_content: str) -> str:
+        """Extract JSON content from LLM response, handling various formats."""
+                import re
+        
+        cleaned_response = response_content.strip()
+        
+        # Try to extract from markdown code blocks
+        if '```json' in cleaned_response:
+                json_match = re.search(r'```json\s*\n?(.*?)\n?```', cleaned_response, re.DOTALL)
+                if json_match:
+                return json_match.group(1).strip()
+        
+        # Try to extract from generic code blocks
+        if '```' in cleaned_response:
+                json_match = re.search(r'```\s*\n?(.*?)\n?```', cleaned_response, re.DOTALL)
+                if json_match:
+                return json_match.group(1).strip()
+        
+        # Try to find JSON object boundaries
+        json_start = cleaned_response.find('{')
+        json_end = cleaned_response.rfind('}')
+        if json_start != -1 and json_end != -1 and json_end > json_start:
+            return cleaned_response[json_start:json_end + 1]
+        
+        # Return as-is if no patterns found
+        return cleaned_response
+    
+    def _build_context_analysis_result(self, analysis_data: Dict[str, Any]) -> ContextAnalysisResult:
+        """Build ContextAnalysisResult from parsed JSON data with validation."""
+        
+        # Extract and validate extracted_context
+        extracted_context_data = analysis_data.get('extracted_context', {})
+        extracted_context = ExtractedContext(
+            customer_info=extracted_context_data.get('customer_info', {}),
+            vehicle_requirements=extracted_context_data.get('vehicle_requirements', {}),
+            purchase_preferences=extracted_context_data.get('purchase_preferences', {}),
+            timeline_info=extracted_context_data.get('timeline_info', {}),
+            contact_preferences=extracted_context_data.get('contact_preferences', {})
+        )
+        
+        # Extract and validate field_mappings
+        field_mappings_data = analysis_data.get('field_mappings', {})
+        field_mappings = FieldMappings(
+            database_fields=field_mappings_data.get('database_fields', {}),
+            pdf_fields=field_mappings_data.get('pdf_fields', {}),
+            api_fields=field_mappings_data.get('api_fields', {})
+        )
+        
+        # Extract and validate completeness_assessment
+        completeness_data = analysis_data.get('completeness_assessment', {})
+        completeness_assessment = CompletenessAssessment(
+            overall_completeness=completeness_data.get('overall_completeness', 'low'),
+            quotation_ready=bool(completeness_data.get('quotation_ready', False)),
+            minimum_viable_info=bool(completeness_data.get('minimum_viable_info', False)),
+            risk_level=completeness_data.get('risk_level', 'high'),
+            business_impact=completeness_data.get('business_impact', 'gather_more'),
+            completion_percentage=int(completeness_data.get('completion_percentage', 0))
+        )
+        
+        # Extract and validate missing_info_analysis
+        missing_info_data = analysis_data.get('missing_info_analysis', {})
+        missing_info_analysis = MissingInfoAnalysis(
+            critical_missing=missing_info_data.get('critical_missing', []),
+            important_missing=missing_info_data.get('important_missing', []),
+            helpful_missing=missing_info_data.get('helpful_missing', []),
+            optional_missing=missing_info_data.get('optional_missing', []),
+            inferable_from_context=missing_info_data.get('inferable_from_context', []),
+            alternative_sources=missing_info_data.get('alternative_sources', {})
+        )
+        
+        # Extract and validate validation_results
+        validation_data = analysis_data.get('validation_results', {})
+        validation_results = ValidationResults(
+            data_quality=validation_data.get('data_quality', 'poor'),
+            consistency_check=bool(validation_data.get('consistency_check', False)),
+            business_rule_compliance=bool(validation_data.get('business_rule_compliance', False)),
+            issues_found=validation_data.get('issues_found', []),
+            recommendations=validation_data.get('recommendations', [])
+        )
+        
+        # Extract and validate business_recommendations
+        business_data = analysis_data.get('business_recommendations', {})
+        business_recommendations = BusinessRecommendations(
+            next_action=business_data.get('next_action', 'gather_info'),
+            priority_actions=business_data.get('priority_actions', []),
+            upsell_opportunities=business_data.get('upsell_opportunities', []),
+            customer_tier_assessment=business_data.get('customer_tier_assessment', 'basic'),
+            urgency_level=business_data.get('urgency_level', 'low'),
+            sales_strategy=business_data.get('sales_strategy', 'consultative')
+        )
+        
+        # Extract and validate confidence_scores
+        confidence_data = analysis_data.get('confidence_scores', {})
+        confidence_scores = ConfidenceScores(
+            extraction_confidence=float(confidence_data.get('extraction_confidence', 0.0)),
+            completeness_confidence=float(confidence_data.get('completeness_confidence', 0.0)),
+            business_assessment_confidence=float(confidence_data.get('business_assessment_confidence', 0.0))
+        )
+        
+            return ContextAnalysisResult(
+            extracted_context=extracted_context,
+            field_mappings=field_mappings,
+            completeness_assessment=completeness_assessment,
+            missing_info_analysis=missing_info_analysis,
+            validation_results=validation_results,
+            business_recommendations=business_recommendations,
+            confidence_scores=confidence_scores
+        )
+    
+    def _create_parsing_error_fallback(self, error_type: str, raw_response: str) -> ContextAnalysisResult:
+        """Create a fallback ContextAnalysisResult when parsing fails."""
+            return ContextAnalysisResult(
+            extracted_context=ExtractedContext(),
+            field_mappings=FieldMappings(),
+            completeness_assessment=CompletenessAssessment(
+                overall_completeness="low",
+                quotation_ready=False,
+                minimum_viable_info=False,
+                risk_level="high",
+                business_impact="escalate",
+                completion_percentage=0
+            ),
+            missing_info_analysis=MissingInfoAnalysis(
+                critical_missing=[f"Analysis parsing failed: {error_type}"],
+                important_missing=["Unable to extract conversation context"],
+                helpful_missing=[],
+                optional_missing=[],
+                inferable_from_context=[],
+                alternative_sources={"manual_review": "Human review required due to parsing failure"}
+            ),
+            validation_results=ValidationResults(
+                data_quality="poor",
+                consistency_check=False,
+                business_rule_compliance=False,
+                issues_found=[f"LLM response parsing failed: {error_type}"],
+                recommendations=["Review LLM response format", "Consider manual analysis", "Check prompt template"]
+            ),
+            business_recommendations=BusinessRecommendations(
+                next_action="escalate",
+                priority_actions=["Manual review required", "Check system logs"],
+                upsell_opportunities=[],
+                customer_tier_assessment="basic",
+                urgency_level="high",
+                sales_strategy="consultative"
+            ),
+            confidence_scores=ConfidenceScores(
+                extraction_confidence=0.0,
+                completeness_confidence=0.0,
+                business_assessment_confidence=0.0
+            )
+            )
+    
+    def _create_fallback_analysis_result(
+        self, 
+        user_input: str, 
+        existing_context: Optional[Dict[str, Any]]
+    ) -> ContextAnalysisResult:
+        """Create fallback analysis result when LLM analysis fails."""
+        # Try to extract basic info from existing context if available
+        extracted_context = ExtractedContext()
+        if existing_context:
+            extracted_context.customer_info = existing_context.get('customer_info', {})
+            extracted_context.vehicle_requirements = existing_context.get('vehicle_requirements', {})
+        
+        return ContextAnalysisResult(
+            extracted_context=extracted_context,
+            field_mappings=FieldMappings(),
+            completeness_assessment=CompletenessAssessment(
+                overall_completeness="low",
+                quotation_ready=False,
+                minimum_viable_info=False,
+                risk_level="high",
+                business_impact="gather_more",
+                completion_percentage=10
+            ),
+            validation_results=ValidationResults(
+                data_quality="unknown",
+                consistency_check=False,
+                business_rule_compliance=False,
+                issues_found=["Context analysis failed - using fallback"],
+                recommendations=["Retry with simplified analysis", "Check system connectivity"]
+            ),
+            business_recommendations=BusinessRecommendations(
+                next_action="gather_info",
+                priority_actions=["Collect basic customer and vehicle information"],
+                upsell_opportunities=[],
+                customer_tier_assessment="standard",
+                urgency_level="medium",
+                sales_strategy="consultative"
+            ),
+            confidence_scores=ConfidenceScores(
+                extraction_confidence=0.1,
+                completeness_confidence=0.1,
+                business_assessment_confidence=0.1
+            ),
+            missing_info_analysis=MissingInfoAnalysis(
+                critical_missing=["Context analysis unavailable"],
+                important_missing=["Customer contact information", "Vehicle requirements"],
+                helpful_missing=["Budget information", "Timeline preferences"],
+                optional_missing=["Additional preferences"],
+                inferable_from_context=[],
+                alternative_sources={"manual_collection": "Direct customer inquiry recommended"}
+            )
+        )
 
 # Optional imports for PDF generation (may fail in test environments)
 try:
@@ -2245,44 +3615,218 @@ async def _handle_quotation_resume(
         logger.info(f"[QUOTATION_RESUME] Processing step: {current_step}")
         logger.info(f"[QUOTATION_RESUME] User response: {user_response}")
         
-        # Process user response based on current step
-        if current_step == "customer_lookup":
-            return await _resume_customer_lookup(
-                customer_identifier, quotation_state, user_response
+        # TASK 15.3.2: ELIMINATE separate resume handlers with universal context update
+        # Replace all step-specific resume handlers with unified QuotationContextIntelligence
+        logger.info(f"[QUOTATION_RESUME] 🧠 Using universal context update for step: {current_step}")
+        
+        try:
+            # Use QuotationContextIntelligence for universal context update
+            context_intelligence = QuotationContextIntelligence()
+            
+            # Build comprehensive conversation history for context analysis
+            conversation_history = []
+            if conversation_context:
+                conversation_history.append({"role": "system", "content": f"Conversation context: {conversation_context}"})
+            
+            # Add quotation state as context
+            if quotation_state:
+                conversation_history.append({
+                    "role": "system", 
+                    "content": f"Current quotation state: {json.dumps(quotation_state, default=str)}"
+                })
+            
+            # Add the user's response
+            conversation_history.append({"role": "user", "content": user_response})
+            
+            # Perform comprehensive context analysis with resume-specific business requirements
+            resume_analysis = await context_intelligence.analyze_complete_context(
+                conversation_history=conversation_history,
+                current_user_input=user_response,
+                existing_context={
+                    "current_step": current_step,
+                    "customer_identifier": customer_identifier,
+                    "vehicle_requirements": vehicle_requirements,
+                    "quotation_state": quotation_state,
+                    "additional_notes": additional_notes
+                },
+                business_requirements={
+                    "resume_operation": True,
+                    "current_step": current_step,
+                    "context_update_required": True,
+                    "information_extraction": True,
+                    "quotation_continuation": True
+                }
             )
-        elif current_step == "vehicle_requirements":
-            return await _resume_vehicle_requirements(
-                vehicle_requirements, quotation_state, user_response
+            
+            # Universal context update based on LLM analysis
+            updated_context = await _apply_universal_context_update(
+                current_step=current_step,
+                user_response=user_response,
+                quotation_state=quotation_state,
+                analysis_result=resume_analysis,
+                customer_identifier=customer_identifier,
+                vehicle_requirements=vehicle_requirements,
+                additional_notes=additional_notes,
+                quotation_validity_days=quotation_validity_days,
+                conversation_context=conversation_context
             )
-        elif current_step == "employee_data":
-            return await _resume_employee_data(
-                quotation_state, user_response
-            )
-        elif current_step == "missing_information":
-            return await _resume_missing_information(
-                quotation_state, user_response
-            )
-        elif current_step == "pricing_issues":
-            return await _resume_pricing_issues(
-                quotation_state, user_response
-            )
-        elif current_step == "quotation_approval":
-            return await _resume_quotation_approval(
-                quotation_state, user_response
-            )
-        else:
-            logger.error(f"[QUOTATION_RESUME] Unknown step: {current_step}")
-            return f"❌ Error: Unknown quotation step '{current_step}'. Please start the quotation process again."
+            
+            return updated_context
+            
+        except Exception as e:
+            logger.error(f"[QUOTATION_RESUME] Universal context update failed: {e}")
+            return f"❌ Error processing your response for {current_step}. Please try again or start a new quotation."
             
     except Exception as e:
         logger.error(f"[QUOTATION_RESUME] Error processing step {current_step}: {e}")
         return f"❌ Error processing your response. Please try again or start a new quotation."
 
 
+async def _apply_universal_context_update(
+    current_step: str,
+    user_response: str,
+    quotation_state: Dict[str, Any],
+    analysis_result: 'ContextAnalysisResult',
+    customer_identifier: str,
+    vehicle_requirements: str,
+    additional_notes: Optional[str],
+    quotation_validity_days: int,
+    conversation_context: str
+) -> str:
+    """
+    Universal context update handler that replaces all step-specific resume handlers.
+    
+    Uses QuotationContextIntelligence analysis to intelligently update context
+    and continue the quotation process regardless of the current step.
+    """
+    logger.info(f"[UNIVERSAL_CONTEXT_UPDATE] Processing step: {current_step}")
+    
+    try:
+        # Extract relevant information from LLM analysis
+        extracted_context = analysis_result.extracted_context
+        business_recommendations = analysis_result.business_recommendations
+        
+        # Update quotation state with extracted information
+        updated_quotation_state = quotation_state.copy() if quotation_state else {}
+        updated_quotation_state["user_response"] = user_response
+        updated_quotation_state["analysis_result"] = analysis_result.to_dict()
+        
+        # Step-agnostic context updates based on LLM analysis
+        updated_customer_identifier = customer_identifier
+        updated_vehicle_requirements = vehicle_requirements
+        updated_additional_notes = additional_notes
+        
+        # Customer information updates (applies to any step)
+        if extracted_context.customer_info:
+            customer_info = extracted_context.customer_info
+            if customer_info.get("name") or customer_info.get("email") or customer_info.get("phone"):
+                # Update customer identifier if better information was provided
+                new_identifier_parts = []
+                if customer_info.get("name"):
+                    new_identifier_parts.append(customer_info["name"])
+                if customer_info.get("email"):
+                    new_identifier_parts.append(customer_info["email"])
+                if customer_info.get("phone"):
+                    new_identifier_parts.append(customer_info["phone"])
+                
+                if new_identifier_parts:
+                    updated_customer_identifier = " | ".join(new_identifier_parts)
+                    updated_quotation_state["updated_customer_identifier"] = updated_customer_identifier
+                    logger.info(f"[UNIVERSAL_CONTEXT_UPDATE] Updated customer identifier: {updated_customer_identifier}")
+        
+        # Vehicle requirements updates (applies to any step)
+        if extracted_context.vehicle_requirements:
+            vehicle_data = extracted_context.vehicle_requirements
+            if any(vehicle_data.get(field) for field in ["make", "model", "type", "year", "color", "features"]):
+                # Build updated vehicle requirements
+                requirement_parts = []
+                if vehicle_data.get("make"):
+                    requirement_parts.append(vehicle_data["make"])
+                if vehicle_data.get("model"):
+                    requirement_parts.append(vehicle_data["model"])
+                if vehicle_data.get("type"):
+                    requirement_parts.append(vehicle_data["type"])
+                if vehicle_data.get("year"):
+                    requirement_parts.append(str(vehicle_data["year"]))
+                if vehicle_data.get("color"):
+                    requirement_parts.append(vehicle_data["color"])
+                if vehicle_data.get("features"):
+                    requirement_parts.extend(vehicle_data["features"])
+                
+                if requirement_parts:
+                    updated_vehicle_requirements = " ".join(requirement_parts)
+                    updated_quotation_state["updated_vehicle_requirements"] = updated_vehicle_requirements
+                    logger.info(f"[UNIVERSAL_CONTEXT_UPDATE] Updated vehicle requirements: {updated_vehicle_requirements}")
+        
+        # Purchase preferences and additional context updates
+        if extracted_context.purchase_preferences:
+            purchase_prefs = extracted_context.purchase_preferences
+            additional_info = []
+            
+            if purchase_prefs.get("budget_max"):
+                additional_info.append(f"Budget: {purchase_prefs['budget_max']}")
+            if purchase_prefs.get("financing_type"):
+                additional_info.append(f"Financing: {purchase_prefs['financing_type']}")
+            if purchase_prefs.get("trade_in_vehicle"):
+                additional_info.append(f"Trade-in: {purchase_prefs['trade_in_vehicle']}")
+            
+            if additional_info:
+                new_additional_notes = ", ".join(additional_info)
+                if updated_additional_notes:
+                    updated_additional_notes = f"{updated_additional_notes}. {new_additional_notes}"
+                else:
+                    updated_additional_notes = new_additional_notes
+                updated_quotation_state["updated_additional_notes"] = updated_additional_notes
+                logger.info(f"[UNIVERSAL_CONTEXT_UPDATE] Updated additional notes: {updated_additional_notes}")
+        
+        # Timeline and contact preferences
+        if extracted_context.timeline_info:
+            timeline_info = extracted_context.timeline_info
+            if timeline_info.get("delivery_timeline"):
+                updated_quotation_state["delivery_timeline"] = timeline_info["delivery_timeline"]
+            if timeline_info.get("urgency_indicators"):
+                updated_quotation_state["urgency_indicators"] = timeline_info["urgency_indicators"]
+        
+        if extracted_context.contact_preferences:
+            contact_prefs = extracted_context.contact_preferences
+            updated_quotation_state["contact_preferences"] = contact_prefs
+        
+        # Determine next action based on LLM business recommendations
+        next_action = business_recommendations.next_action if business_recommendations else "continue"
+        
+        # Continue with quotation process using updated context
+        logger.info(f"[UNIVERSAL_CONTEXT_UPDATE] Continuing quotation with updated context, next action: {next_action}")
+        
+        return await generate_quotation(
+            customer_identifier=updated_customer_identifier,
+            vehicle_requirements=updated_vehicle_requirements,
+            additional_notes=updated_additional_notes,
+            quotation_validity_days=quotation_validity_days,
+            user_response="",  # Clear to avoid re-processing
+            hitl_phase="",     # Clear to continue normal flow
+            current_step="",   # Clear to restart from normal flow
+            quotation_state=updated_quotation_state,
+            conversation_context=conversation_context
+        )
+        
+    except Exception as e:
+        logger.error(f"[UNIVERSAL_CONTEXT_UPDATE] Error in universal context update: {e}")
+        return f"❌ Error updating context for {current_step}. Please try again or start a new quotation."
+
+
+# DEPRECATED RESUME HANDLERS - Replaced by universal context update in Task 15.3.2
+# These functions are kept temporarily for reference but should not be used
+
 async def _resume_customer_lookup(
     customer_identifier: str, quotation_state: Dict[str, Any], user_response: str
 ) -> str:
-    """Resume customer lookup step with user-provided information."""
+    """
+    DEPRECATED: Resume customer lookup step with user-provided information.
+    
+    This function has been replaced by _apply_universal_context_update() in Task 15.3.2.
+    Use the universal context update mechanism instead of step-specific resume handlers.
+    """
+    logger.warning("[DEPRECATED] _resume_customer_lookup called - use _apply_universal_context_update instead")
     logger.info("[QUOTATION_RESUME] Processing customer lookup response")
     
     # Parse user response for customer information
@@ -2434,6 +3978,7 @@ SAFETY REQUIREMENTS:
             return await _fallback_vehicle_search(requirements, limit)
         
         # Execute the generated SQL safely
+        logger.info(f"[VEHICLE_SEARCH_LLM] Generated SQL query: {vehicle_search.sql_query}")
         vehicles = await _execute_vehicle_sql_safely(
             vehicle_search.sql_query,
             vehicle_search.reasoning
@@ -2478,8 +4023,10 @@ async def _execute_vehicle_sql_safely(sql_query: str, reasoning: str) -> List[di
         
         # Ensure required safety conditions are present
         required_conditions = ['v.is_available = true', 'v.stock_quantity > 0']
-        if not all(condition.lower() in query_lower for condition in required_conditions):
-            logger.warning(f"[VEHICLE_SQL_SAFETY] Missing required safety conditions")
+        missing_conditions = [cond for cond in required_conditions if cond.lower() not in query_lower]
+        if missing_conditions:
+            logger.warning(f"[VEHICLE_SQL_SAFETY] Missing required safety conditions: {missing_conditions}")
+            logger.warning(f"[VEHICLE_SQL_SAFETY] Query was: {sql_query}")
             return []
         
         # Execute the query
@@ -2803,11 +4350,13 @@ async def _resume_vehicle_requirements(
     vehicle_requirements: str, quotation_state: Dict[str, Any], user_response: str
 ) -> str:
     """
-    Resume vehicle requirements step with intelligent requirement merging.
+    DEPRECATED: Resume vehicle requirements step with intelligent requirement merging.
     
-    This function now uses LLM intelligence to properly merge the original requirements
-    with the user's clarification, working seamlessly with the simplified vehicle search.
+    This function has been replaced by _apply_universal_context_update() in Task 15.3.2.
+    The new universal context update mechanism provides superior LLM-driven requirement
+    merging and context analysis across all quotation steps.
     """
+    logger.warning("[DEPRECATED] _resume_vehicle_requirements called - use _apply_universal_context_update instead")
     logger.info("[QUOTATION_RESUME] Processing vehicle requirements response with LLM intelligence")
     
     # Use LLM to intelligently merge requirements instead of simple concatenation
@@ -2839,7 +4388,12 @@ async def _resume_vehicle_requirements(
 
 
 async def _resume_employee_data(quotation_state: Dict[str, Any], user_response: str) -> str:
-    """Resume employee data step with user-provided information."""
+    """
+    DEPRECATED: Resume employee data step with user-provided information.
+    
+    This function has been replaced by _apply_universal_context_update() in Task 15.3.2.
+    """
+    logger.warning("[DEPRECATED] _resume_employee_data called - use _apply_universal_context_update instead")
     logger.info("[QUOTATION_RESUME] Processing employee data response")
     
     # Parse employee information from user response
@@ -2857,7 +4411,12 @@ async def _resume_employee_data(quotation_state: Dict[str, Any], user_response: 
 
 
 async def _resume_missing_information(quotation_state: Dict[str, Any], user_response: str) -> str:
-    """Resume missing information step with user-provided information."""
+    """
+    DEPRECATED: Resume missing information step with user-provided information.
+    
+    This function has been replaced by _apply_universal_context_update() in Task 15.3.2.
+    """
+    logger.warning("[DEPRECATED] _resume_missing_information called - use _apply_universal_context_update instead")
     logger.info("[QUOTATION_RESUME] Processing missing information response")
     
     # Parse and store missing information using LLM intelligence
@@ -2914,6 +4473,11 @@ Example: {{"quantity": 1, "delivery_timeline": "next week", "payment_preference"
     # Check if we have enough information to generate the quotation
     customer_data = quotation_state.get("customer_data")
     vehicle_data = quotation_state.get("vehicle_data", [])
+    
+    # Default quantity to 1 if not specified but we have vehicle data
+    if not quotation_state.get("quantity") and vehicle_data:
+        quotation_state["quantity"] = 1
+        logger.info("[QUOTATION_RESUME] Defaulting quantity to 1 since vehicle is selected")
     
     if customer_data and vehicle_data and quotation_state.get("quantity"):
         logger.info("[QUOTATION_RESUME] ✅ Sufficient information collected - generating quotation")
@@ -3118,7 +4682,12 @@ Please provide the missing information above.""",
 
 
 async def _resume_pricing_issues(quotation_state: Dict[str, Any], user_response: str) -> str:
-    """Resume pricing issues step with user-provided information."""
+    """
+    DEPRECATED: Resume pricing issues step with user-provided information.
+    
+    This function has been replaced by _apply_universal_context_update() in Task 15.3.2.
+    """
+    logger.warning("[DEPRECATED] _resume_pricing_issues called - use _apply_universal_context_update instead")
     logger.info("[QUOTATION_RESUME] Processing pricing issues response")
     
     # Parse pricing decision from user response
@@ -3136,7 +4705,12 @@ async def _resume_pricing_issues(quotation_state: Dict[str, Any], user_response:
 
 
 async def _resume_quotation_approval(quotation_state: Dict[str, Any], user_response: str) -> str:
-    """Resume quotation approval step with user-provided information."""
+    """
+    DEPRECATED: Resume quotation approval step with user-provided information.
+    
+    This function has been replaced by _apply_universal_context_update() in Task 15.3.2.
+    """
+    logger.warning("[DEPRECATED] _resume_quotation_approval called - use _apply_universal_context_update instead")
     logger.info("[QUOTATION_RESUME] Processing quotation approval response")
     
     # Use LLM-driven interpretation instead of keyword matching
@@ -3395,7 +4969,15 @@ def _identify_missing_quotation_information(
     extracted_context: Dict[str, Any]
 ) -> Dict[str, str]:
     """
-    Identify missing critical information needed for a complete quotation.
+    DEPRECATED - BRITTLE PROCESS #5: Manual missing information detection.
+    
+    This function has been replaced by QuotationContextIntelligence.analyze_complete_context()
+    as part of Task 15.2.4 - CONSOLIDATE BRITTLE PROCESSES #4, #5, #7.
+    
+    The new LLM-driven approach provides:
+    - Intelligent context understanding vs. hardcoded field checks
+    - Business priority assessment vs. static requirements
+    - Natural language interpretation vs. rigid validation
     
     Args:
         customer_data: Customer information from CRM lookup
@@ -3947,6 +5529,39 @@ Vehicle requirements are needed to generate a quotation. Please specify:
         # Universal HITL Resume Logic: Check if this is a resume call
         if current_step and user_response:
             logger.info(f"[GENERATE_QUOTATION] 🔄 RESUME DETECTED - routing to resume handler")
+            
+            # CONSOLIDATED PROCESS #4 - Replace manual field mapping with LLM intelligence
+            # Use QuotationContextIntelligence for intelligent vehicle requirement extraction
+            try:
+                context_intelligence = QuotationContextIntelligence()
+                resume_analysis = await context_intelligence.analyze_complete_context(
+                    conversation_history=[{"role": "user", "content": user_response}],
+                    current_user_input=user_response,
+                    existing_context={"vehicle_requirements": vehicle_requirements},
+                    business_requirements=None
+                )
+                
+                # Extract updated vehicle requirements from LLM analysis
+                if resume_analysis.extracted_context.vehicle_requirements:
+                    vehicle_data = resume_analysis.extracted_context.vehicle_requirements
+                    if any(vehicle_data.get(field) for field in ["make", "model", "type"]):
+                        # Build updated requirements from LLM extraction
+                        updated_requirements = []
+                        if vehicle_data.get("make"):
+                            updated_requirements.append(vehicle_data["make"])
+                        if vehicle_data.get("model"):
+                            updated_requirements.append(vehicle_data["model"])
+                        if vehicle_data.get("type"):
+                            updated_requirements.append(vehicle_data["type"])
+                        
+                        if updated_requirements:
+                            vehicle_requirements = " ".join(updated_requirements)
+                            logger.info(f"[GENERATE_QUOTATION] 🚗 LLM-extracted vehicle requirements: {vehicle_requirements}")
+                
+            except Exception as e:
+                logger.warning(f"[GENERATE_QUOTATION] LLM vehicle extraction failed, using original: {e}")
+                # Fallback: continue with original vehicle_requirements
+            
             return await _handle_quotation_resume(
                 customer_identifier=customer_identifier,
                 vehicle_requirements=vehicle_requirements,
@@ -4101,8 +5716,64 @@ Or provide a different customer identifier (name, email, or phone) that I can se
             )
         
         # Step 3: Use unified LLM-based vehicle search (Task 6.2.1)
-        # This replaces the complex orchestration with a single intelligent search function
-        # that handles parsing, fuzzy matching, and database lookup in one unified approach
+        # TASK 15.3.1: REPLACE hardcoded keyword matching with LLM context extraction
+        # This replaces brittle keyword matching with intelligent context analysis
+        
+        # Use QuotationContextIntelligence to determine if user_response contains vehicle information
+        if not current_step and user_response:
+            try:
+                logger.info("[GENERATE_QUOTATION] 🧠 Using LLM to analyze user response for vehicle information")
+                
+                context_intelligence = QuotationContextIntelligence()
+                
+                # Analyze user response for vehicle requirements using LLM intelligence
+                user_analysis = await context_intelligence.analyze_complete_context(
+                    conversation_history=[{"role": "user", "content": user_response}],
+                    current_user_input=user_response,
+                    existing_context={"vehicle_requirements": vehicle_requirements},
+                    business_requirements={
+                        "vehicle_info_detection": True,
+                        "context_override_detection": True,
+                        "automotive_domain": True
+                    }
+                )
+                
+                # Check if LLM detected vehicle information in user response
+                vehicle_data = user_analysis.extracted_context.vehicle_requirements
+                if vehicle_data and any(vehicle_data.get(field) for field in ["make", "model", "type", "features"]):
+                    logger.info(f"[GENERATE_QUOTATION] ✅ LLM detected vehicle info in user response")
+                    logger.info(f"[GENERATE_QUOTATION] 🚗 Extracted: make={vehicle_data.get('make')}, model={vehicle_data.get('model')}, type={vehicle_data.get('type')}")
+                    
+                    # Build intelligent vehicle requirements from LLM extraction
+                    requirement_parts = []
+                    if vehicle_data.get("make"):
+                        requirement_parts.append(vehicle_data["make"])
+                    if vehicle_data.get("model"):
+                        requirement_parts.append(vehicle_data["model"])
+                    if vehicle_data.get("type"):
+                        requirement_parts.append(vehicle_data["type"])
+                    if vehicle_data.get("year"):
+                        requirement_parts.append(str(vehicle_data["year"]))
+                    if vehicle_data.get("color"):
+                        requirement_parts.append(vehicle_data["color"])
+                    if vehicle_data.get("features"):
+                        requirement_parts.extend(vehicle_data["features"])
+                    
+                    if requirement_parts:
+                        vehicle_requirements = " ".join(requirement_parts)
+                        logger.info(f"[GENERATE_QUOTATION] 🚗 Updated vehicle requirements: {vehicle_requirements}")
+                    else:
+                        # Fallback: use the entire user response if LLM detected vehicle context
+            vehicle_requirements = user_response
+                        logger.info(f"[GENERATE_QUOTATION] 🚗 Using full user response as vehicle requirements: {user_response}")
+                
+                else:
+                    logger.info("[GENERATE_QUOTATION] ℹ️ LLM determined user response doesn't contain vehicle information")
+                    
+            except Exception as e:
+                logger.warning(f"[GENERATE_QUOTATION] LLM vehicle detection failed, continuing with original logic: {e}")
+                # Fallback: continue with original vehicle_requirements
+        
         vehicles = await _search_vehicles_with_llm(
             vehicle_requirements, 
             extracted_context,
@@ -4181,16 +5852,69 @@ What would you prefer?""",
                 context={}  # Universal context auto-generated by @hitl_recursive_tool decorator
             )
         
-        # Step 6: Validate completeness and gather missing critical information via HITL
+        # CONSOLIDATED PROCESSES #5 & #7 - Replace manual missing info detection & static validation
+        # Use QuotationContextIntelligence for unified completeness assessment
         try:
-            missing_info = _identify_missing_quotation_information(
-                customer_data, 
-                vehicle_pricing, 
-                extracted_context
+            logger.info("[GENERATE_QUOTATION] 🧠 Running unified LLM completeness analysis...")
+            
+            context_intelligence = QuotationContextIntelligence()
+            
+            # Build comprehensive conversation history for analysis
+            conversation_history = []
+            if conversation_context:
+                conversation_history.append({"role": "user", "content": conversation_context})
+            conversation_history.append({
+                "role": "user", 
+                "content": f"Customer: {customer_identifier}, Vehicle: {vehicle_requirements}"
+            })
+            if additional_notes:
+                conversation_history.append({"role": "user", "content": f"Additional notes: {additional_notes}"})
+            
+            # Perform comprehensive context analysis
+            completeness_analysis = await context_intelligence.analyze_complete_context(
+                conversation_history=conversation_history,
+                current_user_input=f"Generate quotation for {customer_identifier}: {vehicle_requirements}",
+                existing_context={
+                    "customer_data": customer_data,
+                    "vehicle_pricing": vehicle_pricing,
+                    "extracted_context": extracted_context
+                },
+                business_requirements={
+                    "quotation_generation": True,
+                    "customer_contact_required": True,
+                    "vehicle_selection_required": True,
+                    "pricing_information_required": True
+                }
             )
+            
+            # Extract missing information from LLM analysis
+            missing_info = {}
+            if completeness_analysis.missing_info_analysis.critical_missing:
+                for item in completeness_analysis.missing_info_analysis.critical_missing:
+                    missing_info[f"critical_{len(missing_info)}"] = item
+            
+            if completeness_analysis.missing_info_analysis.important_missing:
+                for item in completeness_analysis.missing_info_analysis.important_missing:
+                    missing_info[f"important_{len(missing_info)}"] = item
+            
+            # Log analysis results
+            logger.info(f"[GENERATE_QUOTATION] ✅ LLM Analysis - Completeness: {completeness_analysis.completeness_assessment.overall_completeness}")
+            logger.info(f"[GENERATE_QUOTATION] ✅ LLM Analysis - Quotation Ready: {completeness_analysis.completeness_assessment.quotation_ready}")
+            logger.info(f"[GENERATE_QUOTATION] ✅ LLM Analysis - Missing Items: {len(missing_info)}")
+            
+            # Override missing_info if LLM says quotation is ready
+            if completeness_analysis.completeness_assessment.quotation_ready and completeness_analysis.completeness_assessment.overall_completeness in ["high", "medium"]:
+                logger.info("[GENERATE_QUOTATION] 🎯 LLM determined quotation is ready - proceeding with generation")
+                missing_info = {}
+                
         except Exception as e:
-            logger.warning(f"[GENERATE_QUOTATION] Missing info validation failed: {e}")
-            missing_info = []  # Continue without additional validation if this fails
+            logger.error(f"[GENERATE_QUOTATION] LLM completeness analysis failed: {e}")
+            # Fallback to basic validation
+            missing_info = {}
+            if not customer_data.get('email') and not extracted_context.get('customer_email'):
+                missing_info['customer_email'] = "Customer email address for sending the quotation"
+            if not customer_data.get('phone') and not extracted_context.get('customer_phone'):
+                missing_info['customer_phone'] = "Customer phone number for follow-up contact"
         
         if missing_info:
             # Create proper quotation state with found data for resume functionality

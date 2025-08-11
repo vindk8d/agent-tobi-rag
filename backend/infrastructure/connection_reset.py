@@ -107,7 +107,7 @@ async def reset_sql_connections(force: bool = True) -> bool:
     try:
         # Reset legacy global connections (if any)
         try:
-            from agents.tools import close_database_connections
+            from agents.toolbox.toolbox import close_database_connections
             await close_database_connections()
             logger.info("   ✅ Legacy SQL connections closed")
         except Exception as e:

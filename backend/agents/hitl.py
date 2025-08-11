@@ -522,7 +522,7 @@ def hitl_recursive_tool(func: Callable) -> Callable:
             
             # Get all original parameters (excluding special HITL resume parameters)
             original_params = {}
-            resume_indicators = {'user_response', 'hitl_phase', 'current_step', 'conversation_context'}
+            resume_indicators = {'user_response', 'hitl_phase', 'conversation_context'}
             
             for param_name, param_value in bound_args.arguments.items():
                 if param_name not in resume_indicators:
@@ -531,15 +531,13 @@ def hitl_recursive_tool(func: Callable) -> Callable:
             # Check if this is a HITL resume call
             user_response = bound_args.arguments.get('user_response', '')
             hitl_phase = bound_args.arguments.get('hitl_phase', '')
-            current_step = bound_args.arguments.get('current_step', '')
             
-            is_resume_call = bool(user_response or current_step or hitl_phase)
+            is_resume_call = bool(user_response or hitl_phase)
             
             if is_resume_call:
                 logger.info(f"[UNIVERSAL_HITL] 🔄 {tool_name} resuming from HITL interaction")
                 logger.info(f"[UNIVERSAL_HITL]   └─ user_response: '{user_response}'")
                 logger.info(f"[UNIVERSAL_HITL]   └─ hitl_phase: '{hitl_phase}'")
-                logger.info(f"[UNIVERSAL_HITL]   └─ current_step: '{current_step}'")
                 
                 # Add user response to parameters for tool processing
                 if user_response:
@@ -1350,7 +1348,7 @@ async def _get_hitl_interpretation_llm() -> ChatOpenAI:
     settings = await get_settings()
     
     # Use simple model for fast interpretation
-    model = getattr(settings, 'openai_simple_model', 'gpt-3.5-turbo')
+    model = getattr(settings, 'openai_simple_model', 'gpt-4o-mini')
     
     return ChatOpenAI(
         model=model,

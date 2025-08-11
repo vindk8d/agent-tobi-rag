@@ -1,0 +1,61 @@
+{
+  "simulation_metadata": {
+    "conversation_id": "00d34948-44e7-46fe-89df-c4c7354c830d",
+    "employee_user_id": "f26449e2-dce9-4b29-acd0-cb39a1f671fd",
+    "customer_name": "Robert Brown",
+    "vehicle_requirements": "Toyota Camry sedan, silver color",
+    "api_base_url": "http://localhost:8000",
+    "timestamp": "2025-08-11T01:03:18.703514",
+    "total_steps": 2
+  },
+  "step_responses": [
+    {
+      "step_name": "Initial Quotation Request",
+      "employee_message": "Generate a quotation for Robert Brown, they want Toyota Camry sedan, silver color",
+      "api_response": {
+        "message": "\u26a1 **Critical Information Needed - Robert Brown**\n\nFor your Toyota Camry sedan quotation, I need the following essential information:\n\n\u2022 **Contact Method**\n\n*This information is required to proceed with your quotation request.*",
+        "sources": [],
+        "is_interrupted": true,
+        "conversation_id": "00d34948-44e7-46fe-89df-c4c7354c830d",
+        "confirmation_id": null,
+        "error": false,
+        "error_type": null,
+        "hitl_phase": "needs_confirmation",
+        "hitl_prompt": "\u26a1 **Critical Information Needed - Robert Brown**\n\nFor your Toyota Camry sedan quotation, I need the following essential information:\n\n\u2022 **Contact Method**\n\n*This information is required to proceed with your quotation request.*",
+        "hitl_context": {
+          "source_tool": "generate_quotation",
+          "collection_mode": "tool_managed",
+          "original_params": {
+            "customer_identifier": "Robert Brown",
+            "vehicle_requirements": "Toyota Camry, sedan, silver color",
+            "additional_notes": null,
+            "quotation_validity_days": 30
+          },
+          "legacy_type": "input"
+        }
+      },
+      "timestamp": "2025-08-11T01:02:43.667545",
+      "conversation_id": "00d34948-44e7-46fe-89df-c4c7354c830d",
+      "response_time_ms": 26433.32
+    },
+    {
+      "step_name": "HITL Response 1 (needs_confirmation) (HITL Response)",
+      "employee_message": "Yes, approve and generate the quotation",
+      "api_response": {
+        "message": "\ud83c\udfaf **Professional Vehicle Quotation**\n\n**Customer**: Robert Brown\n**Vehicle**: Toyota Camry\n**Pricing Strategy**: Value-optimized with comprehensive benefits\n**Validity**: 30 days\n\n\ud83c\udf81 **Available Opportunities:**\n\u2022 Standard manufacturer incentives\n\u2022 Trade-in opportunities available\n\u2022 0% APR financing for qualified buyers\n\n\ud83d\udca1 **Recommendations:**\n\u2022 Offer the vehicle at MSRP with value-based negotiation\n\u2022 Provide flexibility in negotiation within a 3-5% range\n\n\ud83d\udcca **Pricing Analysis:**\n*The pricing strategy is based on the value proposition of the Toyota Camry, the customer's standard purchasing power, and the competitive landscape of the mid-size sedan market. The recommended pricin...*\n\n\u2705 **Your intelligent quotation has been prepared!**\n*\ud83c\udfaf High confidence analysis \u2022 Based on comprehensive market and customer analysis*\n\n\ud83d\udcc4 *Professional PDF quotation will be generated and sent to you shortly.*",
+        "sources": [],
+        "is_interrupted": false,
+        "conversation_id": "00d34948-44e7-46fe-89df-c4c7354c830d",
+        "confirmation_id": null,
+        "error": false,
+        "error_type": null,
+        "hitl_phase": null,
+        "hitl_prompt": null,
+        "hitl_context": null
+      },
+      "timestamp": "2025-08-11T01:03:17.698849",
+      "conversation_id": "00d34948-44e7-46fe-89df-c4c7354c830d",
+      "response_time_ms": 34029.104
+    }
+  ]
+}
