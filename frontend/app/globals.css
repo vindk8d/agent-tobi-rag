@@ -63,26 +63,44 @@ html {
 .delay-500 { animation-delay: 500ms; }
 .delay-1000 { animation-delay: 1000ms; }
 
-/* Import Inter font from Google Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+/* Import Fira Code font from Google Fonts for code blocks */
 @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600&display=swap');
 
 /* Custom base styles */
 @layer base {
   * {
-    @apply border-gray-200;
+    @apply border-gray-200 leading-6;
   }
   
   body {
-    @apply bg-gray-50 text-gray-900;
+    @apply bg-gray-50 text-gray-900 leading-6;
     font-feature-settings: "rlig" 1, "calt" 1;
+    font-weight: 400;
+  }
+
+  /* Enforce only 400 and 700 font weights */
+  h1, h2, h3, h4, h5, h6, strong, b {
+    @apply font-bold leading-6;
+  }
+
+  p, span, div, a, button, input, textarea, label {
+    @apply font-normal leading-6;
+  }
+
+  /* Override any medium, semibold, or other weights */
+  .font-medium, .font-semibold, .font-normal, .font-light {
+    font-weight: 400;
+  }
+
+  .font-bold, .font-extrabold, .font-black {
+    font-weight: 700;
   }
 }
 
 /* Custom components */
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-md text-sm font-normal leading-6 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
   }
   
   .btn-primary {
@@ -102,7 +120,50 @@ html {
   }
   
   .input {
-    @apply flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm file:border-0 file:bg-transparent file:text-sm file:font-normal leading-6 placeholder:text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* Custom prose styling for markdown content */
+  .prose {
+    @apply leading-6;
+  }
+
+  .prose p {
+    @apply font-normal leading-6;
+    margin-bottom: 1em;
+  }
+
+  /* Remove margin from prose content in user messages */
+  .prose-invert p {
+    margin-bottom: 0;
+  }
+
+  .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+    @apply font-bold leading-6;
+  }
+
+  .prose strong, .prose b {
+    @apply font-bold;
+  }
+
+  .prose em, .prose i {
+    @apply font-normal italic;
+  }
+
+  .prose ul, .prose ol {
+    @apply leading-6;
+  }
+
+  .prose li {
+    @apply font-normal leading-6;
+  }
+
+  .prose blockquote {
+    @apply font-normal leading-6;
+  }
+
+  .prose code {
+    @apply font-normal leading-6;
   }
 }
 
@@ -143,11 +204,12 @@ html,
 body {
   max-width: 100vw;
   overflow-x: hidden;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  @apply leading-6 font-normal;
 }
 
 main {
