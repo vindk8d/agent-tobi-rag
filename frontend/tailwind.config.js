@@ -71,8 +71,12 @@ module.exports = {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['var(--font-inter)', 'Inter', 'system-ui', 'sans-serif'],
         mono: ['Fira Code', 'monospace'],
+      },
+      fontWeight: {
+        normal: '400',
+        bold: '700',
       },
       fontSize: {
         '2xs': '0.625rem',
