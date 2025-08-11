@@ -3,6 +3,8 @@
 
 [phases.setup]
 nixPkgs = [
+    # Python runtime
+    "python3",
     # Core WeasyPrint dependencies (proper Nix names)
     "cairo", "pango", "gdk-pixbuf", "glib", "gobject-introspection",
     # Text and font rendering
@@ -21,7 +23,7 @@ nixPkgs = [
 cmds = [
     # Show what we're working with
     "echo '=== NIXPACKS CUSTOM INSTALL PHASE RUNNING ==='",
-    "echo 'Python version:' && python --version",
+    "echo 'Python version:' && python3 --version",
     "echo 'Current directory:' && pwd",
     
     # Check what Nix packages were actually installed
@@ -55,17 +57,17 @@ cmds = [
     
     # Install Python packages
     "echo '=== INSTALLING PYTHON PACKAGES ==='",
-    "python -m venv --copies /opt/venv",
+    "python3 -m venv --copies /opt/venv",
     ". /opt/venv/bin/activate && pip install --upgrade pip setuptools wheel", 
     ". /opt/venv/bin/activate && pip install -r requirements.txt",
     
     # Test WeasyPrint import
     "echo '=== TESTING WEASYPRINT IMPORT ==='",
-    ". /opt/venv/bin/activate && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/store/*/lib:$LD_LIBRARY_PATH python -c 'import weasyprint; print(\"SUCCESS: WeasyPrint imported!\")' || echo 'FAILED: WeasyPrint import error'"
+    ". /opt/venv/bin/activate && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/store/*/lib:$LD_LIBRARY_PATH python3 -c 'import weasyprint; print(\"SUCCESS: WeasyPrint imported!\")' 2>&1 || echo 'FAILED: Check error above'"
 ]
 
 [start]
-cmd = "LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/store/*/lib:$LD_LIBRARY_PATH python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
+cmd = ". /opt/venv/bin/activate && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/nix/store/*/lib:$LD_LIBRARY_PATH python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
 
 [variables]
 PORT = "8000"
