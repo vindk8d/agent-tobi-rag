@@ -1,5 +1,15 @@
 # Nixpacks Configuration for Railway Deployment
-# Minimal configuration - let NIXPACKS auto-detect everything
+# Add system dependencies for WeasyPrint PDF generation
+
+[phases.setup]
+nixPkgs = [
+    "python3", "pip", "setuptools", "wheel",
+    # WeasyPrint system dependencies
+    "cairo", "pango", "gdk-pixbuf", "libffi", "pkg-config",
+    "glib", "gobject-introspection", "harfbuzz", "fribidi",
+    # Additional libraries for PDF rendering
+    "fontconfig", "freetype", "libjpeg", "libpng", "zlib"
+]
 
 [start]
 cmd = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
