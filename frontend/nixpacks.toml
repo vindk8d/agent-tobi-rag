@@ -5,10 +5,16 @@
 nixPkgs = ["nodejs_18", "npm-9_x"]
 
 [phases.install]
-cmds = ["npm ci"]
+cmds = ["npm ci --omit=dev --prefer-offline"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = [
+  "echo 'Setting default environment variables for build...'",
+  "export NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://tobi-backend-production.up.railway.app}",
+  "export NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-https://placeholder.supabase.co}",
+  "export NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-placeholder-key}",
+  "npm run build"
+]
 
 [start]
 cmd = "npm run start"
@@ -18,7 +24,7 @@ NODE_ENV = "production"
 NEXT_TELEMETRY_DISABLED = "1"
 PORT = "3000"
 
-# Default environment variables (will be overridden by Railway)
+# Default environment variables for build (Railway will override these)
 NEXT_PUBLIC_API_URL = "https://tobi-backend-production.up.railway.app"
 NEXT_PUBLIC_SUPABASE_URL = "https://placeholder.supabase.co"
 NEXT_PUBLIC_SUPABASE_ANON_KEY = "placeholder-key"
