@@ -20,7 +20,7 @@ langchain-core==0.3.25
 langchain-openai==0.2.11
 langchain-community==0.3.8
 langgraph==0.6.4
-langgraph-checkpoint-postgres==1.0.12
+langgraph-checkpoint-postgres==2.0.23
 tiktoken==0.8.0
 
 # ===== DOCUMENT PROCESSING =====
