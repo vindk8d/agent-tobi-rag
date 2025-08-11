@@ -11,9 +11,17 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from io import BytesIO
-import weasyprint
 from jinja2 import Environment, FileSystemLoader, Template
 import aiofiles
+
+# Try to import WeasyPrint, but make it optional
+try:
+    import weasyprint
+    WEASYPRINT_AVAILABLE = True
+except ImportError as e:
+    WEASYPRINT_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning(f"WeasyPrint not available: {e}. PDF generation will be disabled.")
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -225,6 +233,9 @@ class QuotationPDFGenerator:
         Raises:
             PDFGenerationError: If PDF generation fails
         """
+        if not WEASYPRINT_AVAILABLE:
+            raise PDFGenerationError("WeasyPrint is not available. Cannot generate PDF.")
+            
         try:
             # Run PDF generation in executor to avoid blocking
             loop = asyncio.get_event_loop()
