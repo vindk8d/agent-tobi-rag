@@ -1,24 +1,30 @@
-# Nixpacks Configuration for Railway Deployment
-# WeasyPrint system dependencies using Railway's aptPkgs
+# Nixpacks Configuration for Railway Deployment  
+# WeasyPrint system dependencies - comprehensive approach
 
 [phases.setup]
+# Try both approaches - nixPkgs (primary) and aptPkgs (fallback)
+nixPkgs = [
+    "cairo", "pango", "gdk-pixbuf", "glib", "gobject-introspection",
+    "harfbuzz", "fribidi", "fontconfig", "freetype", "libffi",
+    "libjpeg", "libpng", "zlib", "libxml2", "libxslt", "pkg-config"
+]
 aptPkgs = [
-    # Core WeasyPrint system dependencies
-    "libgobject-2.0-0",
-    "libcairo2", 
-    "libpango-1.0-0",
-    "libgdk-pixbuf2.0-0",
-    "libffi-dev",
-    # Additional libraries for full WeasyPrint support
-    "libharfbuzz0b",
-    "libfribidi0",
-    "fontconfig",
-    "libfreetype6",
-    "libjpeg62-turbo",
-    "libpng16-16",
-    "zlib1g",
-    "libxml2",
-    "libxslt1.1"
+    "libgobject-2.0-0", "libcairo2", "libpango-1.0-0", 
+    "libgdk-pixbuf2.0-0", "libffi-dev", "libharfbuzz0b",
+    "libfribidi0", "fontconfig", "libfreetype6", "libjpeg62-turbo",
+    "libpng16-16", "zlib1g", "libxml2", "libxslt1.1"
+]
+
+[phases.install]
+cmds = [
+    # Debug: Check what libraries are available
+    "echo '=== Checking for WeasyPrint dependencies ==='",
+    "find /usr -name '*gobject*' 2>/dev/null || echo 'No gobject in /usr'",
+    "find /nix -name '*gobject*' 2>/dev/null || echo 'No gobject in /nix'",
+    "ldconfig -p | grep gobject || echo 'No gobject in ldconfig'",
+    "echo '=== Installing Python packages ==='",
+    "pip install --upgrade pip setuptools wheel",
+    "pip install -r requirements.txt"
 ]
 
 [start]
