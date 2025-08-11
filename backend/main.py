@@ -76,8 +76,6 @@ allowed_origins = [
     "http://localhost:3000",  # Local development
     "http://localhost:3001",  # Alternative local port
     "https://tobi-frontend-production.up.railway.app",  # Production frontend
-    "https://*.railway.app",  # Railway frontend deployments
-    "https://*.up.railway.app",  # Railway legacy domains
 ]
 
 # Add environment-specific origins
@@ -87,9 +85,7 @@ if os.getenv("FRONTEND_URL"):
 if os.getenv("ENVIRONMENT") == "production":
     # In production, keep specific Railway URLs and remove localhost
     production_origins = [
-        "https://tobi-frontend-production.up.railway.app",
-        "https://*.railway.app",
-        "https://*.up.railway.app"
+        "https://tobi-frontend-production.up.railway.app"
     ]
     if os.getenv("FRONTEND_URL"):
         production_origins.append(os.getenv("FRONTEND_URL"))
