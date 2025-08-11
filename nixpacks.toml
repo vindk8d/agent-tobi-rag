@@ -27,8 +27,14 @@ cmds = [
     "find /nix/store -name 'libcairo.so*' -exec ln -sf {} /usr/lib/x86_64-linux-gnu/libcairo.so.2 \\; 2>/dev/null || true",
     "find /nix/store -name 'libpango-1.0.so*' -exec ln -sf {} /usr/lib/x86_64-linux-gnu/libpango-1.0.so.0 \\; 2>/dev/null || true",
     "find /nix/store -name 'libgdk_pixbuf-2.0.so*' -exec ln -sf {} /usr/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0 \\; 2>/dev/null || true",
+    "echo '=== SETTING UP FONTCONFIG ==='",
+    "mkdir -p /etc/fonts /tmp/fontconfig",
+    "echo '<?xml version=\"1.0\"?><fontconfig><dir>/nix/store/*/share/fonts</dir><dir>/usr/share/fonts</dir><cachedir>/tmp/fontconfig</cachedir></fontconfig>' > /etc/fonts/fonts.conf",
+    "fc-cache -f -v 2>/dev/null || echo 'fc-cache not available'",
     "echo '=== DEBUGGING LIBRARY SETUP ==='",
     "ls -la /usr/lib/x86_64-linux-gnu/libgobject* || echo 'No libgobject links created'",
+    "echo '=== FONTCONFIG DEBUG ==='",
+    "ls -la /etc/fonts/ || echo 'No fonts config'",
     "ldconfig",
     "echo '=== INSTALLING PYTHON PACKAGES ==='",
     "python -m venv --copies /opt/venv",
@@ -45,3 +51,5 @@ PYTHONDONTWRITEBYTECODE = "1"
 PYTHONUNBUFFERED = "1" 
 ENVIRONMENT = "production"
 LD_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu:/nix/store/*/lib"
+FONTCONFIG_PATH = "/etc/fonts"
+FONTCONFIG_FILE = "/etc/fonts/fonts.conf"

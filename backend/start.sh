@@ -62,4 +62,5 @@ echo "PORT environment variable: $PORT"
 echo "Will listen on port: ${PORT:-8000}"
 
 # Start uvicorn with the PORT Railway provides (venv should already be activated)
+export PORT=8000
 exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
