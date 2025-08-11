@@ -1,27 +1,8 @@
 # Nixpacks Configuration for Railway Deployment
-# Explicitly configure Python environment and entry point
-
-[phases.setup]
-nixPkgs = ["python3", "pip", "gcc", "pkg-config", "cairo", "pango", "gdk-pixbuf", "libffi"]
-
-[phases.install]
-cmds = [
-  "pip install --upgrade pip setuptools wheel", 
-  "pip install -r requirements.txt"
-]
-
-[phases.build] 
-cmds = [
-  "python -c 'import sys; print(f\"Python path: {sys.path}\")'",
-  "python -c 'import fastapi; print(f\"FastAPI version: {fastapi.__version__}\")'",
-  "cd backend && python -c 'from main import app; print(\"Backend app imported successfully\")'"
-]
+# Minimal configuration - let NIXPACKS auto-detect everything
 
 [start]
-cmd = "cd backend && PYTHONPATH=/app/backend:/app python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
+cmd = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
 
 [variables]
-PYTHONUNBUFFERED = "1" 
-PYTHONDONTWRITEBYTECODE = "1"
 PORT = "8000"
-ENVIRONMENT = "production"
