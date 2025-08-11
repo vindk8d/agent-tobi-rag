@@ -1,18 +1,37 @@
 # Nixpacks Configuration for Railway Deployment
-# Add system dependencies for WeasyPrint PDF generation
+# Optimized WeasyPrint system dependencies with proper library linking
 
 [phases.setup]
 nixPkgs = [
-    "python3", "pip", "setuptools", "wheel",
-    # WeasyPrint system dependencies
-    "cairo", "pango", "gdk-pixbuf", "libffi", "pkg-config",
-    "glib", "gobject-introspection", "harfbuzz", "fribidi",
-    # Additional libraries for PDF rendering
-    "fontconfig", "freetype", "libjpeg", "libpng", "zlib"
+    "python3", "pip", "setuptools", "wheel", "gcc", "pkg-config",
+    # Essential WeasyPrint dependencies
+    "cairo", "pango", "gdk-pixbuf", "glib", "gobject-introspection",
+    "harfbuzz", "fribidi", "fontconfig", "freetype", "libffi",
+    # Image support
+    "libjpeg", "libpng", "zlib",
+    # XML processing
+    "libxml2", "libxslt"
+]
+
+[phases.install]
+cmds = [
+    # Create symlinks for libraries that WeasyPrint expects
+    "mkdir -p /app/lib",
+    "find /nix/store -name 'libgobject-2.0.so*' -exec ln -sf {} /app/lib/libgobject-2.0.so.0 \\; 2>/dev/null || true",
+    "find /nix/store -name 'libglib-2.0.so*' -exec ln -sf {} /app/lib/libglib-2.0.so.0 \\; 2>/dev/null || true",
+    "find /nix/store -name 'libcairo.so*' -exec ln -sf {} /app/lib/libcairo.so.2 \\; 2>/dev/null || true",
+    "find /nix/store -name 'libpango*.so*' -exec cp {} /app/lib/ \\; 2>/dev/null || true",
+    # Install Python packages
+    "pip install --upgrade pip setuptools wheel",
+    "pip install -r requirements.txt"
 ]
 
 [start]
-cmd = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
+cmd = "LD_LIBRARY_PATH=/app/lib:/nix/store/*/lib:$LD_LIBRARY_PATH python -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
 
 [variables]
 PORT = "8000"
+# Library paths for WeasyPrint
+LD_LIBRARY_PATH = "/app/lib:/nix/store/*/lib"
+PKG_CONFIG_PATH = "/nix/store/*/lib/pkgconfig"
+FONTCONFIG_PATH = "/nix/store/*/etc/fonts"
