@@ -70,15 +70,24 @@ async def simple_query_crm_data(question: str, time_period: Optional[str] = None
         user_type = get_current_user_type() or "customer"
         logger.info(f"[CRM_QUERY] User type: {user_type}")
         
-        # Get database connection
-        db = await get_sql_database()
-        if not db:
-            return "❌ Unable to connect to the database. Please try again later."
-        
         # Add time period context if provided
         enhanced_question = question
         if time_period:
             enhanced_question = f"{question} (Time period: {time_period})"
+        
+        # Try direct Supabase approach first (Option C - more reliable)
+        direct_result = await _query_crm_data_direct(enhanced_question, user_type)
+        if direct_result and not direct_result.startswith("❌"):
+            logger.info("[CRM_QUERY] ✅ Direct query completed successfully")
+            return direct_result
+        
+        # Fallback to SQL interface approach (Option A - backward compatibility)
+        logger.info("[CRM_QUERY] Falling back to SQL interface approach")
+        
+        # Get database connection
+        db = await get_sql_database()
+        if not db:
+            return "❌ Unable to connect to the database. Please try again later."
         
         # Generate SQL query using LLM
         sql_query = await _generate_sql_query_simple(enhanced_question, db, user_type)
@@ -95,12 +104,245 @@ async def simple_query_crm_data(question: str, time_period: Optional[str] = None
         # Format the result for user presentation
         formatted_result = await _format_sql_result_simple(enhanced_question, sql_query, query_result)
         
-        logger.info("[CRM_QUERY] ✅ Query completed successfully")
+        logger.info("[CRM_QUERY] ✅ SQL query completed successfully")
         return formatted_result
         
     except Exception as e:
         logger.error(f"Error in simple_query_crm_data: {e}")
         return f"I encountered an issue while processing your question. Please try rephrasing it or ask for help."
+
+async def _query_crm_data_direct(question: str, user_type: str = "employee") -> str:
+    """
+    Query CRM data directly using Supabase (Option C).
+    
+    This approach is more reliable than SQL parsing and consistent with
+    the working lookup functions in the codebase.
+    """
+    try:
+        from .toolbox import get_db_client
+        
+        # Get database client
+        db_client = get_db_client()
+        if not db_client:
+            logger.error("[CRM_DIRECT] No database connection available")
+            return "❌ Unable to connect to the database."
+        
+        # Get Supabase client
+        supabase = db_client.client
+        if not supabase:
+            logger.error("[CRM_DIRECT] No Supabase client available")
+            return "❌ Database client not properly initialized."
+        
+        logger.info(f"[CRM_DIRECT] Processing question with direct Supabase queries: {question}")
+        
+        # Analyze question to determine what data to fetch
+        question_lower = question.lower()
+        
+        # Handle vehicle inventory questions
+        if any(word in question_lower for word in ['vehicle', 'car', 'inventory', 'stock', 'available']):
+            return await _query_vehicles_direct(supabase, question, user_type)
+        
+        # Handle customer questions
+        elif any(word in question_lower for word in ['customer', 'client', 'buyer']):
+            if user_type != "employee":
+                return "❌ Access denied. Customer information is only available to employees."
+            return await _query_customers_direct(supabase, question)
+        
+        # Handle employee questions
+        elif any(word in question_lower for word in ['employee', 'staff', 'salesperson', 'agent']):
+            if user_type != "employee":
+                return "❌ Access denied. Employee information is only available to employees."
+            return await _query_employees_direct(supabase, question)
+        
+        # Default to vehicle inventory for general questions
+        else:
+            return await _query_vehicles_direct(supabase, question, user_type)
+            
+    except Exception as e:
+        logger.error(f"[CRM_DIRECT] Error in direct query: {e}")
+        return "❌ Error processing your question with direct database access."
+
+async def _query_vehicles_direct(supabase, question: str, user_type: str) -> str:
+    """Query vehicle data directly from Supabase."""
+    try:
+        logger.info("[CRM_DIRECT] Querying vehicles table")
+        
+        # Get vehicles data
+        result = supabase.table('vehicles').select('*').limit(50).execute()
+        
+        if not result.data:
+            return "No vehicles found in the inventory."
+        
+        # Format results for user presentation
+        vehicles = result.data
+        
+        # Use LLM to format the response based on the question
+        from .toolbox import get_appropriate_llm
+        llm = await get_appropriate_llm(question)
+        
+        # Create a comprehensive summary of the data for LLM processing
+        vehicle_summary = []
+        for vehicle in vehicles[:20]:  # Limit to 20 for LLM processing
+            # Basic info
+            summary = f"- {vehicle.get('year', 'N/A')} {vehicle.get('brand', vehicle.get('make', 'N/A'))} {vehicle.get('model', 'N/A')}"
+            
+            # Color and variant
+            if vehicle.get('color'):
+                summary += f" in {vehicle.get('color')}"
+            if vehicle.get('variant'):
+                summary += f" ({vehicle.get('variant')})"
+            
+            # Availability and stock
+            if vehicle.get('stock_quantity') is not None:
+                summary += f" - Stock: {vehicle.get('stock_quantity')} units"
+            if vehicle.get('is_available') is False:
+                summary += " - UNAVAILABLE"
+            
+            # Engine and performance
+            if vehicle.get('engine_type'):
+                summary += f" - {vehicle.get('engine_type')}"
+            if vehicle.get('power_ps'):
+                summary += f" {vehicle.get('power_ps')}PS"
+            if vehicle.get('transmission'):
+                summary += f" {vehicle.get('transmission')}"
+            
+            # Price info (if available)
+            if vehicle.get('price'):
+                summary += f" - ${vehicle.get('price'):,.2f}" if isinstance(vehicle.get('price'), (int, float)) else f" - {vehicle.get('price')}"
+            if vehicle.get('status'):
+                summary += f" ({vehicle.get('status')})"
+                
+            vehicle_summary.append(summary)
+        
+        format_prompt = f"""You are a helpful car sales assistant. A user asked: "{question}"
+
+Here is our current vehicle inventory:
+{chr(10).join(vehicle_summary)}
+
+Total vehicles in inventory: {len(vehicles)}
+
+Please provide a helpful response that:
+1. Directly answers their question about colors, quantities, or specific details
+2. If asked about colors or quantities per color, analyze the data and provide specific counts
+3. Highlights relevant vehicles if they're looking for something specific
+4. Uses a friendly, conversational tone
+5. Includes key details like make, model, year, color, price, and availability
+6. If asked about color breakdown, count how many vehicles are available in each color
+7. Suggests next steps if appropriate
+
+Format your response in a clear, easy-to-read way. Be specific with numbers and details when the user asks for them."""
+
+        response = await llm.ainvoke([{"role": "user", "content": format_prompt}])
+        return response.content
+        
+    except Exception as e:
+        logger.error(f"[CRM_DIRECT] Error querying vehicles: {e}")
+        return "❌ Error retrieving vehicle information."
+
+async def _query_customers_direct(supabase, question: str) -> str:
+    """Query customer data directly from Supabase."""
+    try:
+        logger.info("[CRM_DIRECT] Querying customers table")
+        
+        result = supabase.table('customers').select('*').limit(30).execute()
+        
+        if not result.data:
+            return "No customer records found."
+        
+        # Format customer data for LLM processing  
+        customers = result.data
+        customer_summary = []
+        for customer in customers[:15]:  # Limit for LLM processing
+            summary = f"- {customer.get('name', 'N/A')}"
+            if customer.get('company'):
+                summary += f" ({customer.get('company')})"
+            if customer.get('is_for_business'):
+                summary += " [Business Customer]"
+            if customer.get('phone') or customer.get('mobile_number'):
+                phone = customer.get('mobile_number') or customer.get('phone')
+                summary += f" - {phone}"
+            if customer.get('email'):
+                summary += f" - {customer.get('email')}"
+            if customer.get('address'):
+                # Show just city/area from address
+                addr_parts = customer.get('address', '').split(',')
+                if len(addr_parts) >= 2:
+                    summary += f" - {addr_parts[-2].strip()}"
+            customer_summary.append(summary)
+        
+        from .toolbox import get_appropriate_llm
+        llm = await get_appropriate_llm(question)
+        
+        format_prompt = f"""You are a CRM assistant. A user asked: "{question}"
+
+Here are our customer records:
+{chr(10).join(customer_summary)}
+
+Total customers: {len(customers)}
+
+Please provide a helpful response that:
+1. Directly answers their question about customers
+2. Summarizes key customer information
+3. Maintains customer privacy (don't include sensitive details)
+4. Uses a professional tone
+5. Suggests next steps if appropriate"""
+
+        response = await llm.ainvoke([{"role": "user", "content": format_prompt}])
+        return response.content
+        
+    except Exception as e:
+        logger.error(f"[CRM_DIRECT] Error querying customers: {e}")
+        return "❌ Error retrieving customer information."
+
+async def _query_employees_direct(supabase, question: str) -> str:
+    """Query employee data directly from Supabase."""
+    try:
+        logger.info("[CRM_DIRECT] Querying employees table")
+        
+        result = supabase.table('employees').select('*').limit(20).execute()
+        
+        if not result.data:
+            return "No employee records found."
+        
+        # Format employee data for LLM processing
+        employees = result.data
+        employee_summary = []
+        for employee in employees:
+            summary = f"- {employee.get('name', 'N/A')} - {employee.get('position', 'N/A')}"
+            if employee.get('branch_id'):
+                # We could join with branches table, but for now show the ID
+                summary += f" (Branch: {employee.get('branch_id', 'N/A')[:8]}...)"
+            if employee.get('email'):
+                summary += f" - {employee.get('email')}"
+            if employee.get('phone'):
+                summary += f" - {employee.get('phone')}"
+            if employee.get('is_active') is False:
+                summary += " [INACTIVE]"
+            employee_summary.append(summary)
+        
+        from .toolbox import get_appropriate_llm
+        llm = await get_appropriate_llm(question)
+        
+        format_prompt = f"""You are an HR assistant. A user asked: "{question}"
+
+Here are our employee records:
+{chr(10).join(employee_summary)}
+
+Total employees: {len(employees)}
+
+Please provide a helpful response that:
+1. Directly answers their question about employees
+2. Summarizes key employee information
+3. Uses a professional tone
+4. Respects employee privacy
+5. Suggests next steps if appropriate"""
+
+        response = await llm.ainvoke([{"role": "user", "content": format_prompt}])
+        return response.content
+        
+    except Exception as e:
+        logger.error(f"[CRM_DIRECT] Error querying employees: {e}")
+        return "❌ Error retrieving employee information."
 
 async def _generate_sql_query_simple(question: str, db, user_type: str = "employee") -> str:
     """Generate SQL query from natural language question."""

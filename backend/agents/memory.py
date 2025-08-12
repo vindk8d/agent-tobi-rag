@@ -599,9 +599,10 @@ class ContextWindowManager:
                         i -= 1
                 else:
                     # tool_calls message without following tool responses
-                    # This might be the last message in conversation, so include it
-                    if len(result) + 1 <= max_messages:
-                        result.insert(0, current_msg)
+                    # CRITICAL FIX: Never include tool_calls messages without their responses
+                    # as this violates OpenAI API requirements and causes 400 errors
+                    # Skip this message to prevent orphaned tool_calls
+                    logger.warning(f"[CONTEXT_TRIM] Skipping orphaned tool_calls message to prevent API error")
                     i -= 1
             
             else:
@@ -611,6 +612,47 @@ class ContextWindowManager:
                 i -= 1
         
         return result
+
+    def validate_message_sequence(self, messages: List[BaseMessage]) -> bool:
+        """
+        Validate that the message sequence follows OpenAI API requirements.
+        
+        Specifically checks that:
+        1. Every assistant message with tool_calls is followed by tool messages
+        2. Tool messages have corresponding tool_call_ids
+        
+        Args:
+            messages: List of messages to validate
+            
+        Returns:
+            True if sequence is valid, False otherwise
+        """
+        for i, msg in enumerate(messages):
+            if (hasattr(msg, 'tool_calls') and 
+                msg.tool_calls and 
+                hasattr(msg, 'type') and 
+                msg.type == 'ai'):
+                
+                # This is an assistant message with tool_calls
+                # Check if the next messages are tool responses
+                tool_call_ids = {call.id for call in msg.tool_calls}
+                found_tool_responses = set()
+                
+                j = i + 1
+                while (j < len(messages) and 
+                       hasattr(messages[j], 'type') and 
+                       messages[j].type == 'tool'):
+                    
+                    if hasattr(messages[j], 'tool_call_id'):
+                        found_tool_responses.add(messages[j].tool_call_id)
+                    j += 1
+                
+                # Check if all tool_calls have responses
+                if tool_call_ids != found_tool_responses:
+                    logger.error(f"[VALIDATION] Missing tool responses for tool_call_ids: {tool_call_ids - found_tool_responses}")
+                    return False
+                    
+        return True
 
 
 # =============================================================================

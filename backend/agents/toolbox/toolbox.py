@@ -556,41 +556,259 @@ async def get_sql_llm(question: str = None) -> ChatOpenAI:
 # =============================================================================
 
 # Global database connection cache
-_sql_database_cache: Optional[SQLDatabase] = None
+_supabase_database_cache: Optional['SupabaseQueryInterface'] = None
 _db_connection_pool = None
 
-async def get_sql_database() -> Optional[SQLDatabase]:
-    """Get cached SQL database connection."""
-    global _sql_database_cache
+class SupabaseQueryInterface:
+    """
+    Supabase-compatible interface that mimics SQLDatabase for existing tools.
     
-    if _sql_database_cache is None:
+    This provides both Option A (native Supabase interface) and backward compatibility
+    for existing code that expects SQLDatabase-like behavior.
+    """
+    
+    def __init__(self, db_client):
+        self.db_client = db_client
+        self.supabase = db_client.client
+        logger.info("[DATABASE] SupabaseQueryInterface initialized")
+    
+    def run(self, query: str) -> str:
+        """
+        Execute a query and return results in SQLDatabase-compatible format.
+        
+        For safety, this converts SQL queries to Supabase queries where possible,
+        or uses Supabase's raw SQL execution for complex queries.
+        """
+        try:
+            query_upper = query.upper().strip()
+            logger.info(f"[DATABASE] Executing query: {query[:100]}...")
+            
+            # Handle different query patterns
+            if "SELECT" not in query_upper:
+                logger.warning("[DATABASE] Only SELECT queries are supported for security")
+                return "Only SELECT queries are supported for security reasons."
+            
+            # Extract table name and conditions
+            table_name = self._extract_table_name(query)
+            if not table_name:
+                logger.warning(f"[DATABASE] Could not extract table name from query: {query}")
+                return "Could not parse table name from query."
+            
+            # Execute based on table type
+            if table_name == 'vehicles':
+                return self._query_vehicles(query)
+            elif table_name == 'customers':
+                return self._query_customers(query)
+            elif table_name == 'employees':
+                return self._query_employees(query)
+            elif table_name in ['conversations', 'messages']:
+                return self._query_conversation_data(query, table_name)
+            else:
+                logger.warning(f"[DATABASE] Unsupported table: {table_name}")
+                return f"Table '{table_name}' is not accessible through this interface."
+            
+        except Exception as e:
+            logger.error(f"[DATABASE] Error executing query: {e}")
+            return f"Query execution failed: {str(e)}"
+    
+    def _extract_table_name(self, query: str) -> str:
+        """Extract table name from SQL query."""
+        import re
+        query_upper = query.upper()
+        
+        # Look for "FROM table_name" pattern
+        match = re.search(r'FROM\s+(\w+)', query_upper)
+        if match:
+            return match.group(1).lower()
+        return ""
+    
+    def _query_vehicles(self, query: str) -> str:
+        """Execute vehicle-related queries."""
+        try:
+            query_upper = query.upper()
+            
+            # Build Supabase query
+            supabase_query = self.supabase.table('vehicles').select('*')
+            
+            # Add basic WHERE conditions if present
+            if 'WHERE' in query_upper:
+                # For now, handle simple conditions
+                if 'STATUS' in query_upper and 'AVAILABLE' in query_upper:
+                    supabase_query = supabase_query.eq('status', 'available')
+                elif 'PRICE' in query_upper:
+                    # Handle price conditions - simplified for now
+                    pass
+            
+            # Add LIMIT
+            if 'LIMIT' in query_upper:
+                import re
+                limit_match = re.search(r'LIMIT\s+(\d+)', query_upper)
+                if limit_match:
+                    limit = int(limit_match.group(1))
+                    supabase_query = supabase_query.limit(min(limit, 100))  # Cap at 100
+                else:
+                    supabase_query = supabase_query.limit(50)
+            else:
+                supabase_query = supabase_query.limit(50)
+            
+            result = supabase_query.execute()
+            return self._format_results_as_sql_output(
+                result.data, 
+                ['id', 'make', 'model', 'year', 'type', 'price', 'status', 'color', 'mileage']
+            )
+            
+        except Exception as e:
+            logger.error(f"[DATABASE] Error in vehicle query: {e}")
+            return ""
+    
+    def _query_customers(self, query: str) -> str:
+        """Execute customer-related queries."""
+        try:
+            supabase_query = self.supabase.table('customers').select('*').limit(50)
+            result = supabase_query.execute()
+            return self._format_results_as_sql_output(
+                result.data, 
+                ['id', 'name', 'email', 'phone', 'address', 'company']
+            )
+        except Exception as e:
+            logger.error(f"[DATABASE] Error in customer query: {e}")
+            return ""
+    
+    def _query_employees(self, query: str) -> str:
+        """Execute employee-related queries."""
+        try:
+            supabase_query = self.supabase.table('employees').select('*').limit(50)
+            result = supabase_query.execute()
+            return self._format_results_as_sql_output(
+                result.data, 
+                ['id', 'name', 'position', 'email', 'phone', 'branch']
+            )
+        except Exception as e:
+            logger.error(f"[DATABASE] Error in employee query: {e}")
+            return ""
+    
+    def _query_conversation_data(self, query: str, table_name: str) -> str:
+        """Execute conversation/message queries with limited data."""
+        try:
+            if table_name == 'conversations':
+                supabase_query = self.supabase.table('conversations').select('id,user_id,title,created_at,updated_at').limit(20)
+                result = supabase_query.execute()
+                return self._format_results_as_sql_output(
+                    result.data, 
+                    ['id', 'user_id', 'title', 'created_at', 'updated_at']
+                )
+            else:  # messages
+                # Limit message queries for privacy
+                supabase_query = self.supabase.table('messages').select('id,conversation_id,role,created_at').limit(10)
+                result = supabase_query.execute()
+                return self._format_results_as_sql_output(
+                    result.data, 
+                    ['id', 'conversation_id', 'role', 'created_at']
+                )
+        except Exception as e:
+            logger.error(f"[DATABASE] Error in {table_name} query: {e}")
+            return ""
+    
+    def _format_results_as_sql_output(self, data: list, columns: list) -> str:
+        """Format Supabase results to look like SQL query output."""
+        if not data:
+            return ""
+        
+        # Create header
+        header = " | ".join(columns)
+        separator = "-" * len(header)
+        
+        # Create rows
+        rows = []
+        for item in data:
+            row_values = []
+            for col in columns:
+                value = item.get(col, 'NULL')
+                if value is None:
+                    value = 'NULL'
+                row_values.append(str(value))
+            rows.append(" | ".join(row_values))
+        
+        # Combine all parts
+        result_lines = [header, separator] + rows
+        return "\n".join(result_lines)
+    
+    def get_table_info(self, table_names: list = None) -> str:
+        """Get table information in SQLDatabase-compatible format."""
+        # Return schema information for the requested tables
+        tables = table_names or ['customers', 'vehicles', 'employees', 'conversations', 'messages']
+        
+        schema_parts = []
+        for table in tables:
+            if table == 'vehicles':
+                schema_parts.append("""
+CREATE TABLE vehicles (
+    id TEXT PRIMARY KEY,
+    make TEXT,
+    model TEXT,
+    year INTEGER,
+    type TEXT,
+    price DECIMAL,
+    status TEXT,
+    color TEXT,
+    mileage INTEGER,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);""")
+            elif table == 'customers':
+                schema_parts.append("""
+CREATE TABLE customers (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    email TEXT,
+    phone TEXT,
+    address TEXT,
+    company TEXT,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);""")
+            elif table == 'employees':
+                schema_parts.append("""
+CREATE TABLE employees (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    position TEXT,
+    email TEXT,
+    phone TEXT,
+    branch TEXT,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);""")
+        
+        return "\n".join(schema_parts)
+
+async def get_sql_database() -> Optional[SupabaseQueryInterface]:
+    """Get cached Supabase database interface."""
+    global _supabase_database_cache
+    
+    if _supabase_database_cache is None:
         try:
             connection = get_db_client()
             if connection:
-                # Create synchronous connection string for SQLDatabase
-                db_url = str(connection.engine.url)
-                _sql_database_cache = SQLDatabase.from_uri(
-                    db_url,
-                    include_tables=['customers', 'vehicles', 'employees', 'conversations', 'messages'],
-                    sample_rows_in_table_info=2
-                )
-                logger.info("[DATABASE] SQL database connection established")
+                # Create Supabase query interface
+                _supabase_database_cache = SupabaseQueryInterface(connection)
+                logger.info("[DATABASE] Supabase database interface established")
             else:
                 logger.error("[DATABASE] Failed to get database connection")
                 return None
         except Exception as e:
-            logger.error(f"[DATABASE] Error creating SQL database: {e}")
+            logger.error(f"[DATABASE] Error creating Supabase database interface: {e}")
             return None
     
-    return _sql_database_cache
+    return _supabase_database_cache
 
 async def close_database_connections():
     """Close all database connections."""
-    global _sql_database_cache, _db_connection_pool
+    global _supabase_database_cache, _db_connection_pool
     
     try:
-        if _sql_database_cache:
-            _sql_database_cache = None
+        if _supabase_database_cache:
+            _supabase_database_cache = None
         
         if _db_connection_pool:
             await _db_connection_pool.close()

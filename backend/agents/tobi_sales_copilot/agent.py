@@ -1752,6 +1752,11 @@ Failed to deliver your message to {customer_name}.
                         max_context_messages
                     )
                     logger.info(f"[EMPLOYEE_AGENT_NODE] 🔄 Applied moving context window: {len(processing_messages)} → {len(trimmed_messages)} messages")
+                    
+                    # Validate message sequence to prevent API errors
+                    if not context_manager.validate_message_sequence(trimmed_messages):
+                        logger.error("[EMPLOYEE_AGENT_NODE] ❌ Invalid message sequence after trimming - this will cause API errors")
+                    
                     processing_messages = trimmed_messages
 
                 # Call the model
@@ -2054,6 +2059,11 @@ Failed to deliver your message to {customer_name}.
                         max_context_messages
                     )
                     logger.info(f"[CUSTOMER_AGENT_NODE] 🔄 Applied moving context window: {len(processing_messages)} → {len(trimmed_messages)} messages")
+                    
+                    # Validate message sequence to prevent API errors
+                    if not context_manager.validate_message_sequence(trimmed_messages):
+                        logger.error("[CUSTOMER_AGENT_NODE] ❌ Invalid message sequence after trimming - this will cause API errors")
+                    
                     processing_messages = trimmed_messages
 
                 # Call the model with customer tools
