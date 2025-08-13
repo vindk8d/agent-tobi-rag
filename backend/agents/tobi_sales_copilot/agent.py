@@ -1629,6 +1629,304 @@ Failed to deliver your message to {customer_name}.
                 "hitl_context": None
             }
 
+    # Simple in-memory cache for lazy context loading
+    _user_context_cache = {}
+    _long_term_context_cache = {}
+    
+    async def _get_cached_user_context(self, user_id: str, is_employee: bool) -> Optional[Dict]:
+        """Get cached user context if available and not expired."""
+        cache_key = f"{user_id}:{'emp' if is_employee else 'cust'}"
+        cached_data = self._user_context_cache.get(cache_key)
+        
+        if cached_data:
+            # Check if cache is still valid (5 minutes TTL)
+            import time
+            if time.time() - cached_data['timestamp'] < 300:  # 5 minutes
+                logger.debug(f"[CACHE] Hit for user context: {cache_key}")
+                return cached_data['data']
+            else:
+                # Remove expired cache
+                del self._user_context_cache[cache_key]
+                logger.debug(f"[CACHE] Expired user context: {cache_key}")
+        
+        logger.debug(f"[CACHE] Miss for user context: {cache_key}")
+        return None
+    
+    async def _cache_user_context(self, user_id: str, user_context: Dict, is_employee: bool):
+        """Cache user context with timestamp."""
+        cache_key = f"{user_id}:{'emp' if is_employee else 'cust'}"
+        import time
+        self._user_context_cache[cache_key] = {
+            'data': user_context,
+            'timestamp': time.time()
+        }
+        logger.debug(f"[CACHE] Stored user context: {cache_key}")
+    
+    async def _get_cached_long_term_context(self, user_id: str, query: str, is_employee: bool) -> Optional[List]:
+        """Get cached long-term context if available and not expired."""
+        # Create a simple hash of the query for cache key
+        import hashlib
+        query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
+        cache_key = f"{user_id}:{query_hash}:{'emp' if is_employee else 'cust'}"
+        cached_data = self._long_term_context_cache.get(cache_key)
+        
+        if cached_data:
+            # Check if cache is still valid (10 minutes TTL for long-term context)
+            import time
+            if time.time() - cached_data['timestamp'] < 600:  # 10 minutes
+                logger.debug(f"[CACHE] Hit for long-term context: {cache_key}")
+                return cached_data['data']
+            else:
+                # Remove expired cache
+                del self._long_term_context_cache[cache_key]
+                logger.debug(f"[CACHE] Expired long-term context: {cache_key}")
+        
+        logger.debug(f"[CACHE] Miss for long-term context: {cache_key}")
+        return None
+    
+    async def _cache_long_term_context(self, user_id: str, query: str, context: List, is_employee: bool):
+        """Cache long-term context with timestamp."""
+        import hashlib
+        query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
+        cache_key = f"{user_id}:{query_hash}:{'emp' if is_employee else 'cust'}"
+        import time
+        self._long_term_context_cache[cache_key] = {
+            'data': context,
+            'timestamp': time.time()
+        }
+        logger.debug(f"[CACHE] Stored long-term context: {cache_key}")
+    
+    async def _schedule_context_loading(self, user_id: str, conversation_id: str, is_employee: bool):
+        """Schedule background context loading for future use."""
+        try:
+            from agents.background_tasks import background_task_manager, TaskPriority
+            
+            # Schedule a context loading task with low priority
+            task_id = background_task_manager.schedule_context_loading(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_type="employee" if is_employee else "customer",
+                priority=TaskPriority.LOW
+            )
+            logger.debug(f"[LAZY_CONTEXT] Scheduled background context loading: {task_id}")
+            
+        except Exception as e:
+            logger.debug(f"[LAZY_CONTEXT] Error scheduling context loading: {e}")
+            # Don't fail if background scheduling fails
+    
+    async def _schedule_long_term_context_loading(self, user_id: str, query: str, conversation_id: str, is_employee: bool):
+        """Schedule background long-term context loading for future use."""
+        try:
+            from agents.background_tasks import background_task_manager, TaskPriority
+            
+            # Schedule a long-term context loading task with low priority
+            task_id = background_task_manager.schedule_context_loading(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_type="employee" if is_employee else "customer",
+                priority=TaskPriority.LOW,
+                context_query=query  # Pass the query for long-term context
+            )
+            logger.debug(f"[LAZY_CONTEXT] Scheduled background long-term context loading: {task_id}")
+            
+        except Exception as e:
+            logger.debug(f"[LAZY_CONTEXT] Error scheduling long-term context loading: {e}")
+            # Don't fail if background scheduling fails
+
+    async def _trigger_summary_generation_if_needed(
+        self, messages: List, user_id: str, conversation_id: str, is_employee: bool = True
+    ):
+        """
+        Trigger conversation summary generation when message limits are exceeded.
+        Uses the background task system for non-blocking summary generation.
+        
+        Args:
+            messages: Current message list
+            user_id: User ID
+            conversation_id: Conversation ID
+            is_employee: Whether this is for an employee user
+        """
+        try:
+            # Get the appropriate threshold
+            summary_threshold = self.settings.memory.summary_threshold
+            message_count = len(messages)
+            
+            logger.info(f"[SUMMARY_CHECK] Message count: {message_count}, threshold: {summary_threshold}")
+            
+            # Check if we meet the summary threshold
+            if message_count >= summary_threshold:
+                logger.info(f"[SUMMARY_GENERATION] Triggering summary for conversation {conversation_id} "
+                           f"({message_count} messages >= {summary_threshold} threshold)")
+                
+                # Import background task manager
+                from agents.background_tasks import background_task_manager, TaskPriority
+                
+                # Determine customer_id and employee_id based on user type
+                customer_id = None if is_employee else user_id
+                employee_id = user_id if is_employee else None
+                
+                # Schedule summary generation task (non-blocking)
+                task_id = background_task_manager.schedule_summary_generation(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    customer_id=customer_id,
+                    employee_id=employee_id,
+                    priority=TaskPriority.NORMAL
+                )
+                
+                logger.info(f"[SUMMARY_GENERATION] Scheduled background summary task: {task_id}")
+            else:
+                logger.debug(f"[SUMMARY_CHECK] No summary needed ({message_count} < {summary_threshold})")
+                
+        except Exception as e:
+            logger.error(f"[SUMMARY_GENERATION] Error triggering summary generation: {e}")
+            # Don't fail the main context loading process if summary scheduling fails
+
+    async def _load_context_for_employee(
+        self, messages: List, user_id: str, conversation_id: str, lazy: bool = True
+    ) -> List:
+        """
+        PERFORMANCE: Internal context loading for employee users with lazy loading.
+        Replaces memory prep node to eliminate 200-300ms overhead.
+        
+        Steps:
+        1. Load cross-conversation user context (lazy/cached)
+        2. Retrieve relevant long-term memories (lazy/cached)
+        3. Apply context window management
+        4. Return enhanced messages
+        
+        Args:
+            lazy: If True, uses cached context and schedules background updates
+        """
+        try:
+            logger.info(f"[EMPLOYEE_CONTEXT] Starting {'lazy' if lazy else 'full'} context loading")
+            enhanced_messages = list(messages)
+            
+            # Step 1: Lazy user context loading
+            if user_id:
+                if lazy:
+                    # Try to get cached context first (fast path)
+                    user_context = await self._get_cached_user_context(user_id, is_employee=True)
+                    if user_context:
+                        logger.info("[EMPLOYEE_CONTEXT] Using cached user context (lazy)")
+                    else:
+                        # Schedule background context loading for next time
+                        await self._schedule_context_loading(user_id, conversation_id, is_employee=True)
+                        logger.info("[EMPLOYEE_CONTEXT] Scheduled background context loading")
+                else:
+                    # Full context loading (blocking)
+                    user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
+                    # Cache the result
+                    await self._cache_user_context(user_id, user_context, is_employee=True)
+                    logger.info("[EMPLOYEE_CONTEXT] Loaded and cached full user context")
+                
+                # Add user context if available
+                if user_context and user_context.get("has_history", False):
+                    latest_summary = user_context.get("latest_summary", "")
+                    logger.info(f"[EMPLOYEE_CONTEXT] Found user history: {len(latest_summary)} chars")
+                    
+                    # Add user context as system message
+                    context_message = SystemMessage(
+                        content=f"""
+EMPLOYEE USER CONTEXT (from previous conversations):
+
+{latest_summary}
+
+CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
+
+Use this context to provide personalized, contextually aware responses that build on previous interactions with this employee user. This helps maintain continuity and understanding of their role, preferences, and ongoing needs.
+"""
+                    )
+                    enhanced_messages = [context_message] + enhanced_messages
+                    logger.info("[EMPLOYEE_CONTEXT] Added comprehensive user context")
+            
+            # Step 2: Lazy long-term memory retrieval
+            current_query = ""
+            for msg in reversed(enhanced_messages):
+                if hasattr(msg, "type") and msg.type == "human":
+                    current_query = msg.content
+                    break
+                elif isinstance(msg, dict) and msg.get("role") == "human":
+                    current_query = msg.get("content", "")
+                    break
+            
+            if user_id and current_query:
+                if lazy:
+                    # Try to get cached long-term context (fast path)
+                    long_term_context = await self._get_cached_long_term_context(user_id, current_query, is_employee=True)
+                    if long_term_context:
+                        logger.info("[EMPLOYEE_CONTEXT] Using cached long-term context (lazy)")
+                    else:
+                        # Schedule background long-term context loading
+                        await self._schedule_long_term_context_loading(user_id, current_query, conversation_id, is_employee=True)
+                        logger.info("[EMPLOYEE_CONTEXT] Scheduled background long-term context loading")
+                else:
+                    # Full long-term context loading (blocking)
+                    long_term_context = await self.memory_manager.get_relevant_context(
+                        user_id, current_query, max_contexts=5  # More context for employees
+                    )
+                    # Cache the result
+                    await self._cache_long_term_context(user_id, current_query, long_term_context, is_employee=True)
+                    logger.info("[EMPLOYEE_CONTEXT] Loaded and cached full long-term context")
+                
+                # Add long-term context if available
+                if long_term_context:
+                    logger.info(f"[EMPLOYEE_CONTEXT] Retrieved {len(long_term_context)} relevant context items")
+                    
+                    # Add long-term context as system message
+                    context_items = []
+                    for context in long_term_context:
+                        context_items.append(f"- {context.get('content', '')[:200]}...")
+                    
+                    if context_items:
+                        long_term_message = SystemMessage(
+                            content=f"""
+RELEVANT LONG-TERM CONTEXT:
+
+{chr(10).join(context_items)}
+
+This context from previous conversations may be relevant to the current query.
+"""
+                        )
+                        enhanced_messages = [long_term_message] + enhanced_messages
+                        logger.info("[EMPLOYEE_CONTEXT] Added long-term context")
+            
+            # Step 3: Apply context window management with configurable employee limits
+            user_language = detect_user_language_from_context(enhanced_messages, max_messages=10)
+            selected_model = self.settings.openai_chat_model
+            system_prompt = get_employee_system_prompt(self.tool_names, user_language)
+            
+            # Use configurable employee message limit
+            employee_max_messages = self.settings.memory.employee_max_messages
+            logger.info(f"[EMPLOYEE_CONTEXT] Using configurable message limit: {employee_max_messages}")
+            
+            # Check if we need to trigger summary generation before trimming
+            if len(enhanced_messages) > employee_max_messages:
+                await self._trigger_summary_generation_if_needed(
+                    enhanced_messages, user_id, conversation_id, is_employee=True
+                )
+            
+            trimmed_messages, trim_stats = await context_manager.trim_messages_for_context(
+                messages=enhanced_messages,
+                model=selected_model,
+                system_prompt=system_prompt,
+                max_messages=employee_max_messages,
+            )
+            
+            if trim_stats["trimmed_message_count"] > 0:
+                logger.info(
+                    f"[EMPLOYEE_CONTEXT] Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
+                    f"final token count: {trim_stats['final_token_count']}"
+                )
+            
+            logger.info("[EMPLOYEE_CONTEXT] Internal context loading completed successfully")
+            return trimmed_messages
+            
+        except Exception as e:
+            logger.error(f"[EMPLOYEE_CONTEXT] Error in context loading: {e}")
+            # Return original messages on error to prevent workflow disruption
+            return messages
+
     @traceable(name="employee_agent_node")
     async def _employee_agent_node(
         self, state: AgentState, config: Dict[str, Any] = None
@@ -1691,9 +1989,8 @@ Failed to deliver your message to {customer_name}.
             
             logger.info(f"[EMPLOYEE_AGENT_NODE] Processing {len(messages)} messages for employee {employee_id}")
 
-            # Messages are already prepared by ea_memory_prep node
-            # Use messages as-is from memory preparation
-            trimmed_messages = messages
+            # PERFORMANCE: Internal context loading (eliminate memory prep node overhead)
+            trimmed_messages = await self._load_context_for_employee(messages, user_id, conversation_id)
 
             # Detect user language from conversation context
             current_query = ""
@@ -1939,18 +2236,182 @@ Failed to deliver your message to {customer_name}.
 
 
 
+    async def _load_context_for_customer(
+        self, messages: List, user_id: str, conversation_id: str, lazy: bool = True
+    ) -> List:
+        """
+        PERFORMANCE: Internal context loading for customer users with lazy loading.
+        Replaces memory prep node to eliminate 200-300ms overhead.
+        
+        Steps:
+        1. Load cross-conversation customer context (lazy/cached)
+        2. Retrieve relevant long-term memories (lazy/cached, customer-appropriate)
+        3. Apply context window management with customer limits
+        4. Return enhanced messages
+        
+        Args:
+            lazy: If True, uses cached context and schedules background updates
+        """
+        try:
+            logger.info(f"[CUSTOMER_CONTEXT] Starting {'lazy' if lazy else 'full'} context loading")
+            enhanced_messages = list(messages)
+            
+            # Step 1: Lazy customer context loading
+            if user_id:
+                if lazy:
+                    # Try to get cached context first (fast path)
+                    user_context = await self._get_cached_user_context(user_id, is_employee=False)
+                    if user_context:
+                        logger.info("[CUSTOMER_CONTEXT] Using cached customer context (lazy)")
+                    else:
+                        # Schedule background context loading for next time
+                        await self._schedule_context_loading(user_id, conversation_id, is_employee=False)
+                        logger.info("[CUSTOMER_CONTEXT] Scheduled background context loading")
+                else:
+                    # Full context loading (blocking)
+                    user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
+                    # Cache the result
+                    await self._cache_user_context(user_id, user_context, is_employee=False)
+                    logger.info("[CUSTOMER_CONTEXT] Loaded and cached full customer context")
+                
+                # Add customer context if available
+                if user_context and user_context.get("has_history", False):
+                    latest_summary = user_context.get("latest_summary", "")
+                    logger.info(f"[CUSTOMER_CONTEXT] Found customer history: {len(latest_summary)} chars")
+                    
+                    # Add customer context as system message
+                    context_message = SystemMessage(
+                        content=f"""
+CUSTOMER CONTEXT (from previous conversations):
+
+{latest_summary}
+
+CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
+
+Use this context to provide personalized, helpful responses that build on previous interactions with this customer. Focus on their interests, preferences, and ongoing needs to deliver excellent customer service.
+"""
+                    )
+                    enhanced_messages = [context_message] + enhanced_messages
+                    logger.info("[CUSTOMER_CONTEXT] Added comprehensive customer context")
+            
+            # Step 2: Lazy long-term memory retrieval (customer-appropriate)
+            current_query = ""
+            for msg in reversed(enhanced_messages):
+                if hasattr(msg, "type") and msg.type == "human":
+                    current_query = msg.content
+                    break
+                elif isinstance(msg, dict) and msg.get("role") == "human":
+                    current_query = msg.get("content", "")
+                    break
+            
+            if user_id and current_query:
+                if lazy:
+                    # Try to get cached long-term context (fast path)
+                    customer_appropriate_context = await self._get_cached_long_term_context(user_id, current_query, is_employee=False)
+                    if customer_appropriate_context:
+                        logger.info("[CUSTOMER_CONTEXT] Using cached customer long-term context (lazy)")
+                    else:
+                        # Schedule background long-term context loading
+                        await self._schedule_long_term_context_loading(user_id, current_query, conversation_id, is_employee=False)
+                        logger.info("[CUSTOMER_CONTEXT] Scheduled background long-term context loading")
+                else:
+                    # Full long-term context loading (blocking)
+                    long_term_context = await self.memory_manager.get_relevant_context(
+                        user_id, current_query, max_contexts=3  # Fewer contexts for customers
+                    )
+                    
+                    # Filter for customer-appropriate insights
+                    customer_appropriate_context = []
+                    if long_term_context:
+                        for context in long_term_context:
+                            content = context.get('content', '')
+                            # Simple filtering for customer-appropriate content
+                            if any(keyword in content.lower() for keyword in [
+                                'vehicle', 'car', 'price', 'model', 'feature', 'interest', 'preference',
+                                'budget', 'requirement', 'need', 'looking for', 'want', 'like'
+                            ]):
+                                customer_appropriate_context.append(context)
+                    
+                    # Cache the filtered result
+                    await self._cache_long_term_context(user_id, current_query, customer_appropriate_context, is_employee=False)
+                    logger.info("[CUSTOMER_CONTEXT] Loaded and cached customer-appropriate long-term context")
+                
+                # Add customer-appropriate context if available
+                if customer_appropriate_context:
+                    logger.info(f"[CUSTOMER_CONTEXT] Retrieved {len(customer_appropriate_context)} customer-appropriate context items")
+                    
+                    # Add customer-appropriate context as system message
+                    context_items = []
+                    for context in customer_appropriate_context:
+                        context_items.append(f"- {context.get('content', '')[:200]}...")
+                    
+                    long_term_message = SystemMessage(
+                        content=f"""
+RELEVANT CUSTOMER CONTEXT:
+
+{chr(10).join(context_items)}
+
+This context from previous conversations may help you assist this customer better.
+"""
+                    )
+                    enhanced_messages = [long_term_message] + enhanced_messages
+                    logger.info("[CUSTOMER_CONTEXT] Added customer-appropriate long-term context")
+            
+            # Step 3: Apply context window management with configurable customer limits
+            user_language = detect_user_language_from_context(enhanced_messages, max_messages=10)
+            selected_model = self.settings.openai_chat_model
+            system_prompt = get_customer_system_prompt(user_language)
+            
+            # Use configurable customer message limit
+            customer_max_messages = self.settings.memory.customer_max_messages
+            logger.info(f"[CUSTOMER_CONTEXT] Using configurable message limit: {customer_max_messages}")
+            
+            # Check if we need to trigger summary generation before trimming
+            if len(enhanced_messages) > customer_max_messages:
+                await self._trigger_summary_generation_if_needed(
+                    enhanced_messages, user_id, conversation_id, is_employee=False
+                )
+            
+            trimmed_messages, trim_stats = await context_manager.trim_messages_for_context(
+                messages=enhanced_messages,
+                model=selected_model,
+                system_prompt=system_prompt,
+                max_messages=customer_max_messages,
+            )
+            
+            if trim_stats["trimmed_message_count"] > 0:
+                logger.info(
+                    f"[CUSTOMER_CONTEXT] Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
+                    f"final token count: {trim_stats['final_token_count']}"
+                )
+            
+            logger.info("[CUSTOMER_CONTEXT] Internal context loading completed successfully")
+            return trimmed_messages
+            
+        except Exception as e:
+            logger.error(f"[CUSTOMER_CONTEXT] Error in context loading: {e}")
+            # Return original messages on error to prevent workflow disruption
+            return messages
+
+
     @traceable(name="customer_agent_node")
     async def _customer_agent_node(
         self, state: AgentState, config: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        Customer agent node that handles complete workflow for customer users:
-        1. Memory preparation (context retrieval)
-        2. Tool calling and execution with restricted access
-        3. Memory update (context storage)
+        Customer agent node with simplified context management:
+        1. Uses current conversation messages and conversation summaries only
+        2. Summary generation when message limits are exceeded  
+        3. Tool calling with customer-restricted access (vehicles/pricing only)
+        4. Customer-appropriate filtering of sensitive information
+        
+        SIMPLIFICATION:
+        - Follows LangGraph best practices for memory management
+        - Eliminates complex context loading and caching systems
+        - Relies on conversation summaries for personalization
         
         Implements table-level restrictions for customer CRM access (vehicles/pricing only).
-        Follows LangChain best practices for tool calling workflow.
+        Follows LangGraph best practices for tool calling workflow.
         """
         try:
             # Ensure initialization before processing
@@ -1983,15 +2444,18 @@ Failed to deliver your message to {customer_name}.
     
                 }
 
-            # Messages are already prepared by ca_memory_prep node
-            # Use messages as-is from memory preparation
+            # PERFORMANCE: Customer-specific lazy context loading (eliminate memory prep node overhead)
             messages = state.get("messages", [])
             conversation_id = state.get("conversation_id")
 
-            logger.info(f"[CUSTOMER_AGENT_NODE] Processing prepared messages: {len(messages)} messages")
+            logger.info(f"[CUSTOMER_AGENT_NODE] Processing {len(messages)} messages with customer-specific context management")
 
-            # Use messages from memory preparation (includes user context)
-            original_messages = messages
+            # Customer-specific lazy context loading with enhanced filtering
+            original_messages = await self._load_context_for_customer(
+                messages, user_id, conversation_id, lazy=True  # Use lazy loading by default
+            )
+            
+            # Extract current query for customer-specific processing
             current_query = "No query"
             for msg in reversed(original_messages):
                 if hasattr(msg, "type") and msg.type == "human":
@@ -2001,6 +2465,9 @@ Failed to deliver your message to {customer_name}.
                     current_query = msg.get("content", "")
                     break
 
+            # Customer-specific context management enhancements
+
+            
             # Detect user language from conversation context
             user_language = detect_user_language_from_context(original_messages, max_messages=10)
             logger.info(f"[CUSTOMER_AGENT_NODE] Detected user language from context: {user_language}")

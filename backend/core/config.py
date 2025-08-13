@@ -219,6 +219,11 @@ class Settings(BaseSettings):
     memory_auto_summarize: bool = Field(default=True, env="MEMORY_AUTO_SUMMARIZE")
     memory_context_window_size: int = Field(default=20, env="MEMORY_CONTEXT_WINDOW_SIZE", description="Number of recent messages to keep in moving context window")
     # Removed master_summary_conversation_limit - system simplified to use conversation summaries only
+    
+    # Configurable message limits for different user types
+    employee_max_messages: int = Field(default=12, env="EMPLOYEE_MAX_MESSAGES", description="Message limit before summarization for employee users")
+    customer_max_messages: int = Field(default=15, env="CUSTOMER_MAX_MESSAGES", description="Message limit before summarization for customer users")
+    summary_threshold: int = Field(default=10, env="SUMMARY_THRESHOLD", description="Minimum messages required to generate conversation summary")
 
     # Telegram Configuration
     telegram_bot_token: Optional[str] = Field(default=None, env="TELEGRAM_BOT_TOKEN")
@@ -286,7 +291,10 @@ class Settings(BaseSettings):
             max_messages=self.memory_max_messages,
             summary_interval=self.memory_summary_interval,
             auto_summarize=self.memory_auto_summarize,
-            context_window_size=self.memory_context_window_size
+            context_window_size=self.memory_context_window_size,
+            employee_max_messages=self.employee_max_messages,
+            customer_max_messages=self.customer_max_messages,
+            summary_threshold=self.summary_threshold
         )
 
     @property

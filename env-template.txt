@@ -96,6 +96,18 @@ REDIS_PASSWORD=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_WEBHOOK_URL=
 
+# Optional: Configurable Message Limits for Different User Types
+# If not set, the system will use the defaults shown in parentheses
+
+# Message limit before summarization for employee users (default: 12)
+EMPLOYEE_MAX_MESSAGES=12
+
+# Message limit before summarization for customer users (default: 15)  
+CUSTOMER_MAX_MESSAGES=15
+
+# Minimum messages required to generate conversation summary (default: 10)
+SUMMARY_THRESHOLD=10
+
 # ======================================================================
 # SETUP INSTRUCTIONS
 # ======================================================================
