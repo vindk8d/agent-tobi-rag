@@ -2,91 +2,147 @@
 
 Based on the PRD for streamlining the memory management system to align with LangGraph best practices.
 
+**Database Schema Notes:**
+- Uses existing Supabase `messages` table (id, conversation_id, role, content, created_at, metadata, user_id)
+- Uses existing Supabase `conversation_summaries` table (id, conversation_id, summary_text, user_id, etc.)
+- LangChain role mapping: human→user, ai→assistant (compatible with existing role constraints)
+
+**Configuration Management:**
+- `EMPLOYEE_MAX_MESSAGES` (default: 12) - Message limit before summarization for employee users
+- `CUSTOMER_MAX_MESSAGES` (default: 15) - Message limit before summarization for customer users  
+- `SUMMARY_THRESHOLD` (default: 10) - Minimum messages required to generate conversation summary
+- All thresholds configurable via environment variables or config file
+
 ## Relevant Files
 
 - `backend/agents/background_tasks.py` - Core background task management system for non-blocking operations
 - `backend/agents/background_tasks.test.py` - Unit tests for background task manager
-- `backend/agents/background_message_store.py` - Handles message persistence to database in background
+- `backend/agents/background_message_store.py` - Handles message persistence to existing Supabase messages table
 - `backend/agents/background_message_store.test.py` - Unit tests for background message storage
-- `backend/agents/background_summary_manager.py` - Manages conversation summarization in background
+- `backend/agents/background_summary_manager.py` - Manages conversation summarization using existing conversation_summaries table
 - `backend/agents/background_summary_manager.test.py` - Unit tests for background summary manager
 - `backend/agents/tobi_sales_copilot/agent.py` - Updated agent nodes with simplified memory management
 - `backend/agents/tobi_sales_copilot/state.py` - Simplified AgentState following LangGraph best practices
+- `backend/core/config.py` - Updated configuration with configurable memory thresholds
 - `backend/agents/memory.py` - Updated memory manager with background processing integration
 - `backend/agents/memory.test.py` - Unit tests for updated memory management
 - `tests/test_streamlined_memory_integration.py` - End-to-end integration tests for the streamlined system
 - `tests/test_performance_benchmarks.py` - Performance testing to verify improvements
 - `tests/test_data_persistence.py` - Tests to ensure data persistence requirements are met
+- `tests/mocks/mock_llm_responses.py` - Mock LLM responses for token-efficient testing
+- `tests/test_concurrent_background_tasks.py` - 1000+ concurrent task testing with mocks
 
 ### Notes
 
+- **Simplicity First**: Eliminate complex multi-layer architecture in favor of direct LangGraph patterns
+- **Performance Focus**: Target 60-80% response time improvement by removing blocking operations
+- **State Efficiency**: Reduce AgentState size by 70% following LangGraph best practices
+- **Token Conservation**: Minimize embedding generation and LLM calls through smart caching
 - Follow LangGraph best practices for state management and persistence
 - Use AsyncPostgresSaver as the primary persistence mechanism
 - Implement comprehensive error handling and retry logic for background tasks
 - Maintain 100% backward compatibility with existing APIs
 - Use `pytest backend/agents/` to run unit tests for agent components
 - Use `pytest tests/test_streamlined_memory_integration.py` to run integration tests
+- Use `TEST_MODE=mock pytest tests/test_concurrent_background_tasks.py` for token-efficient testing
 
 ## Tasks
 
-- [ ] 1.0 Implement Background Task Infrastructure
-  - [ ] 1.1 Create BackgroundTaskManager class with asyncio queue and worker processes
+- [ ] 1.0 Implement Background Task Infrastructure (Eliminate Complex Architecture)
+  - [ ] 1.1 Create single BackgroundTaskManager class replacing multi-layer memory system
   - [ ] 1.2 Implement task scheduling, prioritization, and retry logic (max 3 retries)
   - [ ] 1.3 Add comprehensive logging and error handling for task execution
-  - [ ] 1.4 Create BackgroundMessageStore for database message persistence
-  - [ ] 1.5 Implement role mapping (human→user, ai→assistant) and metadata preservation
-  - [ ] 1.6 Create BackgroundSummaryManager for conversation summarization
-  - [ ] 1.7 Implement threshold-based summary generation and LangGraph state updates
+  - [ ] 1.4 Create BackgroundMessageStore for existing Supabase messages table persistence
+  - [ ] 1.5 Implement LangChain role mapping (human→user, ai→assistant) compatible with existing schema
+  - [ ] 1.6 Create BackgroundSummaryManager for existing conversation_summaries table
+  - [ ] 1.7 Implement configurable threshold-based summary generation using existing table schema
   - [ ] 1.8 Add background task monitoring and health checks
-  - [ ] 1.9 Write comprehensive unit tests for all background components
-  - [ ] 1.10 Test background processing with 1000+ concurrent tasks
+  - [ ] 1.9 SIMPLIFICATION: Remove ConversationConsolidator and integrate functionality directly into BackgroundTaskManager
+  - [ ] 1.10 Write comprehensive unit tests for all background components
+  - [ ] 1.11 Test background processing with 1000+ concurrent tasks (token-efficient testing)
+    - [ ] 1.11.1 Create mock LLM responses for summary generation tasks (avoid real API calls)
+    - [ ] 1.11.2 Use minimal test message content (10-20 words per message max)
+    - [ ] 1.11.3 Implement test mode flag to bypass actual LLM calls for performance testing
+    - [ ] 1.11.4 Test with 70% message storage tasks, 20% context loading, 10% summary generation
+    - [ ] 1.11.5 Use local/mock embedding generation instead of OpenAI API calls
+    - [ ] 1.11.6 Validate queue processing, retry logic, and error handling without token usage
+    - [ ] 1.11.7 Measure processing times and throughput with mock responses
+    - [ ] 1.11.8 Test API rate limiting and backoff strategies with minimal real API calls (<100 tokens total)
 
-- [ ] 2.0 Create Simplified Agent Nodes with Context Management
-  - [ ] 2.1 Update _employee_agent_node to handle context management internally
-  - [ ] 2.2 Implement in-node message count limits (12 for employees, 15 for customers)
+- [ ] 2.0 Create Simplified Agent Nodes with Context Management (Eliminate Performance Overhead)
+  - [ ] 2.1 PERFORMANCE: Replace memory prep nodes with internal context loading (eliminate 200-300ms overhead)
+  - [ ] 2.2 Implement configurable in-node message count limits with environment variable support
   - [ ] 2.3 Add conversation summary generation when message limits exceeded
-  - [ ] 2.4 Implement lazy user context loading within agent nodes
+  - [ ] 2.4 PERFORMANCE: Implement lazy user context loading within agent nodes (non-blocking)
   - [ ] 2.5 Update _customer_agent_node with customer-specific context management
-  - [ ] 2.6 Add background task scheduling calls to agent nodes (non-blocking)
-  - [ ] 2.7 Remove all memory prep and storage node dependencies from agent nodes
+  - [ ] 2.6 PERFORMANCE: Add background task scheduling calls to agent nodes (non-blocking)
+  - [ ] 2.7 SIMPLIFICATION: Remove all memory prep and storage node dependencies from agent nodes
   - [ ] 2.8 Implement system prompt enhancement with loaded context
-  - [ ] 2.9 Add performance monitoring and response time tracking
+  - [ ] 2.9 Add performance monitoring and response time tracking to measure 200-300ms reduction
   - [ ] 2.10 Test agent nodes achieve 60-80% response time improvement
+  - [ ] 2.11 TOKEN CONSERVATION: Implement context caching to avoid repeated embedding generation
 
-- [ ] 3.0 Simplify AgentState and Implement Lazy Context Loading
-  - [ ] 3.1 Update AgentState to remove retrieved_docs, sources, long_term_context
-  - [ ] 3.2 Ensure conversation_summary field follows LangGraph patterns
-  - [ ] 3.3 Maintain essential fields: messages, conversation_id, user_id, customer_id, employee_id
-  - [ ] 3.4 Preserve HITL fields: hitl_phase, hitl_prompt, hitl_context
-  - [ ] 3.5 Implement lazy context loading methods in memory manager
-  - [ ] 3.6 Add context caching for frequently accessed user data
-  - [ ] 3.7 Update state serialization/deserialization for LangGraph checkpointer
-  - [ ] 3.8 Verify state size reduction of 70% achieved
-  - [ ] 3.9 Test state compatibility with existing HITL functionality
-  - [ ] 3.10 Validate LangGraph checkpointer integration works correctly
+- [ ] 3.0 Simplify AgentState and Implement Lazy Context Loading (Reduce State Bloat)
+  - [ ] 3.1 STATE BLOAT: Remove retrieved_docs, sources, long_term_context from AgentState (reduce memory usage)
+  - [ ] 3.2 Add configurable memory thresholds (employee_max_messages, customer_max_messages, summary_threshold)
+  - [ ] 3.3 LANGGRAPH BEST PRACTICE: Use conversation_summary field instead of context in state
+  - [ ] 3.4 Maintain essential fields: messages, conversation_id, user_id, customer_id, employee_id
+  - [ ] 3.5 Preserve HITL fields: hitl_phase, hitl_prompt, hitl_context
+  - [ ] 3.6 PERFORMANCE: Implement lazy context loading methods in memory manager (load on demand)
+  - [ ] 3.7 TOKEN CONSERVATION: Add context caching for frequently accessed user data
+  - [ ] 3.8 Update state serialization/deserialization for LangGraph checkpointer
+  - [ ] 3.9 Verify state size reduction of 70% achieved (measure before/after)
+  - [ ] 3.10 Test state compatibility with existing HITL functionality
+  - [ ] 3.11 LANGGRAPH BEST PRACTICE: Validate checkpointer integration with simplified state
 
-- [ ] 4.0 Update Graph Structure and Remove Memory Nodes
-  - [ ] 4.1 Remove ea_memory_prep and ca_memory_prep nodes from graph
-  - [ ] 4.2 Remove ea_memory_store and ca_memory_store nodes from graph
-  - [ ] 4.3 Update graph routing to go directly from user_verification to agent nodes
-  - [ ] 4.4 Implement direct routing from agent nodes to END (no memory storage)
+- [ ] 4.0 Update Graph Structure and Remove Memory Nodes (Eliminate Synchronous Operations)
+  - [ ] 4.1 SIMPLIFICATION: Remove ea_memory_prep and ca_memory_prep nodes from graph
+  - [ ] 4.2 SIMPLIFICATION: Remove ea_memory_store and ca_memory_store nodes from graph  
+  - [ ] 4.3 PERFORMANCE: Update graph routing to go directly from user_verification to agent nodes (eliminate blocking)
+  - [ ] 4.4 PERFORMANCE: Implement direct routing from agent nodes to END (no synchronous memory storage)
   - [ ] 4.5 Update _route_to_agent method to handle simplified routing
-  - [ ] 4.6 Remove all memory node routing logic and conditionals
+  - [ ] 4.6 SIMPLIFICATION: Remove all memory node routing logic and conditionals
   - [ ] 4.7 Update graph creation in _create_graph method
   - [ ] 4.8 Test all user workflows (employee and customer) work without memory nodes
   - [ ] 4.9 Verify HITL routing and functionality remains unchanged
-  - [ ] 4.10 Validate graph simplification reduces complexity by 50%
+  - [ ] 4.10 Validate graph simplification reduces complexity by 50% (measure node count reduction)
 
-- [ ] 5.0 Validate Data Persistence and Performance
-  - [ ] 5.1 Create comprehensive integration tests for message storage
-  - [ ] 5.2 Test conversation summary generation and storage to database
+- [ ] 4.11 Clean Up Redundant Code and Functions (Eliminate Complex Architecture)
+  - [ ] 4.11.1 SIMPLIFICATION: Remove unused memory preparation node functions (_ea_memory_prep_node, _ca_memory_prep_node)
+  - [ ] 4.11.2 SIMPLIFICATION: Remove unused memory storage node functions (_ea_memory_store_node, _ca_memory_store_node)
+  - [ ] 4.11.3 SIMPLIFICATION: Clean up redundant context loading functions that are now handled internally
+  - [ ] 4.11.4 SIMPLIFICATION: Remove ConversationConsolidator class and integrate into BackgroundTaskManager
+  - [ ] 4.11.5 Delete unused imports and dependencies from removed memory nodes
+  - [ ] 4.11.6 Update documentation to remove references to deprecated functions
+  - [ ] 4.11.7 Run comprehensive linting and code analysis to identify orphaned code
+  - [ ] 4.11.8 Remove any unused database helper functions for memory operations
+  - [ ] 4.11.9 Clean up test files that test removed functionality
+  - [ ] 4.11.10 Validate no breaking changes to public APIs during cleanup
+
+- [ ] 4.12 Remove Redundant Customer Insight Functions (Simplify Complex Layers)
+  - [ ] 4.12.1 Remove _update_customer_long_term_context function (only logs, no functionality)
+  - [ ] 4.12.2 Remove _extract_customer_appropriate_insights function (redundant with summaries)
+  - [ ] 4.12.3 Remove _track_customer_interaction_patterns function (unused structured data)
+  - [ ] 4.12.4 Remove _analyze_communication_style function (simple categorization not used)
+  - [ ] 4.12.5 Remove _extract_interest_areas function (keyword matching inferior to LLM)
+  - [ ] 4.12.6 Update _customer_memory_store_node to remove calls to these functions
+  - [ ] 4.12.7 Update _handle_customer_message_execution to remove context update call
+  - [ ] 4.12.8 Test customer workflow functionality remains unchanged
+  - [ ] 4.12.9 Verify conversation summaries still capture all necessary customer insights
+  - [ ] 4.12.10 Validate ~200 lines of code reduction and performance improvement
+
+- [ ] 5.0 Validate Data Persistence and Performance (Measure All Improvements)
+  - [ ] 5.1 Create comprehensive integration tests for existing Supabase messages table persistence
+  - [ ] 5.2 Test conversation summary generation and storage to existing conversation_summaries table
   - [ ] 5.3 Verify all existing API endpoints return correct data unchanged
   - [ ] 5.4 Test frontend compatibility with message and summary queries
-  - [ ] 5.5 Implement performance benchmarking for response times
-  - [ ] 5.6 Validate 60-80% response time improvement achieved
-  - [ ] 5.7 Test concurrent conversation handling capacity increase
-  - [ ] 5.8 Verify background task reliability with comprehensive retry testing
-  - [ ] 5.9 Test data integrity under failure scenarios (database errors, task failures)
-  - [ ] 5.10 Create rollback procedures and test migration safety
-  - [ ] 5.11 Document performance metrics and system behavior changes
-  - [ ] 5.12 Conduct end-to-end user journey testing for both employee and customer workflows
+  - [ ] 5.5 PERFORMANCE: Implement benchmarking to measure 200-300ms response time reduction
+  - [ ] 5.6 PERFORMANCE: Validate 60-80% response time improvement achieved (before/after metrics)
+  - [ ] 5.7 PERFORMANCE: Test concurrent conversation handling capacity increase
+  - [ ] 5.8 Test configurable thresholds with different values (5, 10, 15, 20 messages)
+  - [ ] 5.9 Verify background task reliability with comprehensive retry testing
+  - [ ] 5.10 Test data integrity under failure scenarios (database errors, task failures)
+  - [ ] 5.11 Create rollback procedures and test migration safety
+  - [ ] 5.12 PERFORMANCE: Document performance metrics and system behavior changes (state size, response times, token usage)
+  - [ ] 5.13 TOKEN CONSERVATION: Measure embedding generation reduction through caching
+  - [ ] 5.14 Conduct end-to-end user journey testing for both employee and customer workflows
