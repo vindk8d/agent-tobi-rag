@@ -9,11 +9,10 @@ from uuid import uuid4, UUID
 import logging
 import sys
 import asyncio
-import os
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.errors import GraphInterrupt
-from langgraph.types import interrupt, Command
+# NOTE: interrupt, Command removed in Task 4.11.5 - unused after function cleanup
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
     HumanMessage,
@@ -33,9 +32,10 @@ if str(backend_path) not in sys.path:
 
 # Now use absolute imports
 from agents.tobi_sales_copilot.state import AgentState
-from agents.tobi_sales_copilot.language import detect_user_language, detect_user_language_from_context, get_employee_system_prompt, get_customer_system_prompt
+from agents.tobi_sales_copilot.language import detect_user_language_from_context, get_employee_system_prompt, get_customer_system_prompt
 from agents.toolbox import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
 from agents.memory import memory_manager, memory_scheduler, context_manager
+from agents.background_tasks import BackgroundTaskManager, BackgroundTask, TaskPriority
 from agents.hitl import parse_tool_response, hitl_node
 from core.config import get_settings, setup_langsmith_tracing
 from core.database import db_client
@@ -69,6 +69,11 @@ class UnifiedToolCallingRAGAgent:
         # Initialize memory manager first
         await memory_manager._ensure_initialized()
         self.memory_manager = memory_manager
+
+        # Initialize background task manager for non-blocking operations
+        self.background_task_manager = BackgroundTaskManager()
+        await self.background_task_manager._ensure_initialized()
+        await self.background_task_manager.start()
 
         # Register RAG-specific memory plugins
         await self._register_memory_plugins()
@@ -106,6 +111,10 @@ class UnifiedToolCallingRAGAgent:
         """Clean up agent resources on shutdown."""
         logger.info("Cleaning up UnifiedToolCallingRAGAgent resources...")
         try:
+            # Stop background task manager
+            if hasattr(self, 'background_task_manager'):
+                await self.background_task_manager.stop()
+            
             # Stop memory scheduler
             await memory_scheduler.stop()
             
@@ -119,7 +128,76 @@ class UnifiedToolCallingRAGAgent:
         except Exception as e:
             logger.error(f"Error during agent cleanup: {e}")
 
+    def _schedule_message_storage(self, state: AgentState, message_content: str, role: str) -> None:
+        """
+        Schedule non-blocking message storage to Supabase messages table.
+        
+        Args:
+            state: Current agent state with conversation context
+            message_content: Content of the message to store
+            role: Message role (user, assistant, etc.)
+        """
+        try:
+            task = BackgroundTask(
+                task_type="store_message",
+                priority=TaskPriority.HIGH,  # Message storage is high priority
+                data={
+                    "conversation_id": state.get("conversation_id"),
+                    "user_id": state.get("user_id"),
+                    "customer_id": state.get("customer_id"),
+                    "employee_id": state.get("employee_id"),
+                    "role": role,
+                    "content": message_content,
+                    "metadata": {
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "agent_type": "employee" if state.get("employee_id") else "customer"
+                    }
+                },
+                conversation_id=state.get("conversation_id"),
+                user_id=state.get("user_id"),
+                customer_id=state.get("customer_id"),
+                employee_id=state.get("employee_id")
+            )
+            
+            # Schedule the task non-blocking
+            task_id = self.background_task_manager.schedule_task(task)
+            logger.info(f"[BACKGROUND_TASK] Scheduled message storage task: {task_id}")
+            
+        except Exception as e:
+            logger.error(f"[BACKGROUND_TASK] Failed to schedule message storage: {e}")
 
+    def _schedule_summary_generation(self, state: AgentState) -> None:
+        """
+        Schedule non-blocking conversation summary generation when message limits are exceeded.
+        
+        Args:
+            state: Current agent state with conversation context
+        """
+        try:
+            task = BackgroundTask(
+                task_type="generate_summary",
+                priority=TaskPriority.NORMAL,  # Summary generation is normal priority
+                data={
+                    "conversation_id": state.get("conversation_id"),
+                    "user_id": state.get("user_id"),
+                    "customer_id": state.get("customer_id"),
+                    "employee_id": state.get("employee_id"),
+                    "trigger_reason": "message_limit_exceeded",
+                    "message_count": len(state.get("messages", [])),
+                    "threshold": self.settings.memory.summary_threshold if self.settings else 10
+                },
+                conversation_id=state.get("conversation_id"),
+                user_id=state.get("user_id"),
+                customer_id=state.get("customer_id"),
+                employee_id=state.get("employee_id")
+            )
+            
+            # Schedule the task non-blocking
+            task_id = self.background_task_manager.schedule_task(task)
+            logger.info(f"[BACKGROUND_TASK] Scheduled summary generation task: {task_id}")
+            
+        except Exception as e:
+            logger.error(f"[BACKGROUND_TASK] Failed to schedule summary generation: {e}")
 
     async def _build_graph(self) -> StateGraph:
         """Build a graph with automatic checkpointing and state persistence between agent steps."""
@@ -131,17 +209,9 @@ class UnifiedToolCallingRAGAgent:
         # Add nodes with automatic checkpointing between steps
         graph.add_node("user_verification", self._user_verification_node)
         
-        # Memory preparation nodes
-        graph.add_node("ea_memory_prep", self._employee_memory_prep_node)
-        graph.add_node("ca_memory_prep", self._customer_memory_prep_node)
-        
-        # Agent processing nodes  
+        # Agent processing nodes (simplified architecture with background tasks)
         graph.add_node("employee_agent", self._employee_agent_node)
         graph.add_node("customer_agent", self._customer_agent_node)
-        
-        # Memory storage nodes
-        graph.add_node("ea_memory_store", self._employee_memory_store_node)
-        graph.add_node("ca_memory_store", self._customer_memory_store_node)
         
         # General-purpose HITL node for human interactions
         graph.add_node("hitl_node", hitl_node)
@@ -149,36 +219,33 @@ class UnifiedToolCallingRAGAgent:
         # Simplified graph flow with clear separation between employee and customer workflows
         graph.add_edge(START, "user_verification")
 
-        # Route from user verification to memory preparation nodes
+        # Route from user verification directly to agent nodes (simplified architecture)
         graph.add_conditional_edges(
             "user_verification",
-            self._route_to_memory_prep,
+            self._route_to_agent,
             {
-                "ea_memory_prep": "ea_memory_prep", 
-                "ca_memory_prep": "ca_memory_prep", 
+                "employee_agent": "employee_agent", 
+                "customer_agent": "customer_agent", 
                 "end": END
             },
         )
         
-        # Employee workflow: memory prep → agent → (hitl_node or ea_memory_store)
-        graph.add_edge("ea_memory_prep", "employee_agent")
-        
-        # REVOLUTIONARY: Route from employee agent to HITL or employee memory store based on hitl_phase
+        # Employee workflow: agent → (hitl_node or END) - no memory storage nodes
+        # Route from employee agent to HITL or END (background tasks handle persistence)
         graph.add_conditional_edges(
             "employee_agent",
             self.route_from_employee_agent,
             {
                 "hitl_node": "hitl_node",
-                "ea_memory_store": "ea_memory_store",
+                "end": END,  # Direct to END instead of memory storage
                 # Allow routing back to employee_agent for universal tool-managed collection
                 # This enables the agent to re-call tools with HITL-provided input
                 "employee_agent": "employee_agent",
             },
         )
         
-        # Customer workflow: memory prep → agent → ca_memory_store (simple, no HITL)
-        graph.add_edge("ca_memory_prep", "customer_agent")
-        graph.add_edge("customer_agent", "ca_memory_store")
+        # Customer workflow: agent → END (simple, no HITL, background tasks handle persistence)
+        graph.add_edge("customer_agent", END)
         
         # REVOLUTIONARY: HITL workflow NEVER routes back to itself - always goes to employee_agent
         # This eliminates all HITL recursion and implements tool-managed collection pattern
@@ -190,9 +257,7 @@ class UnifiedToolCallingRAGAgent:
             },
         )
         
-        # Memory store nodes always go to end
-        graph.add_edge("ea_memory_store", END)
-        graph.add_edge("ca_memory_store", END)
+        # No memory store nodes - background tasks handle persistence
 
         # Compile with checkpointer for automatic persistence between steps
         # Configure interrupt_before to enable human interaction at HITL node
@@ -227,9 +292,6 @@ class UnifiedToolCallingRAGAgent:
                     "conversation_id": state.get("conversation_id"),
                     "user_id": user_id,
                     "conversation_summary": state.get("conversation_summary"),
-                    "retrieved_docs": [],
-                    "sources": [],
-                    "long_term_context": [],
                     "customer_id": None,
                     "employee_id": None,
                 }
@@ -300,9 +362,6 @@ class UnifiedToolCallingRAGAgent:
                     "conversation_id": conversation_id,
                     "user_id": user_id,  # Now using cleaned user_id
                     "conversation_summary": state.get("conversation_summary"),
-                    "retrieved_docs": state.get("retrieved_docs", []),
-                    "sources": state.get("sources", []),
-                    "long_term_context": state.get("long_term_context", []),
                     "employee_id": user_employee_id,  # Populate employee_id
                     "customer_id": None,  # Explicitly set customer_id to None
                 }
@@ -333,9 +392,6 @@ class UnifiedToolCallingRAGAgent:
                     "conversation_id": conversation_id,
                     "user_id": user_id,  # Now using cleaned user_id
                     "conversation_summary": state.get("conversation_summary"),
-                    "retrieved_docs": state.get("retrieved_docs", []),
-                    "sources": state.get("sources", []),
-                    "long_term_context": state.get("long_term_context", []),
                     "customer_id": user_customer_id,  # Populate customer_id
                     "employee_id": None,  # Explicitly set employee_id to None
                 }
@@ -369,788 +425,50 @@ Please contact your system administrator for assistance, or try again later."""
             "conversation_id": conversation_id,
             "user_id": state.get("user_id"),
             "conversation_summary": state.get("conversation_summary"),
-            "retrieved_docs": [],
-            "sources": [],
-            "long_term_context": [],
             "customer_id": None,
             "employee_id": None,
         }
 
     # =================================================================
-    # MEMORY PREPARATION NODES - Comprehensive memory loading and context preparation
+    # MEMORY PREPARATION NODES - Removed in Task 4.11 (Streamlined Architecture)
     # =================================================================
 
-    @traceable(name="employee_memory_prep_node")
-    async def _employee_memory_prep_node(
-        self, state: AgentState, config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Employee Memory Preparation Node - Comprehensive memory loading and context preparation.
-        
-        Responsibilities:
-        1. Store incoming user messages to database
-        2. Load cross-conversation user context and history
-        3. Retrieve relevant long-term memories for current query
-        4. Prepare enhanced context for agent processing
-        5. Apply context window management
-        """
-        try:
-            logger.info("[EA_MEMORY_PREP] Starting employee memory preparation")
-            
-            # Extract state information
-            messages = state.get("messages", [])
-            user_id = state.get("user_id")
-            conversation_id = state.get("conversation_id")
-            employee_id = state.get("employee_id")
-            
-            # Validate this is an employee user
-            if not employee_id:
-                logger.error(f"[EA_MEMORY_PREP] No employee_id found - this node should only process employee users")
-                return state  # Pass through unchanged
-            
-            logger.info(f"[EA_MEMORY_PREP] Processing memory preparation for {len(messages)} messages")
-            
-            # =================================================================
-            # CENTRALIZED STORAGE: All messages stored by Employee Memory Store phase
-            # This prep phase focuses only on preparing context for processing
-            # =================================================================
-            
-            # =================================================================
-            # STEP 2: LOAD CROSS-CONVERSATION USER CONTEXT
-            # =================================================================
-            logger.info("[EA_MEMORY_PREP] Step 2: Loading cross-conversation context")
-            
-            user_context = {}
-            enhanced_messages = list(messages)
-            
-            if user_id:
-                user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
-                if user_context.get("has_history", False):
-                    latest_summary = user_context.get("latest_summary", "")
-                    logger.info(f"[EA_MEMORY_PREP] Found user history: {len(latest_summary)} chars")
-                    
-                    # Add user context as system message
-                    context_message = SystemMessage(
-                        content=f"""
-EMPLOYEE USER CONTEXT (from previous conversations):
+    # NOTE: _employee_memory_prep_node removed in Task 4.11.1
+    # This function was unused after graph simplification in Task 2.7
+    # Memory preparation is now handled directly in _employee_agent_node
 
-{latest_summary}
-
-CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
-
-Use this context to provide personalized, contextually aware responses that build on previous interactions with this employee user. This helps maintain continuity and understanding of their role, preferences, and ongoing needs.
-"""
-                    )
-                    enhanced_messages = [context_message] + enhanced_messages
-                    logger.info("[EA_MEMORY_PREP] Added comprehensive user context")
-                else:
-                    logger.info("[EA_MEMORY_PREP] No previous conversation history found")
-            
-            # =================================================================
-            # STEP 3: RETRIEVE RELEVANT LONG-TERM MEMORIES
-            # =================================================================
-            logger.info("[EA_MEMORY_PREP] Step 3: Retrieving relevant long-term memories")
-            
-            long_term_context = []
-            current_query = ""
-            
-            # Extract current query from most recent human message and detect language from context
-            for msg in reversed(enhanced_messages):
-                if hasattr(msg, "type") and msg.type == "human":
-                    current_query = msg.content
-                    break
-                elif isinstance(msg, dict) and msg.get("role") == "human":
-                    current_query = msg.get("content", "")
-                    break
-            
-            # Detect user's language preference from conversation context (not just current message)
-            user_language = detect_user_language_from_context(enhanced_messages, max_messages=10)
-            logger.info(f"[EA_MEMORY_PREP] Detected user language from context: {user_language}")
-            
-            if user_id and current_query:
-                long_term_context = await self.memory_manager.get_relevant_context(
-                    user_id, current_query, max_contexts=5  # More context for employees
-                )
-                if long_term_context:
-                    logger.info(f"[EA_MEMORY_PREP] Retrieved {len(long_term_context)} relevant context items")
-                    
-                    # Add long-term context as system message
-                    context_items = []
-                    for context in long_term_context:
-                        context_items.append(f"- {context.get('content', '')[:200]}...")
-                    
-                    if context_items:
-                        long_term_message = SystemMessage(
-                            content=f"""
-RELEVANT LONG-TERM CONTEXT:
-
-{chr(10).join(context_items)}
-
-This context from previous conversations may be relevant to the current query.
-"""
-                        )
-                        enhanced_messages = [long_term_message] + enhanced_messages
-                        logger.info("[EA_MEMORY_PREP] Added long-term context")
-                else:
-                    logger.info("[EA_MEMORY_PREP] No relevant long-term context found")
-            
-            # =================================================================
-            # STEP 4: APPLY CONTEXT WINDOW MANAGEMENT
-            # =================================================================
-            logger.info("[EA_MEMORY_PREP] Step 4: Applying context window management")
-            
-            # Apply context window management for employee model
-            selected_model = self.settings.openai_chat_model
-            system_prompt = get_employee_system_prompt(self.tool_names, user_language)
-            
-            trimmed_messages, trim_stats = await context_manager.trim_messages_for_context(
-                messages=enhanced_messages,
-                model=selected_model,
-                system_prompt=system_prompt,
-                max_messages=self.settings.memory.max_messages,
-            )
-            
-            if trim_stats["trimmed_message_count"] > 0:
-                logger.info(
-                    f"[EA_MEMORY_PREP] Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
-                    f"final token count: {trim_stats['final_token_count']}"
-                )
-            
-            logger.info("[EA_MEMORY_PREP] Memory preparation completed successfully")
-            
-            # Return enhanced state
-            return {
-                "messages": trimmed_messages,
-                "sources": state.get("sources", []),
-                "retrieved_docs": state.get("retrieved_docs", []),
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "conversation_summary": state.get("conversation_summary"),
-                "long_term_context": long_term_context,
-                "employee_id": employee_id,  # Keep employee_id
-                "customer_id": state.get("customer_id"),  # Keep customer_id
-                # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
-
-            }
-            
-        except Exception as e:
-            logger.error(f"[EA_MEMORY_PREP] Error in employee memory preparation: {e}")
-            # Return state unchanged on error to prevent workflow disruption
-            return state
-
-    @traceable(name="customer_memory_prep_node")
-    async def _customer_memory_prep_node(
-        self, state: AgentState, config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Customer Memory Preparation Node - Comprehensive memory loading and context preparation for customers.
-        
-        Responsibilities:
-        1. Store incoming customer messages to database
-        2. Load cross-conversation customer context and history
-        3. Retrieve relevant long-term memories for current query (customer-appropriate)
-        4. Prepare enhanced context for customer agent processing
-        5. Apply context window management with customer limits
-        """
-        try:
-            logger.info("[CA_MEMORY_PREP] Starting customer memory preparation")
-            
-            # Extract state information
-            messages = state.get("messages", [])
-            user_id = state.get("user_id")
-            conversation_id = state.get("conversation_id")
-            customer_id = state.get("customer_id")
-            
-            # Validate this is a customer user
-            if not customer_id:
-                logger.error(f"[CA_MEMORY_PREP] No customer_id found - this node should only process customer users")
-                return state  # Pass through unchanged
-            
-            logger.info(f"[CA_MEMORY_PREP] Processing memory preparation for {len(messages)} messages")
-            
-            # =================================================================
-            # CENTRALIZED STORAGE: All messages stored by Customer Memory Store phase
-            # This prep phase focuses only on preparing context for processing
-            # =================================================================
-            
-            # =================================================================
-            # STEP 2: LOAD CROSS-CONVERSATION CUSTOMER CONTEXT
-            # =================================================================
-            logger.info("[CA_MEMORY_PREP] Step 2: Loading cross-conversation customer context")
-            
-            user_context = {}
-            enhanced_messages = list(messages)
-            
-            if user_id:
-                user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
-                if user_context.get("has_history", False):
-                    latest_summary = user_context.get("latest_summary", "")
-                    logger.info(f"[CA_MEMORY_PREP] Found customer history: {len(latest_summary)} chars")
-                    
-                    # Add customer-specific context as system message
-                    context_message = SystemMessage(
-                        content=f"""
-CUSTOMER CONTEXT (from your previous conversations with us):
-
-{latest_summary}
-
-CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
-
-Use this context to provide personalized, helpful responses that build on your previous interactions. I'll reference your past interests, questions, and preferences to better assist you.
-"""
-                    )
-                    enhanced_messages = [context_message] + enhanced_messages
-                    logger.info("[CA_MEMORY_PREP] Added comprehensive customer context")
-                else:
-                    logger.info("[CA_MEMORY_PREP] No previous customer conversation history found")
-            
-            # =================================================================
-            # STEP 3: RETRIEVE RELEVANT LONG-TERM MEMORIES (Customer-appropriate)
-            # =================================================================
-            logger.info("[CA_MEMORY_PREP] Step 3: Retrieving relevant customer memories")
-            
-            long_term_context = []
-            current_query = ""
-            
-            # Extract current query from most recent human message and detect language from context
-            for msg in reversed(enhanced_messages):
-                if hasattr(msg, "type") and msg.type == "human":
-                    current_query = msg.content
-                    break
-                elif isinstance(msg, dict) and msg.get("role") == "human":
-                    current_query = msg.get("content", "")
-                    break
-            
-            # Detect user's language preference from conversation context for customer system prompt adaptation
-            user_language = detect_user_language_from_context(enhanced_messages, max_messages=10)
-            logger.info(f"[CA_MEMORY_PREP] Detected user language from context: {user_language}")
-            
-            if user_id and current_query:
-                long_term_context = await self.memory_manager.get_relevant_context(
-                    user_id, current_query, max_contexts=3  # Fewer contexts for customers
-                )
-                if long_term_context:
-                    logger.info(f"[CA_MEMORY_PREP] Retrieved {len(long_term_context)} relevant context items")
-                    
-                    # Add long-term context as system message (customer-appropriate)
-                    context_items = []
-                    for context in long_term_context:
-                        # Filter context to ensure it's customer-appropriate
-                        context_content = context.get('content', '')
-                        if self._is_customer_appropriate_context(context_content):
-                            context_items.append(f"- {context_content[:150]}...")
-                    
-                    if context_items:
-                        long_term_message = SystemMessage(
-                            content=f"""
-RELEVANT CONTEXT FROM YOUR PREVIOUS CONVERSATIONS:
-
-{chr(10).join(context_items)}
-
-This information from your past interactions may help me better assist you.
-"""
-                        )
-                        enhanced_messages = [long_term_message] + enhanced_messages
-                        logger.info("[CA_MEMORY_PREP] Added customer-appropriate long-term context")
-                else:
-                    logger.info("[CA_MEMORY_PREP] No relevant customer context found")
-            
-            # =================================================================
-            # STEP 4: APPLY CUSTOMER CONTEXT WINDOW MANAGEMENT
-            # =================================================================
-            logger.info("[CA_MEMORY_PREP] Step 4: Applying customer context window management")
-            
-            # Apply context window management for customer model
-            selected_model = self.settings.openai_chat_model
-            customer_system_prompt = get_customer_system_prompt(user_language)
-            
-            # Use slightly smaller context for customers to ensure better response quality
-            max_customer_messages = min(self.settings.memory.max_messages, 15)
-            
-            trimmed_messages, trim_stats = await context_manager.trim_messages_for_context(
-                messages=enhanced_messages,
-                model=selected_model,
-                system_prompt=customer_system_prompt,
-                max_messages=max_customer_messages,
-            )
-            
-            if trim_stats["trimmed_message_count"] > 0:
-                logger.info(
-                    f"[CA_MEMORY_PREP] Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
-                    f"final token count: {trim_stats['final_token_count']}"
-                )
-            
-            logger.info("[CA_MEMORY_PREP] Customer memory preparation completed successfully")
-            
-            # Return enhanced state
-            return {
-                "messages": trimmed_messages,
-                "sources": state.get("sources", []),
-                "retrieved_docs": state.get("retrieved_docs", []),
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "conversation_summary": state.get("conversation_summary"),
-                "long_term_context": long_term_context,
-                "customer_id": customer_id,  # Keep customer_id
-                "employee_id": state.get("employee_id"),  # Keep employee_id
-                # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
-
-            }
-            
-        except Exception as e:
-            logger.error(f"[CA_MEMORY_PREP] Error in customer memory preparation: {e}")
-            # Return state unchanged on error to prevent workflow disruption
-            return state
-
-    def _is_customer_appropriate_context(self, context_content: str) -> bool:
-        """
-        Filter context to ensure it's appropriate for customer viewing.
-        
-        Args:
-            context_content: The context content to check
-            
-        Returns:
-            bool: True if content is appropriate for customers, False otherwise
-        """
-        # Convert to lowercase for checking
-        content_lower = context_content.lower()
-        
-        # Exclude internal/sensitive information
-        excluded_terms = [
-            "internal", "employee", "staff", "salary", "commission", "profit",
-            "cost basis", "margin", "markup", "confidential", "private",
-            "admin", "system", "database", "backend", "pipeline"
-        ]
-        
-        for term in excluded_terms:
-            if term in content_lower:
-                return False
-        
-        # Include customer-appropriate information
-        included_terms = [
-            "vehicle", "car", "price", "feature", "specification", "model",
-            "brand", "warranty", "financing", "discount", "promotion",
-            "availability", "color", "option", "delivery"
-        ]
-        
-        for term in included_terms:
-            if term in content_lower:
-                return True
-        
-        # Default to excluding if uncertain
-        return False
+    # NOTE: _customer_memory_prep_node removed in Task 4.11.1  
+    # This function was unused after graph simplification in Task 2.7
+    # Memory preparation is now handled directly in _customer_agent_node
+    
+    # NOTE: _is_customer_appropriate_context helper removed in Task 4.11.1
+    # Context filtering is now handled by conversation summaries and background tasks
 
     # =================================================================
     # MEMORY STORAGE NODES - Comprehensive memory storage and consolidation
     # =================================================================
 
-    @traceable(name="employee_memory_store_node")
-    async def _employee_memory_store_node(
-        self, state: AgentState, config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Employee Memory Storage Node - Comprehensive memory storage and consolidation.
-        
-        Responsibilities:
-        1. Store agent response messages to database
-        2. Extract and store conversation insights in long-term memory
-        3. Trigger automatic conversation summarization when thresholds are met
-        4. Update user context and cross-conversation summaries
-        5. Perform memory consolidation for long conversations
-        """
-        try:
-            logger.info("[EA_MEMORY_STORE] Starting employee memory storage")
-            
-            # Extract state information
-            messages = state.get("messages", [])
-            user_id = state.get("user_id")
-            conversation_id = state.get("conversation_id")
-            employee_id = state.get("employee_id")
-            
-            # Validate this is an employee user
-            if not employee_id:
-                logger.error(f"[EA_MEMORY_STORE] No employee_id found - this node should only process employee users")
-                return state  # Pass through unchanged
-            
-            logger.info(f"[EA_MEMORY_STORE] Processing memory storage for {len(messages)} messages")
-            
-            # =================================================================
-            # STEP 1: STORE ALL CONVERSATION MESSAGES
-            # =================================================================
-            logger.info("[EA_MEMORY_STORE] Step 1: Storing all conversation messages")
-            
-            if messages and config:
-                stored_count = 0
-                # Store all messages in chronological order to preserve conversation flow
-                for msg in messages:
-                    # Store both human and AI messages to preserve full conversation
-                    # Handle both object and dictionary message formats
-                    msg_type = None
-                    if hasattr(msg, "type"):
-                        msg_type = msg.type
-                    elif isinstance(msg, dict) and "type" in msg:
-                        msg_type = msg["type"]
-                    
-                    if msg_type in ["human", "ai"]:
-                        await self.memory_manager.store_message_from_agent(
-                            message=msg,
-                            config=config,
-                            agent_type="rag",
-                            user_id=user_id,
-                        )
-                        stored_count += 1
-                logger.info(f"[EA_MEMORY_STORE] Stored {stored_count} conversation messages (including HITL messages)")
+    # NOTE: _employee_memory_store_node removed in Task 4.11.2
+    # This function was unused after graph simplification in Task 2.7  
+    # Memory storage is now handled via background tasks in _employee_agent_node
 
-            # =================================================================
-            # STEP 2: EXTRACT AND STORE CONVERSATION INSIGHTS
-            # =================================================================
-            logger.info("[EA_MEMORY_STORE] Step 2: Extracting conversation insights")
-            
-            if user_id and messages and len(messages) >= 2:
-                if await self.memory_manager.should_store_memory("rag", messages):
-                    # Get recent messages for insight extraction
-                    recent_messages = messages[-4:] if len(messages) >= 4 else messages
-                    await self.memory_manager.store_conversation_insights(
-                        "rag", user_id, recent_messages, conversation_id
-                    )
-                    logger.info("[EA_MEMORY_STORE] Stored conversation insights")
-                else:
-                    logger.info("[EA_MEMORY_STORE] No significant insights to store")
-            
-            # =================================================================
-            # STEP 3: TRIGGER AUTOMATIC CONVERSATION SUMMARIZATION
-            # =================================================================
-            logger.info("[EA_MEMORY_STORE] Step 3: Checking for automatic summarization")
-            
-            if user_id and conversation_id:
-                try:
-                    # CRITICAL: Pass agent's working context messages (implements moving context window)
-                    # These messages have already been processed through the moving context window in the agent node
-                    summary = await self.memory_manager.consolidator.check_and_trigger_summarization(
-                        str(conversation_id), user_id, agent_context_messages=messages
-                    )
-                    if summary:
-                        logger.info(f"[EA_MEMORY_STORE] Conversation {conversation_id} automatically summarized")
-                    else:
-                        logger.info("[EA_MEMORY_STORE] No summarization needed at this time")
-                except Exception as e:
-                    logger.error(f"[EA_MEMORY_STORE] Error in automatic summarization: {e}")
-            
-            # =================================================================
-            # STEP 4: MEMORY CONSOLIDATION FOR LONG CONVERSATIONS
-            # =================================================================
-            logger.info("[EA_MEMORY_STORE] Step 4: Memory consolidation check")
-            
-            # For very long conversations, trigger background consolidation
-            if len(messages) > 50:  # Threshold for background consolidation
-                try:
-                    logger.info("[EA_MEMORY_STORE] Triggering background memory consolidation")
-                    # This runs in background and doesn't block the response
-                    asyncio.create_task(
-                        self.memory_manager.consolidate_old_conversations(user_id)
-                    )
-                except Exception as e:
-                    logger.error(f"[EA_MEMORY_STORE] Error triggering background consolidation: {e}")
-            
-            logger.info("[EA_MEMORY_STORE] Employee memory storage completed successfully")
-            
-            # Return state with any updates - CRITICAL: Clear HITL state after successful execution
-            return {
-                "messages": messages,
-                "sources": state.get("sources", []),
-                "retrieved_docs": state.get("retrieved_docs", []),
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "conversation_summary": state.get("conversation_summary"),
-                "long_term_context": state.get("long_term_context", []),
-                "employee_id": employee_id,  # Keep employee_id
-                "customer_id": state.get("customer_id"),  # Keep customer_id
-                # CRITICAL: Clear HITL state after successful execution to prevent action reuse
-                "hitl_phase": None,
-                "hitl_prompt": None, 
-                "hitl_context": None
-            }
-            
-        except Exception as e:
-            logger.error(f"[EA_MEMORY_STORE] Error in employee memory storage: {e}")
-            # Return state unchanged on error to prevent workflow disruption
-            return state
-
-    @traceable(name="customer_memory_store_node")
-    async def _customer_memory_store_node(
-        self, state: AgentState, config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Customer Memory Storage Node - Comprehensive memory storage and consolidation for customers.
-        
-        Responsibilities:
-        1. Store customer agent response messages to database
-        2. Extract and store customer-appropriate conversation insights
-        3. Trigger automatic conversation summarization when thresholds are met
-        4. Update customer context and preferences
-        5. Track customer interaction patterns
-        """
-        try:
-            logger.info("[CA_MEMORY_STORE] Starting customer memory storage")
-            
-            # Extract state information
-            messages = state.get("messages", [])
-            user_id = state.get("user_id")
-            conversation_id = state.get("conversation_id")
-            customer_id = state.get("customer_id")
-            
-            # Validate this is a customer user
-            if not customer_id:
-                logger.error(f"[CA_MEMORY_STORE] No customer_id found - this node should only process customer users")
-                return state  # Pass through unchanged
-            
-            logger.info(f"[CA_MEMORY_STORE] Processing memory storage for {len(messages)} customer messages")
-            
-            # =================================================================
-            # STEP 1: STORE ALL CUSTOMER CONVERSATION MESSAGES
-            # =================================================================
-            logger.info("[CA_MEMORY_STORE] Step 1: Storing all customer conversation messages")
-            
-            # FIX: Create proper config from conversation_id if not provided
-            working_config = config
-            if not config or config is False:
-                working_config = {"configurable": {"thread_id": str(conversation_id)}}
-            
-            if messages and working_config:
-                stored_count = 0
-                # Store all messages in chronological order to preserve full conversation flow
-                for msg in messages:
-                    # Store both human and AI messages to preserve complete customer conversation
-                    # Handle both object and dictionary message formats
-                    msg_type = None
-                    if hasattr(msg, "type"):
-                        msg_type = msg.type
-                    elif isinstance(msg, dict) and "type" in msg:
-                        msg_type = msg["type"]
-                    
-                    if msg_type in ["human", "ai"]:
-                        await self.memory_manager.store_message_from_agent(
-                            message=msg,
-                            config=working_config,
-                            agent_type="rag",
-                            user_id=user_id,
-                        )
-                        stored_count += 1
-                logger.info(f"[CA_MEMORY_STORE] Stored {stored_count} customer conversation messages")
-            
-            # =================================================================
-            # STEP 2: EXTRACT CUSTOMER-APPROPRIATE INSIGHTS
-            # =================================================================
-            logger.info("[CA_MEMORY_STORE] Step 2: Extracting customer insights")
-            
-            if user_id and messages and len(messages) >= 2:
-                if await self.memory_manager.should_store_memory("rag", messages):
-                    # Get recent messages for insight extraction
-                    recent_messages = messages[-3:] if len(messages) >= 3 else messages
-                    
-                    # Filter insights to be customer-appropriate before storing
-                    customer_insights = await self._extract_customer_appropriate_insights(
-                        recent_messages, user_id, conversation_id
-                    )
-                    
-                    if customer_insights:
-                        await self.memory_manager.store_conversation_insights(
-                            "rag", user_id, customer_insights, conversation_id
-                        )
-                        logger.info(f"[CA_MEMORY_STORE] Stored {len(customer_insights)} customer insights")
-                    else:
-                        logger.info("[CA_MEMORY_STORE] No customer-appropriate insights to store")
-                else:
-                    logger.info("[CA_MEMORY_STORE] No significant customer insights to store")
-            
-            # =================================================================
-            # STEP 3: TRIGGER CUSTOMER CONVERSATION SUMMARIZATION
-            # =================================================================
-            logger.info("[CA_MEMORY_STORE] Step 3: Checking for customer conversation summarization")
-            
-            if user_id and conversation_id:
-                try:
-                    # CRITICAL: Pass agent's working context messages (implements moving context window)
-                    # These messages have already been processed through the moving context window in the agent node
-                    summary = await self.memory_manager.consolidator.check_and_trigger_summarization(
-                        str(conversation_id), user_id, agent_context_messages=messages
-                    )
-                    if summary:
-                        logger.info(f"[CA_MEMORY_STORE] Customer conversation {conversation_id} automatically summarized")
-                    else:
-                        logger.info("[CA_MEMORY_STORE] No customer summarization needed at this time")
-                except Exception as e:
-                    logger.error(f"[CA_MEMORY_STORE] Error in customer automatic summarization: {e}")
-            
-            # =================================================================
-            # STEP 4: TRACK CUSTOMER INTERACTION PATTERNS
-            # =================================================================
-            logger.info("[CA_MEMORY_STORE] Step 4: Tracking customer interaction patterns")
-            
-            # Track customer preferences and interests for better future service
-            if user_id and messages:
-                try:
-                    await self._track_customer_interaction_patterns(user_id, messages, conversation_id)
-                    logger.info("[CA_MEMORY_STORE] Customer interaction patterns tracked")
-                except Exception as e:
-                    logger.error(f"[CA_MEMORY_STORE] Error tracking customer patterns: {e}")
-            
-            logger.info("[CA_MEMORY_STORE] Customer memory storage completed successfully")
-            
-            # Return state with any updates
-            return {
-                "messages": messages,
-                "sources": state.get("sources", []),
-                "retrieved_docs": state.get("retrieved_docs", []),
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "conversation_summary": state.get("conversation_summary"),
-                "long_term_context": state.get("long_term_context", []),
-                "customer_id": customer_id,  # Keep customer_id
-                "employee_id": state.get("employee_id"),  # Keep employee_id
-                # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
-
-            }
-            
-        except Exception as e:
-            logger.error(f"[CA_MEMORY_STORE] Error in customer memory storage: {e}")
-            # Return state unchanged on error to prevent workflow disruption
-            return state
-
-    async def _extract_customer_appropriate_insights(
-        self, messages: List[BaseMessage], user_id: str, conversation_id: str
-    ) -> List[BaseMessage]:
-        """
-        Extract insights that are appropriate for customer memory storage.
-        
-        Args:
-            messages: Messages to extract insights from
-            user_id: Customer user ID
-            conversation_id: Current conversation ID
-            
-        Returns:
-            List of customer-appropriate insight messages
-        """
-        try:
-            customer_insights = []
-            
-            for message in messages:
-                if hasattr(message, "type") and message.type == "human":
-                    content = message.content.lower()
-                    
-                    # Extract customer preferences (vehicle-related)
-                    if any(phrase in content for phrase in [
-                        "i prefer", "i like", "i want", "i need", "looking for",
-                        "interested in", "budget", "price range", "color preference"
-                    ]):
-                        # Only store vehicle/product-related preferences
-                        if any(term in content for term in [
-                            "vehicle", "car", "suv", "sedan", "truck", "color",
-                            "feature", "price", "budget", "financing", "warranty"
-                        ]):
-                            customer_insights.append(message)
-                    
-                    # Extract customer information (contact preferences, timeline)
-                    elif any(phrase in content for phrase in [
-                        "call me", "email me", "contact me", "timeline", "when can"
-                    ]):
-                        customer_insights.append(message)
-            
-            logger.info(f"Extracted {len(customer_insights)} customer-appropriate insights")
-            return customer_insights
-            
-        except Exception as e:
-            logger.error(f"Error extracting customer insights: {e}")
-            return []
-
-    async def _track_customer_interaction_patterns(
-        self, user_id: str, messages: List[BaseMessage], conversation_id: str
-    ) -> None:
-        """
-        Track customer interaction patterns for better future service.
-        
-        Args:
-            user_id: Customer user ID
-            messages: Current conversation messages
-            conversation_id: Current conversation ID
-        """
-        try:
-            # Analyze customer interaction patterns
-            patterns = {
-                "preferred_communication_style": self._analyze_communication_style(messages),
-                "interest_areas": self._extract_interest_areas(messages),
-                "interaction_time": datetime.now().isoformat(),
-                "conversation_id": conversation_id
-            }
-            
-            # Store patterns in customer memory namespace
-            namespace = (user_id, "customer_patterns")
-            key = f"interaction_{conversation_id}"
-            
-            await self.memory_manager.store_long_term_memory(
-                user_id=user_id,
-                namespace=["customer_patterns"],
-                key=key,
-                value=patterns,
-                ttl_hours=8760  # Store for 1 year
-            )
-            
-            logger.info(f"Stored customer interaction patterns for user {user_id}")
-            
-        except Exception as e:
-            logger.error(f"Error tracking customer interaction patterns: {e}")
-
-    def _analyze_communication_style(self, messages: List[BaseMessage]) -> str:
-        """Analyze customer communication style from messages."""
-        try:
-            human_messages = [msg.content for msg in messages if hasattr(msg, "type") and msg.type == "human"]
-            
-            if not human_messages:
-                return "unknown"
-            
-            total_length = sum(len(msg) for msg in human_messages)
-            avg_length = total_length / len(human_messages)
-            
-            if avg_length > 100:
-                return "detailed"
-            elif avg_length > 50:
-                return "moderate"
-            else:
-                return "concise"
-                
-        except Exception:
-            return "unknown"
-
-    def _extract_interest_areas(self, messages: List[BaseMessage]) -> List[str]:
-        """Extract customer interest areas from messages."""
-        try:
-            interests = []
-            interest_keywords = {
-                "luxury": ["luxury", "premium", "high-end", "bmw", "mercedes", "audi"],
-                "economy": ["affordable", "budget", "cheap", "economical", "efficient"],
-                "family": ["family", "kids", "children", "suv", "minivan", "safety"],
-                "performance": ["fast", "powerful", "sports", "performance", "acceleration"],
-                "eco_friendly": ["hybrid", "electric", "green", "eco", "fuel efficient"]
-            }
-            
-            for message in messages:
-                if hasattr(message, "type") and message.type == "human":
-                    content = message.content.lower()
-                    for category, keywords in interest_keywords.items():
-                        if any(keyword in content for keyword in keywords):
-                            if category not in interests:
-                                interests.append(category)
-            
-            return interests
-            
-        except Exception:
-            return []
+    # NOTE: _customer_memory_store_node removed in Task 4.11.2
+    # This function was unused after graph simplification in Task 2.7
+    # Memory storage is now handled via background tasks in _customer_agent_node
+    
+    # NOTE: Customer insight and pattern tracking functions removed in Task 4.11.2
+    # These functions were unused after graph simplification in Task 2.7:
+    # - _extract_customer_appropriate_insights
+    # - _track_customer_interaction_patterns  
+    # - _analyze_communication_style
+    # - _extract_interest_areas
+    # Customer insights are now handled by conversation summaries and background tasks
 
     def _route_after_user_verification(self, state: Dict[str, Any]) -> str:
         """
         Route users directly from verification to the appropriate agent node based on customer_id/employee_id.
         
-        NOTE: This function is not currently used in the graph - _route_to_memory_prep is used instead.
+        NOTE: This function is not currently used in the graph - _route_to_agent is used instead.
         
         Args:
             state: Current agent state containing customer_id and employee_id
@@ -1176,35 +494,35 @@ This information from your past interactions may help me better assist you.
             logger.info(f"[ROUTING] No employee_id or customer_id found - user verification failed, ending conversation")
             return "end"
 
-    def _route_to_memory_prep(self, state: Dict[str, Any]) -> str:
+    def _route_to_agent(self, state: Dict[str, Any]) -> str:
         """
-        Route users from verification to appropriate memory preparation nodes.
+        Route users from verification directly to appropriate agent nodes (eliminate memory prep overhead).
         
         Args:
             state: Current agent state containing customer_id and employee_id
             
         Returns:
-            str: Node name to route to ('ea_memory_prep', 'ca_memory_prep', or 'end')
+            str: Node name to route to ('employee_agent', 'customer_agent', or 'end')
         """
         # Route users based on presence of customer_id or employee_id (set by user_verification_node)
         employee_id = state.get("employee_id")
         customer_id = state.get("customer_id")
         user_id = state.get("user_id", "unknown")
         
-        logger.info(f"[MEMORY_ROUTING] Routing user {user_id} - employee_id: {employee_id}, customer_id: {customer_id}")
+        logger.info(f"[AGENT_ROUTING] Routing user {user_id} - employee_id: {employee_id}, customer_id: {customer_id}")
         
         if employee_id:
-            logger.info(f"[MEMORY_ROUTING] ✅ Routing employee user (ID: {employee_id}) to employee memory prep")
-            return "ea_memory_prep"
+            logger.info(f"[AGENT_ROUTING] ✅ Routing employee user (ID: {employee_id}) directly to employee_agent")
+            return "employee_agent"
         elif customer_id:
-            logger.info(f"[MEMORY_ROUTING] ✅ Routing customer user (ID: {customer_id}) to customer memory prep")
-            return "ca_memory_prep"
+            logger.info(f"[AGENT_ROUTING] ✅ Routing customer user (ID: {customer_id}) directly to customer_agent")
+            return "customer_agent"
         else:
             # No employee_id or customer_id means verification failed
-            logger.info(f"[MEMORY_ROUTING] No employee_id or customer_id found - user verification failed, ending conversation")
+            logger.info(f"[AGENT_ROUTING] No employee_id or customer_id found - user verification failed, ending conversation")
             return "end"
 
-    # NOTE: _route_employee_to_confirmation_or_memory_store() method removed
+    # NOTE: _route_employee_to_confirmation_or_memory_store() method removed in Task 4.11
     # Replaced with simplified route_from_employee_agent() that uses the new HITL system
 
     def route_from_employee_agent(self, state: Dict[str, Any]) -> str:
@@ -1221,7 +539,7 @@ This information from your past interactions may help me better assist you.
         Returns:
             str: Node name to route to:
                 - "hitl_node" if HITL interaction is required (hitl_phase exists)
-                - "ea_memory_store" if no HITL needed
+                - "end" if no HITL needed (background tasks handle persistence)
         """
         employee_id = state.get("employee_id")
         user_id = state.get("user_id", "unknown")
@@ -1250,13 +568,13 @@ This information from your past interactions may help me better assist you.
                 logger.info(f"[EMPLOYEE_ROUTING] ✅ HITL approved for tool-managed collection - routing back to employee_agent")
                 return "employee_agent"
             
-            # HITL completed, route to memory storage to finish
-            logger.info(f"[EMPLOYEE_ROUTING] ✅ HITL completed: {hitl_phase} - routing to memory store")
-            return "ea_memory_store"
+            # HITL completed, route to end (background tasks handle persistence)
+            logger.info(f"[EMPLOYEE_ROUTING] ✅ HITL completed: {hitl_phase} - routing to end")
+            return "end"
         
-        # No HITL needed, route to employee memory storage
-        logger.info(f"[EMPLOYEE_ROUTING] ✅ No HITL needed - routing to ea_memory_store")
-        return "ea_memory_store"
+        # No HITL needed, route to end (background tasks handle persistence)
+        logger.info(f"[EMPLOYEE_ROUTING] ✅ No HITL needed - routing to end")
+        return "end"
 
     def route_from_hitl(self, state: Dict[str, Any]) -> str:
         """
@@ -1601,7 +919,6 @@ Failed to deliver your message to {customer_name}.
                 "conversation_id": state.get("conversation_id"),
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "long_term_context": state.get("long_term_context", []),
                 "employee_id": state.get("employee_id"),  # Keep employee_id
                 "customer_id": state.get("customer_id"),  # Keep customer_id
                 # CRITICAL: Clear HITL state after successful execution to prevent loops
@@ -1620,7 +937,6 @@ Failed to deliver your message to {customer_name}.
                 "conversation_id": state.get("conversation_id"),
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "long_term_context": state.get("long_term_context", []),
                 "employee_id": state.get("employee_id"),  # Keep employee_id
                 "customer_id": state.get("customer_id"),  # Keep customer_id
                 # CRITICAL: Clear HITL state even on error to prevent loops
@@ -1629,109 +945,18 @@ Failed to deliver your message to {customer_name}.
                 "hitl_context": None
             }
 
-    # Simple in-memory cache for lazy context loading
-    _user_context_cache = {}
-    _long_term_context_cache = {}
+    # NOTE: Context cache variables removed in Task 4.11.3
+    # _user_context_cache and _long_term_context_cache were unused after function removal
     
-    async def _get_cached_user_context(self, user_id: str, is_employee: bool) -> Optional[Dict]:
-        """Get cached user context if available and not expired."""
-        cache_key = f"{user_id}:{'emp' if is_employee else 'cust'}"
-        cached_data = self._user_context_cache.get(cache_key)
-        
-        if cached_data:
-            # Check if cache is still valid (5 minutes TTL)
-            import time
-            if time.time() - cached_data['timestamp'] < 300:  # 5 minutes
-                logger.debug(f"[CACHE] Hit for user context: {cache_key}")
-                return cached_data['data']
-            else:
-                # Remove expired cache
-                del self._user_context_cache[cache_key]
-                logger.debug(f"[CACHE] Expired user context: {cache_key}")
-        
-        logger.debug(f"[CACHE] Miss for user context: {cache_key}")
-        return None
-    
-    async def _cache_user_context(self, user_id: str, user_context: Dict, is_employee: bool):
-        """Cache user context with timestamp."""
-        cache_key = f"{user_id}:{'emp' if is_employee else 'cust'}"
-        import time
-        self._user_context_cache[cache_key] = {
-            'data': user_context,
-            'timestamp': time.time()
-        }
-        logger.debug(f"[CACHE] Stored user context: {cache_key}")
-    
-    async def _get_cached_long_term_context(self, user_id: str, query: str, is_employee: bool) -> Optional[List]:
-        """Get cached long-term context if available and not expired."""
-        # Create a simple hash of the query for cache key
-        import hashlib
-        query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
-        cache_key = f"{user_id}:{query_hash}:{'emp' if is_employee else 'cust'}"
-        cached_data = self._long_term_context_cache.get(cache_key)
-        
-        if cached_data:
-            # Check if cache is still valid (10 minutes TTL for long-term context)
-            import time
-            if time.time() - cached_data['timestamp'] < 600:  # 10 minutes
-                logger.debug(f"[CACHE] Hit for long-term context: {cache_key}")
-                return cached_data['data']
-            else:
-                # Remove expired cache
-                del self._long_term_context_cache[cache_key]
-                logger.debug(f"[CACHE] Expired long-term context: {cache_key}")
-        
-        logger.debug(f"[CACHE] Miss for long-term context: {cache_key}")
-        return None
-    
-    async def _cache_long_term_context(self, user_id: str, query: str, context: List, is_employee: bool):
-        """Cache long-term context with timestamp."""
-        import hashlib
-        query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
-        cache_key = f"{user_id}:{query_hash}:{'emp' if is_employee else 'cust'}"
-        import time
-        self._long_term_context_cache[cache_key] = {
-            'data': context,
-            'timestamp': time.time()
-        }
-        logger.debug(f"[CACHE] Stored long-term context: {cache_key}")
-    
-    async def _schedule_context_loading(self, user_id: str, conversation_id: str, is_employee: bool):
-        """Schedule background context loading for future use."""
-        try:
-            from agents.background_tasks import background_task_manager, TaskPriority
-            
-            # Schedule a context loading task with low priority
-            task_id = background_task_manager.schedule_context_loading(
-                user_id=user_id,
-                conversation_id=conversation_id,
-                user_type="employee" if is_employee else "customer",
-                priority=TaskPriority.LOW
-            )
-            logger.debug(f"[LAZY_CONTEXT] Scheduled background context loading: {task_id}")
-            
-        except Exception as e:
-            logger.debug(f"[LAZY_CONTEXT] Error scheduling context loading: {e}")
-            # Don't fail if background scheduling fails
-    
-    async def _schedule_long_term_context_loading(self, user_id: str, query: str, conversation_id: str, is_employee: bool):
-        """Schedule background long-term context loading for future use."""
-        try:
-            from agents.background_tasks import background_task_manager, TaskPriority
-            
-            # Schedule a long-term context loading task with low priority
-            task_id = background_task_manager.schedule_context_loading(
-                user_id=user_id,
-                conversation_id=conversation_id,
-                user_type="employee" if is_employee else "customer",
-                priority=TaskPriority.LOW,
-                context_query=query  # Pass the query for long-term context
-            )
-            logger.debug(f"[LAZY_CONTEXT] Scheduled background long-term context loading: {task_id}")
-            
-        except Exception as e:
-            logger.debug(f"[LAZY_CONTEXT] Error scheduling long-term context loading: {e}")
-            # Don't fail if background scheduling fails
+    # NOTE: Context caching and scheduling functions removed in Task 4.11.3
+    # These functions were redundant after simplification to use only messages and conversation summaries:
+    # - _get_cached_user_context
+    # - _cache_user_context  
+    # - _get_cached_long_term_context
+    # - _cache_long_term_context
+    # - _schedule_context_loading
+    # - _schedule_long_term_context_loading
+    # Context management is now handled by MemoryManager with its own caching system
 
     async def _trigger_summary_generation_if_needed(
         self, messages: List, user_id: str, conversation_id: str, is_employee: bool = True
@@ -1782,150 +1007,11 @@ Failed to deliver your message to {customer_name}.
             logger.error(f"[SUMMARY_GENERATION] Error triggering summary generation: {e}")
             # Don't fail the main context loading process if summary scheduling fails
 
-    async def _load_context_for_employee(
-        self, messages: List, user_id: str, conversation_id: str, lazy: bool = True
-    ) -> List:
-        """
-        PERFORMANCE: Internal context loading for employee users with lazy loading.
-        Replaces memory prep node to eliminate 200-300ms overhead.
-        
-        Steps:
-        1. Load cross-conversation user context (lazy/cached)
-        2. Retrieve relevant long-term memories (lazy/cached)
-        3. Apply context window management
-        4. Return enhanced messages
-        
-        Args:
-            lazy: If True, uses cached context and schedules background updates
-        """
-        try:
-            logger.info(f"[EMPLOYEE_CONTEXT] Starting {'lazy' if lazy else 'full'} context loading")
-            enhanced_messages = list(messages)
-            
-            # Step 1: Lazy user context loading
-            if user_id:
-                if lazy:
-                    # Try to get cached context first (fast path)
-                    user_context = await self._get_cached_user_context(user_id, is_employee=True)
-                    if user_context:
-                        logger.info("[EMPLOYEE_CONTEXT] Using cached user context (lazy)")
-                    else:
-                        # Schedule background context loading for next time
-                        await self._schedule_context_loading(user_id, conversation_id, is_employee=True)
-                        logger.info("[EMPLOYEE_CONTEXT] Scheduled background context loading")
-                else:
-                    # Full context loading (blocking)
-                    user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
-                    # Cache the result
-                    await self._cache_user_context(user_id, user_context, is_employee=True)
-                    logger.info("[EMPLOYEE_CONTEXT] Loaded and cached full user context")
-                
-                # Add user context if available
-                if user_context and user_context.get("has_history", False):
-                    latest_summary = user_context.get("latest_summary", "")
-                    logger.info(f"[EMPLOYEE_CONTEXT] Found user history: {len(latest_summary)} chars")
-                    
-                    # Add user context as system message
-                    context_message = SystemMessage(
-                        content=f"""
-EMPLOYEE USER CONTEXT (from previous conversations):
-
-{latest_summary}
-
-CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
-
-Use this context to provide personalized, contextually aware responses that build on previous interactions with this employee user. This helps maintain continuity and understanding of their role, preferences, and ongoing needs.
-"""
-                    )
-                    enhanced_messages = [context_message] + enhanced_messages
-                    logger.info("[EMPLOYEE_CONTEXT] Added comprehensive user context")
-            
-            # Step 2: Lazy long-term memory retrieval
-            current_query = ""
-            for msg in reversed(enhanced_messages):
-                if hasattr(msg, "type") and msg.type == "human":
-                    current_query = msg.content
-                    break
-                elif isinstance(msg, dict) and msg.get("role") == "human":
-                    current_query = msg.get("content", "")
-                    break
-            
-            if user_id and current_query:
-                if lazy:
-                    # Try to get cached long-term context (fast path)
-                    long_term_context = await self._get_cached_long_term_context(user_id, current_query, is_employee=True)
-                    if long_term_context:
-                        logger.info("[EMPLOYEE_CONTEXT] Using cached long-term context (lazy)")
-                    else:
-                        # Schedule background long-term context loading
-                        await self._schedule_long_term_context_loading(user_id, current_query, conversation_id, is_employee=True)
-                        logger.info("[EMPLOYEE_CONTEXT] Scheduled background long-term context loading")
-                else:
-                    # Full long-term context loading (blocking)
-                    long_term_context = await self.memory_manager.get_relevant_context(
-                        user_id, current_query, max_contexts=5  # More context for employees
-                    )
-                    # Cache the result
-                    await self._cache_long_term_context(user_id, current_query, long_term_context, is_employee=True)
-                    logger.info("[EMPLOYEE_CONTEXT] Loaded and cached full long-term context")
-                
-                # Add long-term context if available
-                if long_term_context:
-                    logger.info(f"[EMPLOYEE_CONTEXT] Retrieved {len(long_term_context)} relevant context items")
-                    
-                    # Add long-term context as system message
-                    context_items = []
-                    for context in long_term_context:
-                        context_items.append(f"- {context.get('content', '')[:200]}...")
-                    
-                    if context_items:
-                        long_term_message = SystemMessage(
-                            content=f"""
-RELEVANT LONG-TERM CONTEXT:
-
-{chr(10).join(context_items)}
-
-This context from previous conversations may be relevant to the current query.
-"""
-                        )
-                        enhanced_messages = [long_term_message] + enhanced_messages
-                        logger.info("[EMPLOYEE_CONTEXT] Added long-term context")
-            
-            # Step 3: Apply context window management with configurable employee limits
-            user_language = detect_user_language_from_context(enhanced_messages, max_messages=10)
-            selected_model = self.settings.openai_chat_model
-            system_prompt = get_employee_system_prompt(self.tool_names, user_language)
-            
-            # Use configurable employee message limit
-            employee_max_messages = self.settings.memory.employee_max_messages
-            logger.info(f"[EMPLOYEE_CONTEXT] Using configurable message limit: {employee_max_messages}")
-            
-            # Check if we need to trigger summary generation before trimming
-            if len(enhanced_messages) > employee_max_messages:
-                await self._trigger_summary_generation_if_needed(
-                    enhanced_messages, user_id, conversation_id, is_employee=True
-                )
-            
-            trimmed_messages, trim_stats = await context_manager.trim_messages_for_context(
-                messages=enhanced_messages,
-                model=selected_model,
-                system_prompt=system_prompt,
-                max_messages=employee_max_messages,
-            )
-            
-            if trim_stats["trimmed_message_count"] > 0:
-                logger.info(
-                    f"[EMPLOYEE_CONTEXT] Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
-                    f"final token count: {trim_stats['final_token_count']}"
-                )
-            
-            logger.info("[EMPLOYEE_CONTEXT] Internal context loading completed successfully")
-            return trimmed_messages
-            
-        except Exception as e:
-            logger.error(f"[EMPLOYEE_CONTEXT] Error in context loading: {e}")
-            # Return original messages on error to prevent workflow disruption
-            return messages
+    # NOTE: _load_context_for_employee removed in Task 4.11.3
+    # This complex context loading function was replaced by simplified approach:
+    # - Context loading now handled directly in _employee_agent_node
+    # - Uses conversation summaries instead of complex context retrieval
+    # - MemoryManager handles caching with its own optimized system
 
     @traceable(name="employee_agent_node")
     async def _employee_agent_node(
@@ -1989,8 +1075,9 @@ This context from previous conversations may be relevant to the current query.
             
             logger.info(f"[EMPLOYEE_AGENT_NODE] Processing {len(messages)} messages for employee {employee_id}")
 
-            # PERFORMANCE: Internal context loading (eliminate memory prep node overhead)
-            trimmed_messages = await self._load_context_for_employee(messages, user_id, conversation_id)
+            # SIMPLIFIED: Direct message processing with conversation summaries
+            # Context loading functions were removed in Task 4.11.3 for simplification
+            trimmed_messages = messages  # Processing with current messages + conversation summary
 
             # Detect user language from conversation context
             current_query = ""
@@ -2005,8 +1092,18 @@ This context from previous conversations may be relevant to the current query.
             user_language = detect_user_language_from_context(trimmed_messages, max_messages=10)
             logger.info(f"[EMPLOYEE_AGENT_NODE] Detected user language from context: {user_language}")
 
-            # Create system prompt for employee with language adaptation
-            system_prompt = get_employee_system_prompt(self.tool_names, user_language)
+            # Get conversation context for system prompt enhancement
+            conversation_summary = state.get("conversation_summary", "")
+            user_context = f"Employee user working with customer ID: {state.get('customer_id', 'N/A')}" if state.get("customer_id") else None
+
+            # Create enhanced system prompt with context
+            system_prompt = get_employee_system_prompt(
+                self.tool_names, 
+                user_language, 
+                conversation_summary=conversation_summary,
+                user_context=user_context,
+                memory_manager=self.memory_manager
+            )
             
             processing_messages = [
                 SystemMessage(content=system_prompt)
@@ -2180,16 +1277,13 @@ This context from previous conversations may be relevant to the current query.
             # Update messages with the conversation
             updated_messages = list(messages) + [AIMessage(content=final_content)]
 
-            # Memory storage will be handled by ea_memory_store node
+            # Memory storage will be handled by background tasks
             # Prepare return state
             return_state = {
                 "messages": updated_messages,
-                "sources": state.get("sources", []),
-                "retrieved_docs": state.get("retrieved_docs", []),
                 "conversation_id": state.get("conversation_id"),
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "long_term_context": state.get("long_term_context", []),
                 "employee_id": employee_id,  # Keep employee_id
                 "customer_id": state.get("customer_id"),  # Keep customer_id
                 # CRITICAL FIX: Include HITL fields in return state for proper routing
@@ -2202,6 +1296,17 @@ This context from previous conversations may be relevant to the current query.
             
             # Always clear execution state for clean routing    
 
+            # PERFORMANCE: Schedule non-blocking background tasks (Task 2.6)
+            if final_content and len(final_content.strip()) > 0:
+                # Schedule message storage for the AI response
+                self._schedule_message_storage(state, final_content, "assistant")
+                
+                # Check if we need to schedule summary generation (when message limits exceeded)
+                message_count = len(updated_messages)
+                max_messages = self.settings.memory.employee_max_messages if self.settings else 12
+                if message_count >= max_messages:
+                    logger.info(f"[EMPLOYEE_AGENT_NODE] Message limit reached ({message_count}/{max_messages}) - scheduling summary generation")
+                    self._schedule_summary_generation(state)
 
             logger.info(f"[EMPLOYEE_AGENT_NODE] Complete workflow finished successfully for {user_type}")
             return return_state
@@ -2236,162 +1341,11 @@ This context from previous conversations may be relevant to the current query.
 
 
 
-    async def _load_context_for_customer(
-        self, messages: List, user_id: str, conversation_id: str, lazy: bool = True
-    ) -> List:
-        """
-        PERFORMANCE: Internal context loading for customer users with lazy loading.
-        Replaces memory prep node to eliminate 200-300ms overhead.
-        
-        Steps:
-        1. Load cross-conversation customer context (lazy/cached)
-        2. Retrieve relevant long-term memories (lazy/cached, customer-appropriate)
-        3. Apply context window management with customer limits
-        4. Return enhanced messages
-        
-        Args:
-            lazy: If True, uses cached context and schedules background updates
-        """
-        try:
-            logger.info(f"[CUSTOMER_CONTEXT] Starting {'lazy' if lazy else 'full'} context loading")
-            enhanced_messages = list(messages)
-            
-            # Step 1: Lazy customer context loading
-            if user_id:
-                if lazy:
-                    # Try to get cached context first (fast path)
-                    user_context = await self._get_cached_user_context(user_id, is_employee=False)
-                    if user_context:
-                        logger.info("[CUSTOMER_CONTEXT] Using cached customer context (lazy)")
-                    else:
-                        # Schedule background context loading for next time
-                        await self._schedule_context_loading(user_id, conversation_id, is_employee=False)
-                        logger.info("[CUSTOMER_CONTEXT] Scheduled background context loading")
-                else:
-                    # Full context loading (blocking)
-                    user_context = await self.memory_manager.get_user_context_for_new_conversation(user_id)
-                    # Cache the result
-                    await self._cache_user_context(user_id, user_context, is_employee=False)
-                    logger.info("[CUSTOMER_CONTEXT] Loaded and cached full customer context")
-                
-                # Add customer context if available
-                if user_context and user_context.get("has_history", False):
-                    latest_summary = user_context.get("latest_summary", "")
-                    logger.info(f"[CUSTOMER_CONTEXT] Found customer history: {len(latest_summary)} chars")
-                    
-                    # Add customer context as system message
-                    context_message = SystemMessage(
-                        content=f"""
-CUSTOMER CONTEXT (from previous conversations):
-
-{latest_summary}
-
-CONVERSATION COUNT: {user_context.get("conversation_count", 0)}
-
-Use this context to provide personalized, helpful responses that build on previous interactions with this customer. Focus on their interests, preferences, and ongoing needs to deliver excellent customer service.
-"""
-                    )
-                    enhanced_messages = [context_message] + enhanced_messages
-                    logger.info("[CUSTOMER_CONTEXT] Added comprehensive customer context")
-            
-            # Step 2: Lazy long-term memory retrieval (customer-appropriate)
-            current_query = ""
-            for msg in reversed(enhanced_messages):
-                if hasattr(msg, "type") and msg.type == "human":
-                    current_query = msg.content
-                    break
-                elif isinstance(msg, dict) and msg.get("role") == "human":
-                    current_query = msg.get("content", "")
-                    break
-            
-            if user_id and current_query:
-                if lazy:
-                    # Try to get cached long-term context (fast path)
-                    customer_appropriate_context = await self._get_cached_long_term_context(user_id, current_query, is_employee=False)
-                    if customer_appropriate_context:
-                        logger.info("[CUSTOMER_CONTEXT] Using cached customer long-term context (lazy)")
-                    else:
-                        # Schedule background long-term context loading
-                        await self._schedule_long_term_context_loading(user_id, current_query, conversation_id, is_employee=False)
-                        logger.info("[CUSTOMER_CONTEXT] Scheduled background long-term context loading")
-                else:
-                    # Full long-term context loading (blocking)
-                    long_term_context = await self.memory_manager.get_relevant_context(
-                        user_id, current_query, max_contexts=3  # Fewer contexts for customers
-                    )
-                    
-                    # Filter for customer-appropriate insights
-                    customer_appropriate_context = []
-                    if long_term_context:
-                        for context in long_term_context:
-                            content = context.get('content', '')
-                            # Simple filtering for customer-appropriate content
-                            if any(keyword in content.lower() for keyword in [
-                                'vehicle', 'car', 'price', 'model', 'feature', 'interest', 'preference',
-                                'budget', 'requirement', 'need', 'looking for', 'want', 'like'
-                            ]):
-                                customer_appropriate_context.append(context)
-                    
-                    # Cache the filtered result
-                    await self._cache_long_term_context(user_id, current_query, customer_appropriate_context, is_employee=False)
-                    logger.info("[CUSTOMER_CONTEXT] Loaded and cached customer-appropriate long-term context")
-                
-                # Add customer-appropriate context if available
-                if customer_appropriate_context:
-                    logger.info(f"[CUSTOMER_CONTEXT] Retrieved {len(customer_appropriate_context)} customer-appropriate context items")
-                    
-                    # Add customer-appropriate context as system message
-                    context_items = []
-                    for context in customer_appropriate_context:
-                        context_items.append(f"- {context.get('content', '')[:200]}...")
-                    
-                    long_term_message = SystemMessage(
-                        content=f"""
-RELEVANT CUSTOMER CONTEXT:
-
-{chr(10).join(context_items)}
-
-This context from previous conversations may help you assist this customer better.
-"""
-                    )
-                    enhanced_messages = [long_term_message] + enhanced_messages
-                    logger.info("[CUSTOMER_CONTEXT] Added customer-appropriate long-term context")
-            
-            # Step 3: Apply context window management with configurable customer limits
-            user_language = detect_user_language_from_context(enhanced_messages, max_messages=10)
-            selected_model = self.settings.openai_chat_model
-            system_prompt = get_customer_system_prompt(user_language)
-            
-            # Use configurable customer message limit
-            customer_max_messages = self.settings.memory.customer_max_messages
-            logger.info(f"[CUSTOMER_CONTEXT] Using configurable message limit: {customer_max_messages}")
-            
-            # Check if we need to trigger summary generation before trimming
-            if len(enhanced_messages) > customer_max_messages:
-                await self._trigger_summary_generation_if_needed(
-                    enhanced_messages, user_id, conversation_id, is_employee=False
-                )
-            
-            trimmed_messages, trim_stats = await context_manager.trim_messages_for_context(
-                messages=enhanced_messages,
-                model=selected_model,
-                system_prompt=system_prompt,
-                max_messages=customer_max_messages,
-            )
-            
-            if trim_stats["trimmed_message_count"] > 0:
-                logger.info(
-                    f"[CUSTOMER_CONTEXT] Context management: trimmed {trim_stats['trimmed_message_count']} messages, "
-                    f"final token count: {trim_stats['final_token_count']}"
-                )
-            
-            logger.info("[CUSTOMER_CONTEXT] Internal context loading completed successfully")
-            return trimmed_messages
-            
-        except Exception as e:
-            logger.error(f"[CUSTOMER_CONTEXT] Error in context loading: {e}")
-            # Return original messages on error to prevent workflow disruption
-            return messages
+    # NOTE: _load_context_for_customer removed in Task 4.11.3
+    # This complex context loading function was replaced by simplified approach:
+    # - Context loading now handled directly in _customer_agent_node  
+    # - Uses conversation summaries instead of complex context retrieval
+    # - MemoryManager handles caching with its own optimized system
 
 
     @traceable(name="customer_agent_node")
@@ -2444,7 +1398,7 @@ This context from previous conversations may help you assist this customer bette
     
                 }
 
-            # PERFORMANCE: Customer-specific lazy context loading (eliminate memory prep node overhead)
+            # SIMPLIFIED: Direct message processing with conversation summaries
             messages = state.get("messages", [])
             conversation_id = state.get("conversation_id")
 
@@ -2483,11 +1437,20 @@ This context from previous conversations may help you assist this customer bette
             # Use customer-specific model selection
             selected_model = self.settings.openai_chat_model
 
-            # Get customer-specific system prompt with language adaptation
-            system_prompt = get_customer_system_prompt(user_language)
+            # Get conversation context for system prompt enhancement  
+            conversation_summary = state.get("conversation_summary", "")
+            user_context = f"Customer user interested in vehicle information" if customer_id else None
+
+            # Get customer-specific system prompt with context enhancement
+            system_prompt = get_customer_system_prompt(
+                user_language,
+                conversation_summary=conversation_summary,
+                user_context=user_context,
+                memory_manager=self.memory_manager
+            )
 
             # Build processing messages with customer system prompt
-            # Context management and user context already handled by ca_memory_prep
+            # Context management now handled by conversation summaries (simplified architecture)
             processing_messages = [
                 SystemMessage(content=system_prompt)
             ] + original_messages
@@ -2626,8 +1589,7 @@ This context from previous conversations may help you assist this customer bette
                 processing_messages.append(final_response)
                 logger.info("[CUSTOMER_AGENT_NODE] Generated final response after tool execution")
 
-            # Extract sources from messages and update state
-            sources = self._extract_sources_from_messages(processing_messages)
+            # Sources extraction removed - no longer needed for state bloat reduction
 
             # Update the original messages with the AI responses (excluding system message)
             updated_messages = list(original_messages)
@@ -2641,20 +1603,43 @@ This context from previous conversations may help you assist this customer bette
                 if thread_id:
                     conversation_id = UUID(thread_id)
 
-            # Memory storage will be handled by ca_memory_store node
+            # Memory storage will be handled by background tasks
             logger.info(f"[CUSTOMER_AGENT_NODE] Agent processing completed successfully")
+
+            # PERFORMANCE: Schedule non-blocking background tasks (Task 2.6)
+            # Find the latest AI response for message storage
+            latest_ai_message = None
+            for msg in reversed(updated_messages):
+                if hasattr(msg, "type") and msg.type == "ai":
+                    latest_ai_message = msg.content
+                    break
+                elif isinstance(msg, dict) and msg.get("role") == "assistant":
+                    latest_ai_message = msg.get("content")
+                    break
+            
+            if latest_ai_message and len(latest_ai_message.strip()) > 0:
+                # Schedule message storage for the AI response
+                self._schedule_message_storage(state, latest_ai_message, "assistant")
+                
+                # Check if we need to schedule summary generation (when message limits exceeded)
+                message_count = len(updated_messages)
+                max_messages = self.settings.memory.customer_max_messages if self.settings else 15
+                if message_count >= max_messages:
+                    logger.info(f"[CUSTOMER_AGENT_NODE] Message limit reached ({message_count}/{max_messages}) - scheduling summary generation")
+                    self._schedule_summary_generation(state)
 
             # Return final state (customers don't use HITL)
             return {
                 "messages": updated_messages,
-                "sources": sources,
-                "retrieved_docs": state.get("retrieved_docs", []),
                 "conversation_id": conversation_id,
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "long_term_context": state.get("long_term_context", []),
                 "customer_id": customer_id,  # Keep customer_id
                 "employee_id": state.get("employee_id"),  # Keep employee_id
+                # HITL fields preserved (even though customers don't use HITL)
+                "hitl_phase": state.get("hitl_phase"),
+                "hitl_prompt": state.get("hitl_prompt"),
+                "hitl_context": state.get("hitl_context"),
                 # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
 
             }
@@ -2684,7 +1669,6 @@ This context from previous conversations may help you assist this customer bette
                 "conversation_id": conversation_id,
                 "user_id": state.get("user_id"),
                 "conversation_summary": state.get("conversation_summary"),
-                "long_term_context": state.get("long_term_context", []),
                 "customer_id": state.get("customer_id"),  # Keep customer_id
                 "employee_id": state.get("employee_id"),  # Keep employee_id
                 # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
@@ -2892,18 +1876,8 @@ This context from previous conversations may help you assist this customer bette
                 }
             }
             
-            # The message was already stored via _send_via_chat_api, 
-            # but we need to ensure it's properly indexed for long-term memory
-            
-            # Update long-term memory context for this customer
-            await self._update_customer_long_term_context(
-                customer_id=actual_customer_id,
-                user_id=user_id,
-                conversation_id=conversation_id,
-                message_content=message_content,
-                message_type=message_type,
-                customer_info=customer_info
-            )
+            # The message was already stored via _send_via_chat_api and handled by background tasks
+            # Long-term memory indexing is handled automatically by the memory system
             
             logger.info(f"[MEMORY_INTEGRATION] Successfully integrated with memory systems for customer {customer_id}")
             return True
@@ -3040,38 +2014,7 @@ This context from previous conversations may help you assist this customer bette
         except Exception as e:
             logger.error(f"[NOTIFICATION] Error sending real-time notification: {str(e)}")
 
-    async def _update_customer_long_term_context(
-        self,
-        customer_id: str,
-        user_id: str,
-        conversation_id: str,
-        message_content: str,
-        message_type: str,
-        customer_info: Dict[str, Any]
-    ) -> None:
-        """
-        Update long-term memory context for this customer interaction.
-        
-        This ensures the message becomes part of the customer's long-term
-        context for future interactions and AI responses.
-        """
-        try:
-            # The message storage via memory_manager already handles most of this,
-            # but we can add additional context indexing here if needed
-            
-            context_update = {
-                'customer_id': customer_id,
-                'interaction_type': 'employee_message',
-                'message_type': message_type,
-                'content_summary': message_content[:200] + "..." if len(message_content) > 200 else message_content,
-                'timestamp': datetime.now().isoformat(),
-                'conversation_id': conversation_id
-            }
-            
-            logger.info(f"[LONG_TERM_CONTEXT] Updated context for customer {customer_info.get('name', customer_id)}")
-            
-        except Exception as e:
-            logger.error(f"[LONG_TERM_CONTEXT] Error updating long-term context: {str(e)}")
+
 
     async def _store_customer_message_audit(
         self,
@@ -3671,14 +2614,9 @@ Important: Use the tools to help you provide the best possible assistance to the
             user_id=user_id,
             customer_id=None,  # Will be set by user_verification node
             employee_id=None,  # Will be set by user_verification node
-            retrieved_docs=(
-                existing_state.get("retrieved_docs", []) if existing_state else []
-            ),
-            sources=existing_state.get("sources", []) if existing_state else [],
             conversation_summary=(
                 existing_state.get("summary") if existing_state else None
             ),
-            long_term_context=[],  # Initialize empty, will be populated by nodes
             # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
             
         )
@@ -3688,7 +2626,7 @@ Important: Use the tools to help you provide the best possible assistance to the
         execution_id = f"{user_id}_{conversation_id}_{int(asyncio.get_event_loop().time())}"
         
         with ExecutionScope(execution_id):
-            # The memory preparation and update nodes handle automatic checkpointing and state persistence
+            # Background tasks handle persistence without blocking the conversation flow
             result = await self.graph.ainvoke(initial_state, config=config)
 
         # Memory management (sliding window, summarization, and persistence) is now handled
@@ -3933,19 +2871,19 @@ Important: Use the tools to help you provide the best possible assistance to the
                             }
                         except Exception as e:
                             logger.error(f"🔄 [AGENT_RESUME] Fallback tool-managed handling error: {e}")
-                            # Route to memory store for final processing as last resort
-                            node_result = await self._employee_memory_store_node(updated_state, {"configurable": {"thread_id": conversation_id}})
+                            # Schedule background task for final processing as last resort
+                            await self._schedule_message_persistence(updated_state)
                             result = {
-                                "messages": node_result.get("messages", []),
+                                "messages": updated_state.get("messages", []),
                                 "conversation_id": conversation_id,
                                 "user_id": actual_user_id,
                             }
                     else:
-                        # Route to memory store for final processing
-                        node_result = await self._employee_memory_store_node(updated_state, {"configurable": {"thread_id": conversation_id}})
+                        # Schedule background task for final processing
+                        await self._schedule_message_persistence(updated_state)
                         
                         result = {
-                            "messages": node_result.get("messages", []),
+                            "messages": updated_state.get("messages", []),
                             "conversation_id": conversation_id,
                             "user_id": actual_user_id,
                         }

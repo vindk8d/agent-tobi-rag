@@ -5,6 +5,8 @@ Handles OpenAI text embedding models with rate limiting and error handling.
 
 import asyncio
 import time
+import hashlib
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import openai
@@ -24,6 +26,15 @@ class EmbeddingResult:
     processing_time_ms: int
 
 
+@dataclass
+class EmbeddingCacheEntry:
+    """Cache entry for embedding results"""
+    result: EmbeddingResult
+    created_at: datetime
+    access_count: int = 0
+    last_accessed: datetime = None
+
+
 class OpenAIEmbeddings:
     """
     OpenAI Embeddings service for text embedding models.
@@ -36,6 +47,11 @@ class OpenAIEmbeddings:
         self.model: str = "text-embedding-3-small"  # Default model
         self.batch_size: int = 100  # Default batch size
         self.tokenizer = None  # Will be initialized asynchronously
+        
+        # Embedding cache for token conservation
+        self._embedding_cache: Dict[str, EmbeddingCacheEntry] = {}
+        self._cache_ttl_hours: int = 24  # Cache TTL in hours
+        self._max_cache_size: int = 1000  # Maximum number of cached embeddings
 
     async def _init_tokenizer_async(self, model: str):
         """Initialize tokenizer asynchronously to avoid blocking calls."""
@@ -48,6 +64,113 @@ class OpenAIEmbeddings:
 
         # Move tokenizer initialization to thread to avoid os.getcwd() blocking calls
         return await asyncio.to_thread(_get_tokenizer)
+
+    def _generate_cache_key(self, text: str, model: str) -> str:
+        """Generate a cache key for text and model combination"""
+        # Create a hash of text + model for consistent caching
+        content = f"{text}|{model}"
+        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+    def _is_cache_entry_valid(self, entry: EmbeddingCacheEntry) -> bool:
+        """Check if a cache entry is still valid (not expired)"""
+        ttl_delta = timedelta(hours=self._cache_ttl_hours)
+        return datetime.now() - entry.created_at < ttl_delta
+
+    def _cleanup_expired_cache(self):
+        """Remove expired entries from cache"""
+        current_time = datetime.now()
+        expired_keys = []
+        
+        for key, entry in self._embedding_cache.items():
+            if not self._is_cache_entry_valid(entry):
+                expired_keys.append(key)
+        
+        for key in expired_keys:
+            del self._embedding_cache[key]
+
+    def _evict_old_cache_entries(self):
+        """Evict oldest cache entries if cache size exceeds limit"""
+        if len(self._embedding_cache) <= self._max_cache_size:
+            return
+        
+        # Sort by last accessed time (or created time if never accessed)
+        sorted_entries = sorted(
+            self._embedding_cache.items(),
+            key=lambda x: x[1].last_accessed or x[1].created_at
+        )
+        
+        # Remove oldest entries until we're under the limit
+        entries_to_remove = len(self._embedding_cache) - self._max_cache_size
+        for i in range(entries_to_remove):
+            key = sorted_entries[i][0]
+            del self._embedding_cache[key]
+
+    def _get_cached_embedding(self, text: str, model: str) -> Optional[EmbeddingResult]:
+        """Get embedding from cache if available and valid"""
+        cache_key = self._generate_cache_key(text, model)
+        
+        if cache_key not in self._embedding_cache:
+            return None
+        
+        entry = self._embedding_cache[cache_key]
+        
+        # Check if entry is still valid
+        if not self._is_cache_entry_valid(entry):
+            del self._embedding_cache[cache_key]
+            return None
+        
+        # Update access tracking
+        entry.access_count += 1
+        entry.last_accessed = datetime.now()
+        
+        return entry.result
+
+    def _cache_embedding(self, text: str, model: str, result: EmbeddingResult):
+        """Cache an embedding result"""
+        cache_key = self._generate_cache_key(text, model)
+        
+        # Clean up expired entries periodically
+        if len(self._embedding_cache) % 100 == 0:  # Every 100 additions
+            self._cleanup_expired_cache()
+        
+        # Create cache entry
+        entry = EmbeddingCacheEntry(
+            result=result,
+            created_at=datetime.now(),
+            access_count=1,
+            last_accessed=datetime.now()
+        )
+        
+        self._embedding_cache[cache_key] = entry
+        
+        # Evict old entries if needed
+        self._evict_old_cache_entries()
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get embedding cache statistics for monitoring"""
+        if not self._embedding_cache:
+            return {
+                "cache_size": 0,
+                "hit_rate": 0.0,
+                "total_access_count": 0,
+                "expired_entries": 0
+            }
+        
+        total_access_count = sum(entry.access_count for entry in self._embedding_cache.values())
+        expired_count = sum(1 for entry in self._embedding_cache.values() if not self._is_cache_entry_valid(entry))
+        
+        # Calculate approximate hit rate (access_count > 1 means cache hits)
+        hit_count = sum(max(0, entry.access_count - 1) for entry in self._embedding_cache.values())
+        hit_rate = hit_count / max(1, total_access_count) if total_access_count > 0 else 0.0
+        
+        return {
+            "cache_size": len(self._embedding_cache),
+            "max_cache_size": self._max_cache_size,
+            "hit_rate": round(hit_rate, 3),
+            "total_access_count": total_access_count,
+            "expired_entries": expired_count,
+            "cache_ttl_hours": self._cache_ttl_hours
+        }
 
     async def _ensure_initialized(self):
         """Ensure the client is initialized asynchronously."""
@@ -117,14 +240,26 @@ class OpenAIEmbeddings:
         )
         return response.data[0].embedding
 
-    async def embed_single_text(self, text: str) -> EmbeddingResult:
+    async def embed_single_text(self, text: str, use_cache: bool = True) -> EmbeddingResult:
         """
-        Generate embedding for a single text string.
+        Generate embedding for a single text string with caching support.
         Returns an EmbeddingResult with embedding, metadata, and timing.
+        
+        Args:
+            text: Text to embed
+            use_cache: Whether to use/update cache (default: True)
         """
         start_time = time.time()
 
         await self._ensure_initialized()
+
+        # Check cache first if enabled
+        if use_cache:
+            cached_result = self._get_cached_embedding(text, self.model)
+            if cached_result is not None:
+                # Update processing time to reflect cache hit
+                cached_result.processing_time_ms = int((time.time() - start_time) * 1000)
+                return cached_result
 
         # Count tokens asynchronously
         token_count = await self.count_tokens_async(text)
@@ -134,13 +269,19 @@ class OpenAIEmbeddings:
 
         processing_time_ms = int((time.time() - start_time) * 1000)
 
-        return EmbeddingResult(
+        result = EmbeddingResult(
             embedding=embedding,
             text=text,
             token_count=token_count,
             model=self.model,
             processing_time_ms=processing_time_ms
         )
+
+        # Cache the result if caching is enabled
+        if use_cache:
+            self._cache_embedding(text, self.model, result)
+
+        return result
 
     async def embed_batch(self, texts: List[str]) -> List[EmbeddingResult]:
         """

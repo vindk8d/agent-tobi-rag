@@ -160,16 +160,18 @@ class CustomMemoryManager(ConversationMemoryManager):
 The moving context window integrates seamlessly with the RAG agent:
 
 ```python
-# In the RAG agent, the memory preparation node handles context automatically
-async def _memory_preparation_node(self, state, config):
-    effective_context = await self.memory_manager.get_effective_context(
-        state["messages"], 
-        state.get("conversation_summary")
-    )
-    return {
-        "messages": effective_context["messages"],  # Enhanced with context
-        "conversation_summary": effective_context["conversation_summary"]
-    }
+# UPDATED: Context handling is now simplified and integrated into agent nodes
+async def _employee_agent_node(self, state, config):
+    # Context loading is now handled directly in agent nodes with conversation summaries
+    messages = state.get("messages", [])
+    conversation_summary = state.get("conversation_summary")
+    
+    # Background tasks handle persistence without blocking
+    await self._schedule_message_persistence(state)
+    await self._schedule_summary_generation(state)
+    
+    # Process with current messages + summary context
+    return await self._process_with_tools(messages, conversation_summary)
 ```
 
 ## Best Practices

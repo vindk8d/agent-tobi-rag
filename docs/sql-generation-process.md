@@ -9,7 +9,7 @@ This document explains the complete SQL generation process in the Tobi RAG Agent
 ```
 User Query → RAG Agent → Tool Selection → SQL Generation → Database Execution → Response
      ↓            ↓            ↓              ↓               ↓              ↓
-LangGraph   Memory Prep   query_crm_data   get_table_info   PostgreSQL   Memory Update
+LangGraph   Background Tasks   query_crm_data   get_table_info   PostgreSQL   Background Tasks
 ```
 
 ## Step-by-Step Process
@@ -20,16 +20,20 @@ LangGraph   Memory Prep   query_crm_data   get_table_info   PostgreSQL   Memory 
 - LangGraph workflow initiates with automatic state persistence
 
 ### 2. Agent Workflow (LangGraph)
-The agent follows this three-node workflow:
+The agent follows this simplified workflow:
 ```
-Memory Preparation → Agent Processing → Memory Update
+User Verification → Agent Processing → Background Tasks
 ```
 
-**Memory Preparation Node:**
-- Retrieves conversation context from checkpointed state
-- Loads relevant long-term context (max 3 items)
-- Stores incoming user message to database
-- Preserves conversation continuity
+**User Verification Node:**
+- Verifies user access and permissions
+- Routes to appropriate agent (employee/customer)
+
+**Agent Processing Node (Simplified):**
+- Retrieves conversation context from checkpointer
+- Loads conversation summaries for context (no complex context loading)
+- Processes user queries with tool calling
+- Schedules background tasks for persistence
 
 **Agent Processing Node:**
 - Unified tool-calling and execution

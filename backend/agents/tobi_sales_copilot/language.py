@@ -172,17 +172,28 @@ def detect_user_language_from_context(messages, max_messages: int = 10) -> str:
     return result
 
 
-def get_employee_system_prompt(tool_names: List[str], user_language: str = 'english') -> str:
+def get_employee_system_prompt(tool_names: List[str], user_language: str = 'english', conversation_summary: str = None, user_context: str = None, memory_manager=None) -> str:
     """
-    Get the system prompt for employee users with language adaptation.
+    Get the system prompt for employee users with language adaptation and context enhancement.
     
     Args:
         tool_names: List of available tool names
         user_language: Detected user language ('english', 'filipino', 'taglish')
+        conversation_summary: Recent conversation summary for context
+        user_context: Additional user context information
+        memory_manager: Memory manager instance for token conservation caching
         
     Returns:
-        Language-adapted system prompt string
+        Language-adapted and context-enhanced system prompt string
     """
+    
+    # Token conservation: Check cache first
+    if memory_manager:
+        cached_prompt = memory_manager.cache_system_prompt(
+            tool_names, user_language, conversation_summary, user_context
+        )
+        if cached_prompt:
+            return cached_prompt
     
     # Language-specific tone and examples
     if user_language == 'taglish':
@@ -318,13 +329,26 @@ It comes with Toyota's Safety Sense suite including adaptive cruise control, lan
 What specific aspects would you like to know more about?"
 """
 
-    return f"""You are a helpful sales assistant with full access to company tools and data.
+    # Build context section if available
+    context_section = ""
+    if conversation_summary or user_context:
+        context_section = "\n**CONVERSATION CONTEXT:**\n"
+        
+        if conversation_summary:
+            context_section += f"Recent conversation summary: {conversation_summary}\n"
+            
+        if user_context:
+            context_section += f"User context: {user_context}\n"
+            
+        context_section += "Use this context to provide more personalized and informed responses.\n"
+
+    prompt = f"""You are a helpful sales assistant with full access to company tools and data.
 
 Available tools:
 {', '.join(tool_names)}
 
 {language_instructions}
-
+{context_section}
 **IMPORTANT - Current System Status:**
 All employee identification and customer messaging systems are fully operational. You can directly use trigger_customer_message for any customer messaging requests without needing additional employee information.
 
@@ -355,17 +379,36 @@ You have full access to:
 
 Be helpful, professional, and make full use of your available tools to assist with sales and customer management tasks."""
 
+    # Token conservation: Cache the generated prompt
+    if memory_manager:
+        memory_manager.store_system_prompt(
+            prompt, tool_names, user_language, conversation_summary, user_context
+        )
+    
+    return prompt
 
-def get_customer_system_prompt(user_language: str = 'english') -> str:
+
+def get_customer_system_prompt(user_language: str = 'english', conversation_summary: str = None, user_context: str = None, memory_manager=None) -> str:
     """
-    Get the customer-specific system prompt with restricted capabilities and language adaptation.
+    Get the customer-specific system prompt with restricted capabilities, language adaptation, and context enhancement.
     
     Args:
         user_language: Detected user language ('english', 'filipino', 'taglish')
+        conversation_summary: Recent conversation summary for context
+        user_context: Additional user context information
+        memory_manager: Memory manager instance for token conservation caching
         
     Returns:
-        Language-adapted customer system prompt string
+        Language-adapted and context-enhanced customer system prompt string
     """
+    
+    # Token conservation: Check cache first (use empty tool_names list for customers)
+    if memory_manager:
+        cached_prompt = memory_manager.cache_system_prompt(
+            [], user_language, conversation_summary, user_context
+        )
+        if cached_prompt:
+            return cached_prompt
     
     # Language-specific tone and examples
     if user_language == 'taglish':
@@ -467,14 +510,27 @@ What makes it really stand out is the advanced technology and safety features. I
 Are you interested in any specific features or would you like to know about different trim levels?"
 """
 
-    return f"""You are a helpful vehicle sales assistant designed specifically for customers looking for vehicle information.
+    # Build context section if available
+    context_section = ""
+    if conversation_summary or user_context:
+        context_section = "\n**CONVERSATION CONTEXT:**\n"
+        
+        if conversation_summary:
+            context_section += f"Previous conversation summary: {conversation_summary}\n"
+            
+        if user_context:
+            context_section += f"Customer context: {user_context}\n"
+            
+        context_section += "Use this context to provide more personalized vehicle recommendations and responses.\n"
+
+    prompt = f"""You are a helpful vehicle sales assistant designed specifically for customers looking for vehicle information.
 
 You have access to specialized tools for customer inquiries:
 - simple_rag: Search company documents and vehicle information
 - simple_query_crm_data: Query vehicle specifications, pricing, and inventory data
 
 {language_instructions}
-
+{context_section}
 **IMPORTANT - Your Access Capabilities:**
 - You CAN help with vehicle specifications, models, features, and pricing information
 - You CAN access vehicle inventory and availability data
@@ -511,3 +567,11 @@ Guidelines:
 - Provide source citations when documents are found
 
 Remember: You are here to help customers make informed vehicle purchasing decisions!"""
+
+    # Token conservation: Cache the generated prompt
+    if memory_manager:
+        memory_manager.store_system_prompt(
+            prompt, [], user_language, conversation_summary, user_context
+        )
+    
+    return prompt

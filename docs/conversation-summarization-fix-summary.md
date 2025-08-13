@@ -10,9 +10,12 @@ The user reported that conversation summarization wasn't running despite having 
 **Problem**: The `ConversationMemoryManager` class was referenced in tests and documentation but didn't exist in the production codebase.
 
 **Solution**: 
-- Implemented `check_and_trigger_summarization()` method in `ConversationConsolidator`
+- ~~Implemented `check_and_trigger_summarization()` method in `ConversationConsolidator`~~ **[UPDATED]**
+- **NEW**: Integrated summarization into `BackgroundTaskManager` for better performance
 - Added automatic message counting and summarization trigger logic
 - Integrated with existing memory management system
+
+**UPDATE (Task 4.11.6)**: The `ConversationConsolidator` class has been removed and its functionality integrated into `BackgroundTaskManager` for simplified architecture following LangGraph best practices.
 
 ### 2. 🔧 **Inconsistent Configuration**  
 **Problem**: Multiple conflicting message thresholds documented (8, 10, 12 messages) but none implemented.

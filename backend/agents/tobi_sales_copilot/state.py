@@ -38,13 +38,6 @@ class AgentState(TypedDict):
     customer_id: Optional[str]  # Populated for customer users
     employee_id: Optional[str]  # Populated for employee users
 
-    # RAG context and results (current session)
-    retrieved_docs: List[Dict[str, Any]]
-    sources: List[Dict[str, Any]]
-
-    # Long-term memory context
-    long_term_context: Optional[List[Dict[str, Any]]]
-
     # Optional conversation summary (for very long conversations)
     conversation_summary: Optional[str]
 

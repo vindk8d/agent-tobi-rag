@@ -186,8 +186,8 @@ async def test_employee_agent_routing_logic():
     # Test 1: No HITL needed
     state_no_hitl = create_3field_hitl_state(phase=None, prompt=None, context=None)
     route_no_hitl = agent.route_from_employee_agent(state_no_hitl)
-    assert route_no_hitl == "ea_memory_store", "Should route to memory store when no HITL needed"
-    print("✅ No HITL: employee_agent → ea_memory_store")
+    assert route_no_hitl == "end", "Should route to end when no HITL needed"
+    print("✅ No HITL: employee_agent → end")
     
     # Test 2: HITL needed - needs_prompt phase
     state_needs_prompt = create_3field_hitl_state(
@@ -212,8 +212,8 @@ async def test_employee_agent_routing_logic():
     # Test 4: HITL completely cleared - no phase
     state_cleared = create_3field_hitl_state(phase=None, prompt=None, context=None)
     route_cleared = agent.route_from_employee_agent(state_cleared)
-    assert route_cleared == "ea_memory_store", "Should route to memory store when HITL is cleared"
-    print("✅ HITL cleared: employee_agent → ea_memory_store")
+    assert route_cleared == "end", "Should route to end when HITL is cleared"
+    print("✅ HITL cleared: employee_agent → end")
     
     print("✅ Employee agent routing uses 3-field architecture correctly")
 

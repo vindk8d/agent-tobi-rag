@@ -266,7 +266,7 @@ async def test_error_handling_during_interrupts():
     
     # Should safely route to memory store when HITL data is invalid
     routing_result = agent.route_from_employee_agent(invalid_hitl_state)
-    assert routing_result == "ea_memory_store", "Should safely route to memory store with invalid HITL data"
+    assert routing_result == "end", "Should safely route to end with invalid HITL data"
     print("✅ Safe routing with invalid HITL data")
     
     # Test handling of malformed HITL data
@@ -278,7 +278,7 @@ async def test_error_handling_during_interrupts():
     
     # Should still route safely 
     routing_result = agent.route_from_employee_agent(malformed_hitl_state)
-    assert routing_result == "ea_memory_store", "Should safely handle malformed HITL data"
+    assert routing_result == "end", "Should safely handle malformed HITL data"
     print("✅ Safe routing with malformed HITL data")
 
 
@@ -332,8 +332,8 @@ async def test_end_to_end_interrupt_simulation():
     final_state["hitl_data"] = None  # HITL interaction complete
     
     final_routing = agent.route_from_employee_agent(final_state)
-    assert final_routing == "ea_memory_store", "Should route to memory store when complete"
-    print("✅ Final routing to memory store (workflow complete)")
+    assert final_routing == "end", "Should route to end when complete"
+    print("✅ Final routing to end (workflow complete)")
 
 
 async def test_interrupt_configuration_verification():
