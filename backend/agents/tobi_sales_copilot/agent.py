@@ -35,7 +35,7 @@ if str(backend_path) not in sys.path:
 from agents.tobi_sales_copilot.state import AgentState
 from agents.tobi_sales_copilot.language import detect_user_language_from_context, get_employee_system_prompt, get_customer_system_prompt
 from agents.toolbox import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
-from agents.memory import memory_manager, memory_scheduler, context_manager
+from agents.memory import memory_manager, memory_scheduler
 from agents.background_tasks import BackgroundTaskManager, BackgroundTask, TaskPriority
 from agents.hitl import parse_tool_response, hitl_node
 from core.config import get_settings, setup_langsmith_tracing
