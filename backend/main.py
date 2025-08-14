@@ -2,11 +2,25 @@
 Main FastAPI application for RAG-Tobi
 """
 
+import sys
+import os
+from pathlib import Path
+
+# Smart path setup for deployment compatibility
+# Development: running from /backend directory, need to add current dir to path
+# Production: running from /app directory, current dir is already in path
+current_dir = Path(__file__).parent
+
+# In development, we're in /project-root/backend/
+# In production, we're in /app/
+# Add current directory to path so imports like 'from core.config' work in both contexts
+if str(current_dir) not in sys.path:
+    sys.path.insert(0, str(current_dir))
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
-import os
 import asyncio
 from contextlib import asynccontextmanager
 

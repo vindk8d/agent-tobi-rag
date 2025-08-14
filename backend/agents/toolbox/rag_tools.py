@@ -38,7 +38,7 @@ async def _ensure_retriever():
                 logger.info("[RAG] SemanticRetriever initialized successfully")
             except ImportError:
                 try:
-                    from backend.rag.retriever import SemanticRetriever
+                    from rag.retriever import SemanticRetriever
                     _retriever = SemanticRetriever()
                     logger.info("[RAG] SemanticRetriever initialized successfully")
                 except ImportError:

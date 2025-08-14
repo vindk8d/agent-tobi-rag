@@ -16,19 +16,57 @@ Performance Goals:
 - 60-80% response time improvement by removing blocking operations
 - 70% AgentState size reduction following LangGraph best practices
 - Token conservation through smart caching and minimal LLM calls
+
+PORTABLE USAGE FOR ANY AGENT:
+===============================
+
+Any agent can use the background task system by importing the global instance:
+
+```python
+from agents.background_tasks import background_task_manager
+
+class MyAgent:
+    def __init__(self):
+        self.background_task_manager = background_task_manager
+    
+    async def my_agent_node(self, state, config):
+        # ... agent processing ...
+        
+        # Store messages using portable method (works with any agent state)
+        if response_content:
+            self.background_task_manager.schedule_message_from_agent_state(
+                state, response_content, "assistant"
+            )
+        
+        # Generate summaries when needed using portable method
+        message_count = len(state.get("messages", []))
+        if message_count >= threshold:
+            self.background_task_manager.schedule_summary_from_agent_state(state)
+        
+        return state
+```
+
+The portable methods automatically extract:
+- conversation_id, user_id, customer_id, employee_id from state
+- message metadata and timestamps
+- appropriate priority levels and retry logic
+
+This ensures consistent background processing across all agents without code duplication.
 """
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Dict, List, Optional, Any
-from uuid import uuid4
+from typing import Dict, List, Optional, Any, Callable, Tuple, Union
+from uuid import UUID, uuid4
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
+import json
 
-from backend.core.config import get_settings
-from backend.core.database import db_client
+from core.config import get_settings
+from core.database import db_client
 
 logger = logging.getLogger(__name__)
 
@@ -272,36 +310,95 @@ class BackgroundTaskManager:
         
         return self.schedule_task(task)
     
-    def schedule_context_loading(self, user_id: str, conversation_id: str,
-                                customer_id: Optional[str] = None, employee_id: Optional[str] = None,
-                                priority: TaskPriority = TaskPriority.HIGH) -> str:
+    # =================================================================
+    # PORTABLE AGENT HELPER METHODS
+    # Universal methods that any agent can use for background tasks
+    # =================================================================
+    
+    def schedule_message_from_agent_state(self, state, message_content: str, role: str) -> None:
         """
-        Schedule lazy context loading for user data.
+        PORTABLE: Schedule non-blocking message storage from agent state.
+        
+        Any agent can use this method by passing their state and message details.
+        Extracts necessary context from state automatically.
         
         Args:
-            user_id: User ID
-            conversation_id: Conversation ID
-            customer_id: Customer ID (if customer user)
-            employee_id: Employee ID (if employee user)
-            priority: Task priority (default HIGH for immediate needs)
-            
-        Returns:
-            Task ID
+            state: Agent state with conversation context (any agent's state)
+            message_content: Content of the message to store
+            role: Message role (user, assistant, etc.)
         """
-        task = BackgroundTask(
-            task_type="context_loading",
-            priority=priority,
-            data={
-                "load_user_context": True,
-                "load_conversation_history": True
-            },
-            conversation_id=conversation_id,
-            user_id=user_id,
-            customer_id=customer_id,
-            employee_id=employee_id
-        )
+        try:
+            task = BackgroundTask(
+                task_type="store_message",
+                priority=TaskPriority.HIGH,  # Message storage is high priority
+                data={
+                    "conversation_id": state.get("conversation_id"),
+                    "user_id": state.get("user_id"),
+                    "customer_id": state.get("customer_id"),
+                    "employee_id": state.get("employee_id"),
+                    "role": role,
+                    "content": message_content,
+                    "metadata": {
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "agent_type": "employee" if state.get("employee_id") else "customer"
+                    }
+                },
+                conversation_id=state.get("conversation_id"),
+                user_id=state.get("user_id"),
+                customer_id=state.get("customer_id"),
+                employee_id=state.get("employee_id")
+            )
+            
+            # Schedule the task non-blocking
+            task_id = self.schedule_task(task)
+            logger.info(f"[PORTABLE_BACKGROUND_TASK] Scheduled message storage task: {task_id}")
+            
+        except Exception as e:
+            logger.error(f"[PORTABLE_BACKGROUND_TASK] Failed to schedule message storage: {e}")
+    
+    def schedule_summary_from_agent_state(self, state) -> None:
+        """
+        PORTABLE: Schedule non-blocking conversation summary generation from agent state.
         
-        return self.schedule_task(task)
+        Any agent can use this method by passing their state.
+        Automatically determines thresholds and extracts context from state.
+        
+        Args:
+            state: Agent state with conversation context (any agent's state)
+        """
+        try:
+            # Get settings for threshold determination
+            if hasattr(self, 'settings') and self.settings:
+                summary_threshold = self.settings.memory.summary_threshold if hasattr(self.settings, 'memory') else 10
+            else:
+                summary_threshold = 10
+                
+            task = BackgroundTask(
+                task_type="generate_summary",
+                priority=TaskPriority.NORMAL,  # Summary generation is normal priority
+                data={
+                    "conversation_id": state.get("conversation_id"),
+                    "user_id": state.get("user_id"),
+                    "customer_id": state.get("customer_id"),
+                    "employee_id": state.get("employee_id"),
+                    "trigger_reason": "message_limit_exceeded",
+                    "message_count": len(state.get("messages", [])),
+                    "threshold": summary_threshold
+                },
+                conversation_id=state.get("conversation_id"),
+                user_id=state.get("user_id"),
+                customer_id=state.get("customer_id"),
+                employee_id=state.get("employee_id")
+            )
+            
+            # Schedule the task non-blocking
+            task_id = self.schedule_task(task)
+            logger.info(f"[PORTABLE_BACKGROUND_TASK] Scheduled summary generation task: {task_id}")
+            
+        except Exception as e:
+            logger.error(f"[PORTABLE_BACKGROUND_TASK] Failed to schedule summary generation: {e}")
+    
+
     
     async def _processing_loop(self):
         """Main background processing loop."""
@@ -718,44 +815,7 @@ class BackgroundTaskManager:
             logger.error(f"Error getting conversation messages for {conversation_id}: {e}")
             return []
 
-    async def get_user_context_for_new_conversation(self, user_id: str) -> Dict[str, Any]:
-        """
-        Get user context for new conversations using conversation summaries.
-        Migrated and simplified from ConversationConsolidator.get_user_context_for_new_conversation
-        """
-        try:
-            def _get_user_context():
-                # Get latest conversation summaries for this user
-                summaries = db_client.client.table("conversation_summaries").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(3).execute()
-                
-                # Count total conversations
-                conversations = db_client.client.table("conversations").select("id").eq("user_id", user_id).execute()
-                
-                return {
-                    "summaries": summaries.data if summaries.data else [],
-                    "conversation_count": len(conversations.data) if conversations.data else 0
-                }
 
-            result = await asyncio.get_event_loop().run_in_executor(None, _get_user_context)
-            
-            if result["summaries"]:
-                # Combine recent summaries into a single context
-                latest_summary = "\n\n".join([s.get("summary", "") for s in result["summaries"][:2]])
-                return {
-                    "has_history": True,
-                    "latest_summary": latest_summary,
-                    "conversation_count": result["conversation_count"]
-                }
-            else:
-                return {
-                    "has_history": False,
-                    "latest_summary": "",
-                    "conversation_count": 0
-                }
-
-        except Exception as e:
-            logger.error(f"Error getting user context for {user_id}: {e}")
-            return {"has_history": False, "latest_summary": "", "conversation_count": 0}
 
     async def get_conversation_summary(self, conversation_id: str) -> Optional[str]:
         """

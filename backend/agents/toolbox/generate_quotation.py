@@ -29,7 +29,7 @@ from .toolbox import (
 
 # HITL imports - using relative imports for toolbox
 try:
-    from backend.agents.hitl import hitl_recursive_tool, request_input
+    from agents.hitl import hitl_recursive_tool, request_input
 except ImportError:
     # Fallback for when running from backend directory
     import sys

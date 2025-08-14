@@ -26,8 +26,8 @@ from pydantic import BaseModel, Field
 
 # Backend imports - using minimal dependencies for toolbox
 try:
-    from backend.core.config import get_settings_sync
-    from backend.core.database import get_db_client
+    from core.config import get_settings_sync
+    from core.database import get_db_client
     settings = get_settings_sync()
     get_db_connection = get_db_client  # Alias for compatibility
 except ImportError:
@@ -51,7 +51,7 @@ except ImportError:
 
 # Conversation import with fallback
 try:
-    from backend.models.conversation import get_conversation_messages
+    from models.conversation import get_conversation_messages
 except ImportError:
     try:
         from models.conversation import get_conversation_messages
@@ -234,7 +234,7 @@ class QuotationBusinessIntelligence:
         customer_info: Dict[str, Any],
         vehicle_requirements: Dict[str, Any],
         purchase_preferences: Dict[str, Any],
-        market_context: Dict[str, Any] = None
+        market_context: Optional[Dict[str, Any]] = None
     ) -> PricingAnalysis:
         """
         Analyze pricing context using LLM-driven business intelligence.
@@ -519,7 +519,7 @@ IMPORTANT: Return ONLY valid JSON, no explanations or additional text."""
         # If no JSON found, return the response as-is and let JSON parsing handle the error
         return response_content
 
-async def get_appropriate_llm(question: str = None) -> ChatOpenAI:
+async def get_appropriate_llm(question: Optional[str] = None) -> ChatOpenAI:
     """Get appropriate LLM based on query complexity."""
     try:
         messages = []
@@ -535,7 +535,7 @@ async def get_appropriate_llm(question: str = None) -> ChatOpenAI:
             max_tokens=2000
         )
 
-async def get_sql_llm(question: str = None) -> ChatOpenAI:
+async def get_sql_llm(question: Optional[str] = None) -> ChatOpenAI:
     """Get LLM optimized for SQL generation tasks."""
     try:
         return ChatOpenAI(
@@ -733,7 +733,7 @@ class SupabaseQueryInterface:
         result_lines = [header, separator] + rows
         return "\n".join(result_lines)
     
-    def get_table_info(self, table_names: list = None) -> str:
+    def get_table_info(self, table_names: Optional[List[str]] = None) -> str:
         """Get table information in SQLDatabase-compatible format."""
         # Return schema information for the requested tables
         tables = table_names or ['customers', 'vehicles', 'employees', 'conversations', 'messages']

@@ -23,14 +23,15 @@ from langchain_core.messages import (
 )
 from langsmith import traceable
 
-# Import strategy for LangGraph Studio compatibility
-# Add backend directory to path for absolute imports
+# Smart path setup for deployment compatibility
+# Development: running from /backend directory, need backend dir in path  
+# Production: running from /app directory, current structure works directly
 import pathlib
 backend_path = pathlib.Path(__file__).parent.parent.parent
 if str(backend_path) not in sys.path:
     sys.path.insert(0, str(backend_path))
 
-# Now use absolute imports
+# Use direct imports (no backend. prefix) for deployment compatibility
 from agents.tobi_sales_copilot.state import AgentState
 from agents.tobi_sales_copilot.language import detect_user_language_from_context, get_employee_system_prompt, get_customer_system_prompt
 from agents.toolbox import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
@@ -39,6 +40,16 @@ from agents.background_tasks import BackgroundTaskManager, BackgroundTask, TaskP
 from agents.hitl import parse_tool_response, hitl_node
 from core.config import get_settings, setup_langsmith_tracing
 from core.database import db_client
+# Import portable utilities
+from utils.user_verification import verify_user_access, verify_employee_access, handle_access_denied
+from utils.api_processing import process_agent_result_for_api, process_user_message
+from utils.message_delivery import (
+    execute_customer_message_delivery,
+    send_via_chat_api,
+    format_business_message,
+    get_or_create_customer_user,
+    get_or_create_customer_conversation
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,76 +139,7 @@ class UnifiedToolCallingRAGAgent:
         except Exception as e:
             logger.error(f"Error during agent cleanup: {e}")
 
-    def _schedule_message_storage(self, state: AgentState, message_content: str, role: str) -> None:
-        """
-        Schedule non-blocking message storage to Supabase messages table.
-        
-        Args:
-            state: Current agent state with conversation context
-            message_content: Content of the message to store
-            role: Message role (user, assistant, etc.)
-        """
-        try:
-            task = BackgroundTask(
-                task_type="store_message",
-                priority=TaskPriority.HIGH,  # Message storage is high priority
-                data={
-                    "conversation_id": state.get("conversation_id"),
-                    "user_id": state.get("user_id"),
-                    "customer_id": state.get("customer_id"),
-                    "employee_id": state.get("employee_id"),
-                    "role": role,
-                    "content": message_content,
-                    "metadata": {
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "agent_type": "employee" if state.get("employee_id") else "customer"
-                    }
-                },
-                conversation_id=state.get("conversation_id"),
-                user_id=state.get("user_id"),
-                customer_id=state.get("customer_id"),
-                employee_id=state.get("employee_id")
-            )
-            
-            # Schedule the task non-blocking
-            task_id = self.background_task_manager.schedule_task(task)
-            logger.info(f"[BACKGROUND_TASK] Scheduled message storage task: {task_id}")
-            
-        except Exception as e:
-            logger.error(f"[BACKGROUND_TASK] Failed to schedule message storage: {e}")
 
-    def _schedule_summary_generation(self, state: AgentState) -> None:
-        """
-        Schedule non-blocking conversation summary generation when message limits are exceeded.
-        
-        Args:
-            state: Current agent state with conversation context
-        """
-        try:
-            task = BackgroundTask(
-                task_type="generate_summary",
-                priority=TaskPriority.NORMAL,  # Summary generation is normal priority
-                data={
-                    "conversation_id": state.get("conversation_id"),
-                    "user_id": state.get("user_id"),
-                    "customer_id": state.get("customer_id"),
-                    "employee_id": state.get("employee_id"),
-                    "trigger_reason": "message_limit_exceeded",
-                    "message_count": len(state.get("messages", [])),
-                    "threshold": self.settings.memory.summary_threshold if self.settings else 10
-                },
-                conversation_id=state.get("conversation_id"),
-                user_id=state.get("user_id"),
-                customer_id=state.get("customer_id"),
-                employee_id=state.get("employee_id")
-            )
-            
-            # Schedule the task non-blocking
-            task_id = self.background_task_manager.schedule_task(task)
-            logger.info(f"[BACKGROUND_TASK] Scheduled summary generation task: {task_id}")
-            
-        except Exception as e:
-            logger.error(f"[BACKGROUND_TASK] Failed to schedule summary generation: {e}")
 
     async def _build_graph(self) -> StateGraph:
         """Build a graph with automatic checkpointing and state persistence between agent steps."""
@@ -265,7 +207,7 @@ class UnifiedToolCallingRAGAgent:
 
     @traceable(name="user_verification_node")
     async def _user_verification_node(
-        self, state: AgentState, config: Dict[str, Any] = None
+        self, state: AgentState, config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Streamlined user verification node that performs ALL identification processes.
@@ -320,7 +262,7 @@ class UnifiedToolCallingRAGAgent:
 
             if not user_result.data or len(user_result.data) == 0:
                 logger.warning(f"[USER_VERIFICATION_NODE] No user found for user_id: {user_id}")
-                return await self._handle_access_denied(state, conversation_id, "User not found in system")
+                return await handle_access_denied(state, conversation_id, "User not found in system")
 
             user_record = user_result.data[0]
             user_type = user_record.get("user_type", "").lower()
@@ -333,13 +275,13 @@ class UnifiedToolCallingRAGAgent:
             # Check if user is active
             if not is_active:
                 logger.warning(f"[USER_VERIFICATION_NODE] User {user_id} is inactive")
-                return await self._handle_access_denied(state, conversation_id, "Account is inactive")
+                return await handle_access_denied(state, conversation_id, "Account is inactive")
 
             # Handle employee users
             if user_type in ["employee", "admin"]:
                 if not user_employee_id:
                     logger.warning(f"[USER_VERIFICATION_NODE] Employee user has no employee_id")
-                    return await self._handle_access_denied(state, conversation_id, "Employee record incomplete")
+                    return await handle_access_denied(state, conversation_id, "Employee record incomplete")
 
                 # Verify employee record exists and is active
                 employee_result = await asyncio.to_thread(
@@ -352,7 +294,7 @@ class UnifiedToolCallingRAGAgent:
 
                 if not employee_result.data or len(employee_result.data) == 0:
                     logger.warning(f"[USER_VERIFICATION_NODE] No active employee found for employee_id: {user_employee_id}")
-                    return await self._handle_access_denied(state, conversation_id, "Employee record not found")
+                    return await handle_access_denied(state, conversation_id, "Employee record not found")
 
                 employee = employee_result.data[0]
                 logger.info(f"[USER_VERIFICATION_NODE] ✅ Employee access verified - {employee['name']} ({employee['position']})")
@@ -370,7 +312,7 @@ class UnifiedToolCallingRAGAgent:
             elif user_type == "customer":
                 if not user_customer_id:
                     logger.warning(f"[USER_VERIFICATION_NODE] Customer user has no customer_id")
-                    return await self._handle_access_denied(state, conversation_id, "Customer record incomplete")
+                    return await handle_access_denied(state, conversation_id, "Customer record incomplete")
 
                 # Verify customer record exists
                 customer_result = await asyncio.to_thread(
@@ -382,7 +324,7 @@ class UnifiedToolCallingRAGAgent:
 
                 if not customer_result.data or len(customer_result.data) == 0:
                     logger.warning(f"[USER_VERIFICATION_NODE] No customer found for customer_id: {user_customer_id}")
-                    return await self._handle_access_denied(state, conversation_id, "Customer record not found")
+                    return await handle_access_denied(state, conversation_id, "Customer record not found")
 
                 customer = customer_result.data[0]
                 logger.info(f"[USER_VERIFICATION_NODE] ✅ Customer access verified - {customer['name']} ({customer['email']})")
@@ -399,35 +341,13 @@ class UnifiedToolCallingRAGAgent:
             # Handle unknown user types
             else:
                 logger.warning(f"[USER_VERIFICATION_NODE] Unknown user_type: {user_type}")
-                return await self._handle_access_denied(state, conversation_id, f"Unsupported user type: {user_type}")
+                return await handle_access_denied(state, conversation_id, f"Unsupported user type: {user_type}")
 
         except Exception as e:
             logger.error(f"[USER_VERIFICATION_NODE] Error in user verification node: {str(e)}")
-            return await self._handle_access_denied(state, conversation_id, "System error during verification")
+            return await handle_access_denied(state, conversation_id, "System error during verification")
 
-    async def _handle_access_denied(self, state: AgentState, conversation_id: Optional[str], reason: str) -> Dict[str, Any]:
-        """Helper method to handle access denied scenarios with consistent messaging."""
-        logger.warning(f"[USER_VERIFICATION_NODE] Access denied: {reason}")
-        
-        error_message = AIMessage(
-            content="""I apologize, but I'm unable to verify your access to the system.
 
-This could be due to:
-- Your account may be inactive or suspended
-- You may not have the necessary permissions
-- There may be a temporary system issue
-
-Please contact your system administrator for assistance, or try again later."""
-        )
-
-        return {
-            "messages": state.get("messages", []) + [error_message],
-            "conversation_id": conversation_id,
-            "user_id": state.get("user_id"),
-            "conversation_summary": state.get("conversation_summary"),
-            "customer_id": None,
-            "employee_id": None,
-        }
 
     # =================================================================
     # MEMORY PREPARATION NODES - Removed in Task 4.11 (Streamlined Architecture)
@@ -973,7 +893,9 @@ Failed to deliver your message to {customer_name}.
         """
         try:
             # Get the appropriate threshold
-            summary_threshold = self.settings.memory.summary_threshold
+            summary_threshold = (self.settings.memory.summary_threshold 
+                               if self.settings and hasattr(self.settings, 'memory') 
+                               else 10)
             message_count = len(messages)
             
             logger.info(f"[SUMMARY_CHECK] Message count: {message_count}, threshold: {summary_threshold}")
@@ -1013,9 +935,42 @@ Failed to deliver your message to {customer_name}.
     # - Uses conversation summaries instead of complex context retrieval
     # - MemoryManager handles caching with its own optimized system
 
+    async def _get_conversation_context_simple(self, conversation_id: str, user_id: str) -> str:
+        """
+        LangGraph-native simple conversation context loading with graceful fallback.
+        
+        This method provides conversation context for system prompt enhancement while
+        following LangGraph best practices:
+        - Uses conversation summaries as enhancement data, not critical path
+        - Graceful degradation when summaries aren't available yet
+        - Non-blocking, fast response times maintained
+        
+        Args:
+            conversation_id: Conversation ID for context lookup
+            user_id: User ID for context lookup
+            
+        Returns:
+            Simple context string for system prompt enhancement
+        """
+        try:
+            # Try to get existing summary from background task manager
+            from agents.background_tasks import background_task_manager
+            summary = await background_task_manager.get_conversation_summary(conversation_id)
+            
+            if summary and summary.strip():
+                return f"Previous conversation context: {summary}"
+            else:
+                # Graceful fallback - no complex loading needed
+                return "New conversation - no previous context available."
+                
+        except Exception as e:
+            logger.debug(f"[SIMPLE_CONTEXT] Summary not available yet for {conversation_id}: {e}")
+            # Never fail - graceful degradation is key
+            return "Conversation context loading in progress..."
+
     @traceable(name="employee_agent_node")
     async def _employee_agent_node(
-        self, state: AgentState, config: Dict[str, Any] = None
+        self, state: AgentState, config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Employee agent node with full tool access and customer messaging capabilities.
@@ -1068,7 +1023,7 @@ Failed to deliver your message to {customer_name}.
             
             if not employee_id:
                 logger.warning(f"[EMPLOYEE_AGENT_NODE] Non-employee user routed to employee node")
-                return await self._handle_access_denied(state, conversation_id, "Employee access required")
+                return await handle_access_denied(state, conversation_id, "Employee access required")
 
             # Set user_type for this employee agent node
             user_type = "employee"
@@ -1092,16 +1047,21 @@ Failed to deliver your message to {customer_name}.
             user_language = detect_user_language_from_context(trimmed_messages, max_messages=10)
             logger.info(f"[EMPLOYEE_AGENT_NODE] Detected user language from context: {user_language}")
 
-            # Get conversation context for system prompt enhancement
+            # Get conversation context using LangGraph-native simple approach (Task 4.13.8)
+            # Use state.conversation_summary as primary source, lazy load from DB as fallback
             conversation_summary = state.get("conversation_summary", "")
-            user_context = f"Employee user working with customer ID: {state.get('customer_id', 'N/A')}" if state.get("customer_id") else None
+            if not conversation_summary:
+                conversation_summary = await self._get_conversation_context_simple(conversation_id, user_id)
+            
+            # Simple user context building
+            user_context = f"Employee user" + (f" working with customer ID: {state.get('customer_id')}" if state.get('customer_id') else "")
 
             # Create enhanced system prompt with context
             system_prompt = get_employee_system_prompt(
-                self.tool_names, 
+                self.tool_names or [], 
                 user_language, 
-                conversation_summary=conversation_summary,
-                user_context=user_context,
+                conversation_summary=conversation_summary or "",
+                user_context=user_context or "",
                 memory_manager=self.memory_manager
             )
             
@@ -1117,12 +1077,12 @@ Failed to deliver your message to {customer_name}.
             employee_tools = get_tools_for_user_type(user_type="employee")
             
             # Create LLM and bind employee tools
-            selected_model = self.settings.openai_chat_model
+            selected_model = self.settings.openai_chat_model if self.settings else "gpt-4o-mini"
             llm = ChatOpenAI(
                 model=selected_model,
-                temperature=self.settings.openai_temperature,
-                max_tokens=self.settings.openai_max_tokens,
-                api_key=self.settings.openai_api_key,
+                temperature=self.settings.openai_temperature if self.settings else 0.3,
+                max_tokens=self.settings.openai_max_tokens if self.settings else 4000,
+                api_key=self.settings.openai_api_key if self.settings else "",
             ).bind_tools(employee_tools)
 
             logger.info(f"[EMPLOYEE_AGENT_NODE] Using model: {selected_model}")
@@ -1134,24 +1094,16 @@ Failed to deliver your message to {customer_name}.
                 iteration += 1
                 logger.info(f"[EMPLOYEE_AGENT_NODE] Agent iteration {iteration}")
 
-                # CRITICAL: Implement LangGraph-style moving context window
-                # Trim processing_messages to prevent context window bloat while preserving database records
-                # Use smart trimming that preserves tool_calls/tool message pairs
+                # LANGGRAPH BEST PRACTICE: Use conversation summarization instead of message trimming
+                # Let LangGraph handle message management naturally through add_messages annotation
+                # If we have too many messages, the background task system will generate summaries
+                # This preserves message object integrity and follows LangGraph patterns
                 max_context_messages = getattr(self.settings, 'memory_max_messages', 12)
                 
                 if len(processing_messages) > max_context_messages:
-                    from agents.memory import context_manager
-                    trimmed_messages = context_manager.smart_trim_messages_preserving_tool_pairs(
-                        processing_messages, 
-                        max_context_messages
-                    )
-                    logger.info(f"[EMPLOYEE_AGENT_NODE] 🔄 Applied moving context window: {len(processing_messages)} → {len(trimmed_messages)} messages")
-                    
-                    # Validate message sequence to prevent API errors
-                    if not context_manager.validate_message_sequence(trimmed_messages):
-                        logger.error("[EMPLOYEE_AGENT_NODE] ❌ Invalid message sequence after trimming - this will cause API errors")
-                    
-                    processing_messages = trimmed_messages
+                    logger.info(f"[EMPLOYEE_AGENT_NODE] 🔄 Large context detected ({len(processing_messages)} messages) - relying on conversation summaries instead of trimming")
+                    # Note: Background tasks will handle summarization when message limits are reached
+                    # This approach preserves message object integrity and follows LangGraph best practices
 
                 # Call the model
                 response = await llm.ainvoke(processing_messages)
@@ -1163,14 +1115,21 @@ Failed to deliver your message to {customer_name}.
 
                     # Execute tools
                     for tool_call in response.tool_calls:
-                        tool_name = tool_call["name"]
-                        tool_args = tool_call["args"]
-                        tool_call_id = tool_call["id"]
+                        # Handle both dict and object formats for tool_call
+                        if isinstance(tool_call, dict):
+                            tool_name = tool_call["name"]
+                            tool_args = tool_call["args"]
+                            tool_call_id = tool_call["id"]
+                        else:
+                            # OpenAI tool_call object with attributes
+                            tool_name = tool_call.name
+                            tool_args = tool_call.args
+                            tool_call_id = tool_call.id
 
                         logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
 
                         try:
-                            tool = self.tool_map.get(tool_name)
+                            tool = self.tool_map.get(tool_name) if self.tool_map else None
                             if tool:
                                 # Set user context
                                 user_id = state.get("user_id")
@@ -1296,17 +1255,17 @@ Failed to deliver your message to {customer_name}.
             
             # Always clear execution state for clean routing    
 
-            # PERFORMANCE: Schedule non-blocking background tasks (Task 2.6)
+            # PERFORMANCE: Schedule non-blocking background tasks (Task 2.6) using portable methods
             if final_content and len(final_content.strip()) > 0:
-                # Schedule message storage for the AI response
-                self._schedule_message_storage(state, final_content, "assistant")
+                # Schedule message storage for the AI response using portable method
+                self.background_task_manager.schedule_message_from_agent_state(state, final_content, "assistant")
                 
                 # Check if we need to schedule summary generation (when message limits exceeded)
                 message_count = len(updated_messages)
                 max_messages = self.settings.memory.employee_max_messages if self.settings else 12
                 if message_count >= max_messages:
                     logger.info(f"[EMPLOYEE_AGENT_NODE] Message limit reached ({message_count}/{max_messages}) - scheduling summary generation")
-                    self._schedule_summary_generation(state)
+                    self.background_task_manager.schedule_summary_from_agent_state(state)
 
             logger.info(f"[EMPLOYEE_AGENT_NODE] Complete workflow finished successfully for {user_type}")
             return return_state
@@ -1350,7 +1309,7 @@ Failed to deliver your message to {customer_name}.
 
     @traceable(name="customer_agent_node")
     async def _customer_agent_node(
-        self, state: AgentState, config: Dict[str, Any] = None
+        self, state: AgentState, config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Customer agent node with simplified context management:
@@ -1404,10 +1363,8 @@ Failed to deliver your message to {customer_name}.
 
             logger.info(f"[CUSTOMER_AGENT_NODE] Processing {len(messages)} messages with customer-specific context management")
 
-            # Customer-specific lazy context loading with enhanced filtering
-            original_messages = await self._load_context_for_customer(
-                messages, user_id, conversation_id, lazy=True  # Use lazy loading by default
-            )
+            # SIMPLIFIED: Use messages directly instead of complex context loading
+            original_messages = messages
             
             # Extract current query for customer-specific processing
             current_query = "No query"
@@ -1435,17 +1392,22 @@ Failed to deliver your message to {customer_name}.
             logger.info(f"[CUSTOMER_AGENT_NODE] Thread ID: {thread_id}, Conversation ID: {conversation_id}")
 
             # Use customer-specific model selection
-            selected_model = self.settings.openai_chat_model
+            selected_model = self.settings.openai_chat_model if self.settings else "gpt-4o-mini"
 
-            # Get conversation context for system prompt enhancement  
+            # Get conversation context using LangGraph-native simple approach (Task 4.13.8)
+            # Use state.conversation_summary as primary source, lazy load from DB as fallback
             conversation_summary = state.get("conversation_summary", "")
+            if not conversation_summary:
+                conversation_summary = await self._get_conversation_context_simple(conversation_id, user_id)
+            
+            # Simple user context building
             user_context = f"Customer user interested in vehicle information" if customer_id else None
 
             # Get customer-specific system prompt with context enhancement
             system_prompt = get_customer_system_prompt(
                 user_language,
-                conversation_summary=conversation_summary,
-                user_context=user_context,
+                conversation_summary=conversation_summary or "",
+                user_context=user_context or "",
                 memory_manager=self.memory_manager
             )
 
@@ -1461,9 +1423,9 @@ Failed to deliver your message to {customer_name}.
             # Create LLM with selected model and bind customer tools
             llm = ChatOpenAI(
                 model=selected_model,
-                temperature=self.settings.openai_temperature,
-                max_tokens=self.settings.openai_max_tokens,
-                api_key=self.settings.openai_api_key,
+                temperature=self.settings.openai_temperature if self.settings else 0.3,
+                max_tokens=self.settings.openai_max_tokens if self.settings else 4000,
+                api_key=self.settings.openai_api_key if self.settings else "",
             ).bind_tools(customer_tools)
 
             logger.info(f"[CUSTOMER_AGENT_NODE] Using model: {selected_model} for customer query processing")
@@ -1477,24 +1439,16 @@ Failed to deliver your message to {customer_name}.
                 iteration += 1
                 logger.info(f"[CUSTOMER_AGENT_NODE] Agent iteration {iteration}")
 
-                # CRITICAL: Implement LangGraph-style moving context window
-                # Trim processing_messages to prevent context window bloat while preserving database records
-                # Use smart trimming that preserves tool_calls/tool message pairs
+                # LANGGRAPH BEST PRACTICE: Use conversation summarization instead of message trimming
+                # Let LangGraph handle message management naturally through add_messages annotation
+                # If we have too many messages, the background task system will generate summaries
+                # This preserves message object integrity and follows LangGraph patterns
                 max_context_messages = getattr(self.settings, 'memory_max_messages', 12)
                 
                 if len(processing_messages) > max_context_messages:
-                    from agents.memory import context_manager
-                    trimmed_messages = context_manager.smart_trim_messages_preserving_tool_pairs(
-                        processing_messages, 
-                        max_context_messages
-                    )
-                    logger.info(f"[CUSTOMER_AGENT_NODE] 🔄 Applied moving context window: {len(processing_messages)} → {len(trimmed_messages)} messages")
-                    
-                    # Validate message sequence to prevent API errors
-                    if not context_manager.validate_message_sequence(trimmed_messages):
-                        logger.error("[CUSTOMER_AGENT_NODE] ❌ Invalid message sequence after trimming - this will cause API errors")
-                    
-                    processing_messages = trimmed_messages
+                    logger.info(f"[CUSTOMER_AGENT_NODE] 🔄 Large context detected ({len(processing_messages)} messages) - relying on conversation summaries instead of trimming")
+                    # Note: Background tasks will handle summarization when message limits are reached
+                    # This approach preserves message object integrity and follows LangGraph best practices
 
                 # Call the model with customer tools
                 response = await llm.ainvoke(processing_messages)
@@ -1506,9 +1460,16 @@ Failed to deliver your message to {customer_name}.
 
                     # Execute the tools with customer restrictions
                     for tool_call in response.tool_calls:
-                        tool_name = tool_call["name"]
-                        tool_args = tool_call["args"]
-                        tool_call_id = tool_call["id"]
+                        # Handle both dict and object formats for tool_call
+                        if isinstance(tool_call, dict):
+                            tool_name = tool_call["name"]
+                            tool_args = tool_call["args"]
+                            tool_call_id = tool_call["id"]
+                        else:
+                            # OpenAI tool_call object with attributes
+                            tool_name = tool_call.name
+                            tool_args = tool_call.args
+                            tool_call_id = tool_call.id
 
                         logger.info(f"[CUSTOMER_AGENT_NODE] Executing tool: {tool_name} with args: {tool_args}")
 
@@ -1606,7 +1567,7 @@ Failed to deliver your message to {customer_name}.
             # Memory storage will be handled by background tasks
             logger.info(f"[CUSTOMER_AGENT_NODE] Agent processing completed successfully")
 
-            # PERFORMANCE: Schedule non-blocking background tasks (Task 2.6)
+            # PERFORMANCE: Schedule non-blocking background tasks (Task 2.6) using portable methods
             # Find the latest AI response for message storage
             latest_ai_message = None
             for msg in reversed(updated_messages):
@@ -1618,15 +1579,15 @@ Failed to deliver your message to {customer_name}.
                     break
             
             if latest_ai_message and len(latest_ai_message.strip()) > 0:
-                # Schedule message storage for the AI response
-                self._schedule_message_storage(state, latest_ai_message, "assistant")
+                # Schedule message storage for the AI response using portable method
+                self.background_task_manager.schedule_message_from_agent_state(state, latest_ai_message, "assistant")
                 
                 # Check if we need to schedule summary generation (when message limits exceeded)
                 message_count = len(updated_messages)
                 max_messages = self.settings.memory.customer_max_messages if self.settings else 15
                 if message_count >= max_messages:
                     logger.info(f"[CUSTOMER_AGENT_NODE] Message limit reached ({message_count}/{max_messages}) - scheduling summary generation")
-                    self._schedule_summary_generation(state)
+                    self.background_task_manager.schedule_summary_from_agent_state(state)
 
             # Return final state (customers don't use HITL)
             return {
@@ -2384,148 +2345,16 @@ Important: Use the tools to help you provide the best possible assistance to the
 
         logger.info("RAG-specific memory plugins registered")
 
-    async def _verify_user_access(self, user_id: str) -> str:
-        """
-        Verify user access and return user type (employee, customer, unknown).
-        
-        This function replaces the previous employee-only verification with dual-user support.
-        It determines if a user is an employee, customer, or unknown based on database records.
 
-        Args:
-            user_id: The users.id (UUID)
-
-        Returns:
-            str: User type - 'employee', 'customer', or 'unknown'
-        """
-        try:
-            # Import database client
-            # Ensure database client is initialized
-            await db_client._async_initialize_client()
-
-            # Look up the user in the users table
-            logger.info(f"[USER_VERIFICATION] Looking up user by ID: {user_id}")
-            user_result = await asyncio.to_thread(
-                lambda: db_client.client.table("users")
-                .select("id, user_type, employee_id, customer_id, email, display_name, is_active")
-                .eq("id", user_id)
-                .execute()
-            )
-
-            if not user_result.data or len(user_result.data) == 0:
-                logger.warning(f"[USER_VERIFICATION] No user found for user_id: {user_id}")
-                return "unknown"
-
-            user_record = user_result.data[0]
-            user_type = user_record.get("user_type", "").lower()
-            employee_id = user_record.get("employee_id")
-            customer_id = user_record.get("customer_id")
-            is_active = user_record.get("is_active", False)
-            email = user_record.get("email", "")
-            display_name = user_record.get("display_name", "")
-
-            logger.info(f"[USER_VERIFICATION] User found - Type: {user_type}, Active: {is_active}, Email: {email}")
-
-            # Check if user is active
-            if not is_active:
-                logger.warning(f"[USER_VERIFICATION] User {user_id} is inactive - denying access")
-                return "unknown"
-
-            # Handle employee users
-            if user_type == "employee":
-                if not employee_id:
-                    logger.warning(f"[USER_VERIFICATION] Employee user {user_id} has no employee_id - treating as unknown")
-                    return "unknown"
-
-                # Verify employee record exists and is active
-                logger.info(f"[USER_VERIFICATION] Verifying employee record for employee_id: {employee_id}")
-                employee_result = await asyncio.to_thread(
-                    lambda: db_client.client.table("employees")
-                    .select("id, name, email, position, is_active")
-                    .eq("id", employee_id)
-                    .eq("is_active", True)
-                    .execute()
-                )
-
-                if employee_result.data and len(employee_result.data) > 0:
-                    employee = employee_result.data[0]
-                    logger.info(f"[USER_VERIFICATION] ✅ Employee access verified - {employee['name']} ({employee['position']})")
-                    return "employee"
-                else:
-                    logger.warning(f"[USER_VERIFICATION] No active employee found for employee_id: {employee_id}")
-                    return "unknown"
-
-            # Handle customer users
-            elif user_type == "customer":
-                if not customer_id:
-                    logger.warning(f"[USER_VERIFICATION] Customer user {user_id} has no customer_id - treating as unknown")
-                    return "unknown"
-
-                # Verify customer record exists
-                logger.info(f"[USER_VERIFICATION] Verifying customer record for customer_id: {customer_id}")
-                customer_result = await asyncio.to_thread(
-                    lambda: db_client.client.table("customers")
-                    .select("id, name, email")
-                    .eq("id", customer_id)
-                    .execute()
-                )
-
-                if customer_result.data and len(customer_result.data) > 0:
-                    customer = customer_result.data[0]
-                    logger.info(f"[USER_VERIFICATION] ✅ Customer access verified - {customer['name']} ({customer['email']})")
-                    return "customer"
-                else:
-                    logger.warning(f"[USER_VERIFICATION] No customer found for customer_id: {customer_id}")
-                    return "unknown"
-
-            # Handle admin users (treat as employees for now)
-            elif user_type == "admin":
-                logger.info(f"[USER_VERIFICATION] ✅ Admin user detected - granting employee-level access")
-                return "employee"
-
-            # Handle system users (deny access)
-            elif user_type == "system":
-                logger.warning(f"[USER_VERIFICATION] System user detected - denying access for security")
-                return "unknown"
-
-            # Handle unknown user types
-            else:
-                logger.warning(f"[USER_VERIFICATION] Unknown user_type: {user_type} for user {user_id}")
-                return "unknown"
-
-        except Exception as e:
-            logger.error(f"[USER_VERIFICATION] Error verifying user access for user_id {user_id}: {str(e)}")
-            # On database errors, return unknown for security
-            return "unknown"
-
-    async def _verify_employee_access(self, user_id: str) -> bool:
-        """
-        Legacy method for backward compatibility.
-        
-        This method now uses the new _verify_user_access function internally
-        but maintains the boolean return type for existing code.
-
-        Args:
-            user_id: The users.id (UUID)
-
-        Returns:
-            bool: True if user is an employee (including admin), False otherwise
-        """
-        logger.info(f"[LEGACY] _verify_employee_access called - delegating to _verify_user_access")
-        user_type = await self._verify_user_access(user_id)
-        
-        # Return True for employees and admins, False for customers and unknown
-        is_employee = user_type in ["employee", "admin"]
-        logger.info(f"[LEGACY] User type '{user_type}' -> employee access: {is_employee}")
-        return is_employee
 
     @traceable(name="agent_invoke")
     async def invoke(
         self,
         user_query: str,  # Only accepts string queries now
-        conversation_id: str = None,
-        user_id: str = None,
-        conversation_history: List = None,
-        config: Dict[str, Any] = None,
+        conversation_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        conversation_history: Optional[List] = None,
+        config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Invoke the unified tool-calling RAG agent with thread-based persistence.
@@ -2898,258 +2727,26 @@ Important: Use the tools to help you provide the best possible assistance to the
             logger.error(f"❌ [AGENT_RESUME] Error resuming conversation {conversation_id}: {e}")
             return {"error": f"Failed to resume conversation: {str(e)}"}
 
+    # API processing methods now use portable utilities
     async def _process_agent_result_for_api(self, result: Dict[str, Any], conversation_id: str) -> Dict[str, Any]:
-        """
-        Process agent result and return clean semantic data for API layer.
-        
-        This method encapsulates all LangGraph-specific result processing logic,
-        providing a clean interface that abstracts away LangGraph internals.
-        
-        Args:
-            result: Raw result from LangGraph agent execution
-            conversation_id: Conversation ID for context
-            
-        Returns:
-            Dict containing clean, semantic data for API response:
-            - message: Final message content
-            - sources: Document sources if any
-            - is_interrupted: Boolean indicating if human interaction is needed
-            - hitl_phase/hitl_prompt/hitl_context: HITL interaction data if interrupted (3-field architecture)
-        """
-        try:
-            logger.info(f"🔍 [RESULT_PROCESSING] Processing agent result for API response")
-            logger.info(f"🔍 [RESULT_PROCESSING] Result keys: {list(result.keys()) if result else 'None'}")
-            
-            # Initialize clean response structure
-            api_response = {
-                "message": "I apologize, but I encountered an issue processing your request.",
-                "sources": [],
-                "is_interrupted": False
-            }
-            
-            if not result:
-                return api_response
-            
-            # =================================================================
-            # STEP 1: Check for HITL (Human-in-the-Loop) interactions - REVOLUTIONARY 3-FIELD ARCHITECTURE
-            # =================================================================
-            hitl_phase = result.get('hitl_phase')
-            hitl_prompt = result.get('hitl_prompt')
-            hitl_context = result.get('hitl_context')
-            
-            if hitl_phase and hitl_prompt:
-                logger.info(f"🔍 [RESULT_PROCESSING] 🎯 HITL STATE DETECTED! Phase: {hitl_phase}")
-                
-                # Return HITL prompt with clean interface - no LangGraph details
-                api_response.update({
-                    "message": hitl_prompt,
-                    "is_interrupted": True,
-                    "hitl_phase": hitl_phase,
-                    "hitl_prompt": hitl_prompt,
-                    "hitl_context": hitl_context or {}
-                })
-                return api_response
-            
-            # =================================================================
-            # STEP 2: Check for legacy LangGraph interrupts (for backward compatibility)
-            # =================================================================
-            is_interrupted = False
-            interrupt_message = ""
-            
-            # Check for LangGraph's internal interrupt indicators
-            if isinstance(result, dict) and '__interrupt__' in result:
-                logger.info(f"🔍 [RESULT_PROCESSING] Legacy LangGraph interrupt detected")
-                is_interrupted = True
-                
-                # Extract interrupt message from LangGraph's internal format
-                interrupt_data = result['__interrupt__']
-                if isinstance(interrupt_data, list) and len(interrupt_data) > 0:
-                    first_interrupt = interrupt_data[0]
-                    if hasattr(first_interrupt, 'value'):
-                        interrupt_message = str(first_interrupt.value)
-                        logger.info(f"🔍 [RESULT_PROCESSING] Extracted legacy interrupt message")
-            elif hasattr(result, '__interrupt__'):
-                logger.info(f"🔍 [RESULT_PROCESSING] Legacy LangGraph interrupt attribute detected")
-                is_interrupted = True
-            
-            # Handle legacy interrupts
-            if is_interrupted and interrupt_message:
-                logger.info(f"🔍 [RESULT_PROCESSING] Processing legacy interrupt for conversation {conversation_id}")
-                
-                api_response.update({
-                    "message": interrupt_message,
-                    "is_interrupted": True,
-                    "hitl_phase": "awaiting_response",
-                    "hitl_prompt": interrupt_message,
-                    "hitl_context": {"legacy": True}
-                })
-                return api_response
-            
-            # =================================================================
-            # STEP 3: Check for error states first
-            # =================================================================
-            if result.get('error'):
-                logger.error(f"🔍 [RESULT_PROCESSING] Agent returned error: {result['error']}")
-                error_msg = result['error']
-                
-                # Provide user-friendly error messages based on error type
-                if "Failed to resume conversation" in error_msg:
-                    user_friendly_msg = "I'm having trouble processing your approval right now. Please try again, or contact support if the issue persists."
-                elif "Synchronous calls to AsyncPostgresSaver" in error_msg:
-                    user_friendly_msg = "I encountered a technical issue while processing your request. Please try again in a moment."
-                elif "not found in database" in error_msg:
-                    user_friendly_msg = "This conversation session has expired. Please start a new conversation."
-                else:
-                    user_friendly_msg = "I encountered an unexpected error. Please try your request again or contact support if the problem continues."
-                
-                api_response.update({
-                    "message": user_friendly_msg,
-                    "sources": [],
-                    "is_interrupted": False,
-                    "error": True,
-                    "error_details": error_msg  # For debugging/logging
-                })
-                return api_response
-            
-            # =================================================================
-            # STEP 4: Extract normal conversation response
-            # =================================================================
-            logger.info(f"🔍 [RESULT_PROCESSING] Processing normal conversation response")
-            
-            # Extract final message content (excluding tool messages to prevent duplicates)
-            final_message_content = ""
-            messages = result.get('messages', [])
-            
-            if messages:
-                logger.info(f"🔍 [RESULT_PROCESSING] Found {len(messages)} messages in result")
-                
-                # CRITICAL FIX: Filter out ToolMessage objects to prevent duplicate display
-                # Tool messages are internal LangChain constructs and shouldn't appear in user interface
-                filtered_messages = []
-                for msg in messages:
-                    if hasattr(msg, 'type') and msg.type == 'tool':
-                        logger.debug(f"🔍 [RESULT_PROCESSING] Filtering out tool message: {getattr(msg, 'name', 'unknown')}")
-                        continue
-                    elif isinstance(msg, dict) and msg.get('type') == 'tool':
-                        logger.debug(f"🔍 [RESULT_PROCESSING] Filtering out tool message dict: {msg.get('name', 'unknown')}")
-                        continue
-                    else:
-                        filtered_messages.append(msg)
-                
-                logger.info(f"🔍 [RESULT_PROCESSING] Filtered {len(messages) - len(filtered_messages)} tool messages, {len(filtered_messages)} remaining")
-                
-                # Get the final assistant message (after filtering tool messages)
-                for msg in reversed(filtered_messages):
-                    if hasattr(msg, 'type') and msg.type == 'ai':
-                        final_message_content = msg.content
-                        logger.info(f"🔍 [RESULT_PROCESSING] Found final AI message: '{final_message_content[:100]}...'")
-                        break
-                    elif isinstance(msg, dict) and msg.get('role') == 'assistant':
-                        final_message_content = msg.get('content', '')
-                        logger.info(f"🔍 [RESULT_PROCESSING] Found final assistant message: '{final_message_content[:100]}...'")
-                        break
-                    elif hasattr(msg, 'content') and not hasattr(msg, 'type'):
-                        # Fallback for generic message objects
-                        final_message_content = msg.content
-                        logger.info(f"🔍 [RESULT_PROCESSING] Found final generic message: '{final_message_content[:100]}...'")
-                        break
-                
-                if not final_message_content:
-                    logger.warning(f"🔍 [RESULT_PROCESSING] No suitable final message found in {len(filtered_messages)} filtered messages")
-                    # Use the last non-tool message as fallback
-                    if filtered_messages:
-                        last_msg = filtered_messages[-1]
-                        if hasattr(last_msg, 'content'):
-                            final_message_content = last_msg.content
-                        elif isinstance(last_msg, dict):
-                            final_message_content = last_msg.get('content', '')
-                        logger.info(f"🔍 [RESULT_PROCESSING] Using fallback message: '{final_message_content[:100]}...'")
-            
-            # Fallback if no content found - provide helpful message instead of false success
-            if not final_message_content.strip():
-                logger.warning(f"🔍 [RESULT_PROCESSING] No message content found in agent result")
-                final_message_content = "I processed your request, but didn't generate a response message. If you were expecting a specific action or response, please try rephrasing your request."
-            
-            # Extract sources if any
-            sources = result.get('sources', [])
-            logger.info(f"🔍 [RESULT_PROCESSING] Found {len(sources)} sources")
-            
-            # Return clean response
-            api_response.update({
-                "message": final_message_content,
-                "sources": sources,
-                "is_interrupted": False
-            })
-            
-            logger.info(f"🔍 [RESULT_PROCESSING] Constructed final API response")
-            return api_response
-            
-        except Exception as e:
-            logger.error(f"🔍 [RESULT_PROCESSING] Error processing agent result: {e}")
-            return {
-                "message": "I apologize, but I encountered an unexpected error while processing your request. Please try again, and if the problem persists, contact support.",
-                "sources": [],
-                "is_interrupted": False,
-                "error": True,
-                "error_details": str(e)
-            }
-
+        """Use portable API processing utility."""
+        return await process_agent_result_for_api(result, conversation_id)
+    
     async def process_user_message(
         self,
         user_query: str,
-        conversation_id: str = None,
-        user_id: str = None,
+        conversation_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
-        """
-        High-level method for processing user messages with clean API interface.
-        
-        This method provides a semantic interface for the API layer, encapsulating
-        all LangGraph-specific logic and returning clean, structured data.
-        
-        Args:
-            user_query: User's message/query
-            conversation_id: Conversation ID for persistence
-            user_id: User ID for context
-            **kwargs: Additional arguments passed to invoke
-            
-        Returns:
-            Dict containing clean API response structure:
-            - message: Final response message
-            - sources: Document sources if any
-            - is_interrupted: Boolean indicating if human interaction needed
-            - hitl_phase/hitl_prompt/hitl_context: HITL interaction data if interrupted (3-field architecture)
-            - conversation_id: Conversation ID for persistence
-        """
-        try:
-            logger.info(f"🚀 [API_INTERFACE] Processing user message for conversation {conversation_id}")
-            
-            # Invoke the agent with the user query
-            raw_result = await self.invoke(
-                user_query=user_query,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                **kwargs
-            )
-            
-            # Process the result for clean API response
-            processed_result = await self._process_agent_result_for_api(raw_result, conversation_id)
-            
-            # Add conversation ID to response
-            processed_result["conversation_id"] = conversation_id or raw_result.get("conversation_id")
-            
-            logger.info(f"✅ [API_INTERFACE] User message processed successfully. Interrupted: {processed_result['is_interrupted']}")
-            
-            return processed_result
-            
-        except Exception as e:
-            logger.error(f"❌ [API_INTERFACE] Error processing user message: {e}")
-            return {
-                "message": "I apologize, but I encountered an error while processing your request.",
-                "sources": [],
-                "is_interrupted": False,
-                "conversation_id": conversation_id
-            }
+        """Use portable user message processing utility."""
+        return await process_user_message(
+            agent_invoke_func=self.invoke,
+            user_query=user_query,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            **kwargs
+        )
 
 
 # Update the aliases for easy import

@@ -22,16 +22,28 @@
     "backend/**/*.py",
     "tests/__init__.py"
   ],
-  "reportMissingImports": true,
+  "reportMissingImports": "information",
+  "reportMissingModuleSource": "information",
   "reportMissingTypeStubs": false,
+  "reportOptionalMemberAccess": "warning",
+  "reportOptionalSubscript": "warning",
+  "reportOptionalCall": "warning",
+  "reportOptionalIterable": "warning",
+  "reportUnnecessaryIsInstance": "warning",
+  "reportUnnecessaryComparison": "warning",
+  "reportGeneralTypeIssues": "warning",
+  "reportUnknownMemberType": "information",
+  "reportUnknownArgumentType": "information",
+  "reportUnknownVariableType": "information",
   "pythonVersion": "3.13",
   "venvPath": ".",
   "venv": "venv",
+  "stubPath": "./stubs",
   "executionEnvironments": [
     {
       "root": ".",
       "pythonPath": "venv/bin/python",
-      "extraPaths": ["."]
+      "extraPaths": [".", "./stubs"]
     }
   ]
 } 

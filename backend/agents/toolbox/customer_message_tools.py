@@ -24,7 +24,7 @@ from .toolbox import (
 
 # HITL imports - using relative imports for toolbox
 try:
-    from backend.agents.hitl import request_approval, request_input
+    from agents.hitl import request_approval, request_input
 except ImportError:
     # Fallback for when running from backend directory
     import sys

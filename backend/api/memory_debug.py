@@ -368,7 +368,7 @@ async def get_user_messages(user_id: str, limit: int = Query(50, ge=1, le=200), 
             
             messages_result = db_client.client.table('messages').select('*').eq(
                 'conversation_id', conversation_id
-            ).order('created_at', asc=True).limit(limit).execute()
+            ).order('created_at', desc=False).limit(limit).execute()
         else:
             # SINGLE CONVERSATION PER USER APPROACH:
             # Get the user's single ongoing conversation (most recently updated)
@@ -426,7 +426,7 @@ async def get_conversation_messages(conversation_id: str, limit: int = Query(50,
         # Get messages from this specific conversation
         messages_result = db_client.client.table('messages').select('*').eq(
             'conversation_id', conversation_id
-        ).order('created_at', asc=True).limit(limit).execute()
+        ).order('created_at', desc=False).limit(limit).execute()
 
         messages = []
         for message in messages_result.data or []:
