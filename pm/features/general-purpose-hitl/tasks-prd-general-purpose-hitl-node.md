@@ -110,7 +110,7 @@
   - [x] 9.2.3 Implement conservative extraction logic that only captures clearly-stated information
   - [x] 9.2.4 Add comprehensive logging and error handling for conversation analysis
   - [x] 9.3 **ELIMINATE** HITL-managed collection logic - tools generate HITL requests for each missing piece individually (after pre-population from conversation)
-  - [x] 9.4 Update collect_sales_requirements example tool in `sales_collection_tools.py` to demonstrate conversation pre-population using the universal helper
+  - [x] 9.4 ~~Update collect_sales_requirements example tool~~ REMOVED: Tool eliminated in favor of integrated collection in generate_quotation
   - [x] 9.5 Create documentation and examples showing how any collection tool can integrate the universal conversation analysis helper from `toolbox.py`
 
 - [ ] 10.0 Revolutionary Tool Migration to Dedicated HITL Request Tools

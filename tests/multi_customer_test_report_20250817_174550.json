@@ -1,0 +1,20 @@
+{
+  "test_type": "Multi-Customer Quotation Generation",
+  "total_customers": 3,
+  "successful_tests": 0,
+  "success_rate": 0.0,
+  "overall_success": false,
+  "customer_results": [
+    {
+      "customer": "Alice Johnson",
+      "user_id": "a0b81a3b-3ac0-4a7d-b27c-dadf0fdbbe8b",
+      "description": "Individual customer",
+      "success": false,
+      "message": "Step 1 failed: Expected missing_info_request, got quotation_generated"
+    }
+  ],
+  "errors_found": [
+    "Alice Johnson: Step 1 failed: Expected missing_info_request, got quotation_generated"
+  ],
+  "timestamp": "2025-08-17T17:45:50.468927"
+}

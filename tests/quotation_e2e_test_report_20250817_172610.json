@@ -1,0 +1,34 @@
+{
+  "test_summary": {
+    "total_steps": 1,
+    "successful_steps": 0,
+    "success_rate": "0.0%",
+    "overall_success": false,
+    "conversation_id": "c405a2ee-79ee-4832-93aa-3ffee63fd71e",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T17:26:10.969358"
+  },
+  "errors_found": [
+    "Step 1 failed: Expected missing info request, got error"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T17:26:10.968961",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "Unfortunately, I'm unable to generate a quotation at this moment due to a persistent error in the system. I recommend contacting support for further assistance with this issue. \n\nIf there's anything else I can help you with, please let me know!",
+      "success": false,
+      "notes": "Response type: error",
+      "conversation_id": "c405a2ee-79ee-4832-93aa-3ffee63fd71e"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 Unfortunately, I'm unable to generate a quotation at this moment due to a persistent error in the sy..."
+  ],
+  "recommendations": [
+    "Test individual HITL cycles in isolation",
+    "Verify deterministic boolean logic is working correctly",
+    "Check initial tool routing - may not be calling generate_quotation correctly",
+    "Review Docker logs for detailed error analysis"
+  ]
+}

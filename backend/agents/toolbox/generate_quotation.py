@@ -5,6 +5,7 @@ Revolutionary LLM-driven quotation generation system that replaces fragmented lo
 with intelligent context extraction and communication.
 """
 
+import json
 import logging
 import time
 from datetime import datetime
@@ -55,6 +56,68 @@ class QuotationContextIntelligence:
 
     def __init__(self):
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+    
+    def _compute_quotation_readiness_logic(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Compute deterministic boolean logic for quotation readiness.
+        
+        This eliminates LLM interpretation ambiguity by pre-computing the boolean conditions.
+        """
+        try:
+            # Extract the relevant fields
+            customer_info = extracted_data.get("extracted_context", {}).get("customer_info", {})
+            vehicle_requirements = extracted_data.get("extracted_context", {}).get("vehicle_requirements", {})
+            
+            # Compute individual boolean conditions
+            has_customer_name = bool(customer_info.get("name"))
+            has_vehicle_make = bool(vehicle_requirements.get("make"))
+            has_vehicle_model = bool(vehicle_requirements.get("model"))
+            has_email = bool(customer_info.get("email"))
+            has_phone = bool(customer_info.get("phone"))
+            has_contact_info = has_email or has_phone
+            
+            # Compute the final quotation readiness
+            quotation_ready = has_customer_name and has_vehicle_make and has_vehicle_model and has_contact_info
+            
+            # Identify missing critical fields
+            critical_missing = []
+            if not has_customer_name:
+                critical_missing.append("customer_name")
+            if not has_vehicle_make:
+                critical_missing.append("vehicle_make")
+            if not has_vehicle_model:
+                critical_missing.append("vehicle_model")
+            if not has_contact_info:
+                critical_missing.append("contact_info")
+            
+            # Determine next action based on logic
+            if quotation_ready:
+                next_action = "generate_quotation"
+            else:
+                next_action = "gather_info"
+            
+            return {
+                "boolean_conditions": {
+                    "has_customer_name": has_customer_name,
+                    "has_vehicle_make": has_vehicle_make,
+                    "has_vehicle_model": has_vehicle_model,
+                    "has_email": has_email,
+                    "has_phone": has_phone,
+                    "has_contact_info": has_contact_info
+                },
+                "quotation_ready": quotation_ready,
+                "critical_missing": critical_missing,
+                "next_action": next_action
+            }
+            
+        except Exception as e:
+            self.logger.error(f"[QUOTATION_READINESS_LOGIC] Error computing readiness: {e}")
+            return {
+                "boolean_conditions": {},
+                "quotation_ready": False,
+                "critical_missing": ["system_error"],
+                "next_action": "gather_info"
+            }
 
     async def analyze_complete_context(
         self,
@@ -129,6 +192,19 @@ Please provide a comprehensive JSON analysis following the exact structure speci
             # Parse response into ContextAnalysisResult
             result = self._parse_context_analysis_response(response.content)
             
+            # Apply deterministic boolean logic to override LLM interpretation
+            parsed_data = json.loads(response.content)
+            readiness_logic = self._compute_quotation_readiness_logic(parsed_data)
+            
+            # Override the LLM's assessment with deterministic logic
+            result.completeness_assessment.quotation_ready = readiness_logic["quotation_ready"]
+            result.missing_info_analysis.critical_missing = readiness_logic["critical_missing"]
+            result.business_recommendations.next_action = readiness_logic["next_action"]
+            
+            self.logger.info(f"[CONTEXT_INTELLIGENCE] 🔧 DETERMINISTIC OVERRIDE - Quotation ready: {readiness_logic['quotation_ready']}")
+            self.logger.info(f"[CONTEXT_INTELLIGENCE] 🔧 DETERMINISTIC OVERRIDE - Critical missing: {readiness_logic['critical_missing']}")
+            self.logger.info(f"[CONTEXT_INTELLIGENCE] 🔧 DETERMINISTIC OVERRIDE - Next action: {readiness_logic['next_action']}")
+            
             self.logger.info("[CONTEXT_INTELLIGENCE] ✅ Comprehensive context analysis complete")
             return result
             
@@ -139,6 +215,10 @@ Please provide a comprehensive JSON analysis following the exact structure speci
     def _create_context_intelligence_template(self) -> str:
         """Create comprehensive template for LLM context analysis."""
         return """You are an expert quotation context analyzer. Analyze the conversation and provide comprehensive JSON output.
+
+⚠️  CRITICAL EXTRACTION RULE: ONLY extract information that was EXPLICITLY PROVIDED by the user. 
+    Do NOT generate examples, placeholders, or assumptions. Use null for missing information.
+    Example: If user says "generate a quotation" with no details, ALL fields should be null.
 
 CRITICAL: Your response must be ONLY valid JSON in this exact structure:
 
@@ -185,17 +265,17 @@ CRITICAL: Your response must be ONLY valid JSON in this exact structure:
   },
   "completeness_assessment": {
     "overall_completeness": "high|medium|low",
-    "quotation_ready": "true if customer_name AND vehicle_make AND vehicle_model AND (email OR phone) are present - EXAMPLE: if customer_info.email is 'maria@email.com' OR customer_info.phone is '+63-917-123-4567', then quotation_ready should be true",
+    "quotation_ready": "boolean - will be overridden by deterministic logic",
     "minimum_viable_info": true,
     "risk_level": "low|medium|high", 
     "business_impact": "proceed|gather_more|escalate",
     "completion_percentage": 85
   },
   "missing_info_analysis": {
-    "critical_missing": [],
-    "important_missing": [],
-    "helpful_missing": [],
-    "optional_missing": [],
+    "critical_missing": ["will be overridden by deterministic logic"],
+    "important_missing": ["List missing important information that affects quotation quality"],
+    "helpful_missing": ["List missing helpful information that would improve quotation"],
+    "optional_missing": ["List missing optional information"],
     "inferable_from_context": [],
     "alternative_sources": {}
   },
@@ -207,8 +287,8 @@ CRITICAL: Your response must be ONLY valid JSON in this exact structure:
     "recommendations": []
   },
   "business_recommendations": {
-    "next_action": "generate_quotation|gather_info|escalate|offer_alternatives",
-    "priority_actions": [],
+    "next_action": "will be overridden by deterministic logic",
+    "priority_actions": ["List specific actions needed"],
     "upsell_opportunities": [],
     "customer_tier_assessment": "premium|standard|basic",
     "urgency_level": "high|medium|low",
@@ -222,14 +302,23 @@ CRITICAL: Your response must be ONLY valid JSON in this exact structure:
 }
 
 ANALYSIS GUIDELINES:
-1. Extract ALL available information from conversation history AND user responses
-2. Use enhanced conversation continuity analysis for step-agnostic understanding
-3. Classify missing information by business priority (critical = blocks quotation)
-4. Assess quotation readiness based on minimum viable information
-5. Provide business recommendations for next best actions
-6. Calculate confidence scores based on information quality and completeness
-7. REVOLUTIONARY: Handle user responses regardless of conversation step or stage
-8. CLEANUP (Task 15.6.1): Use intelligent LLM analysis instead of hardcoded keyword matching
+1. CRITICAL: ONLY extract information that was EXPLICITLY PROVIDED - do NOT generate examples, placeholders, or assumptions
+2. If information was not provided, use null - do NOT create fake data like "Customer Name" or "customer@example.com"
+3. Extract ALL available information from conversation history AND user responses
+4. Use enhanced conversation continuity analysis for step-agnostic understanding
+5. Classify missing information by business priority (critical = blocks quotation)
+6. Assess quotation readiness based on minimum viable information
+7. Provide business recommendations for next best actions
+8. Calculate confidence scores based on information quality and completeness
+9. REVOLUTIONARY: Handle user responses regardless of conversation step or stage
+10. CLEANUP (Task 15.6.1): Use intelligent LLM analysis instead of hardcoded keyword matching
+
+CRITICAL VEHICLE REQUIREMENTS:
+- Vehicle make (brand) is ABSOLUTELY REQUIRED - vague terms like "any vehicle" or "car" are NOT sufficient
+- Vehicle model is ABSOLUTELY REQUIRED - cannot generate quotation without specific model
+- If vehicle_requirements.make OR vehicle_requirements.model are null/missing, mark quotation_ready as FALSE
+- Add missing vehicle information to "critical_missing" array if not present
+- Budget alone is never sufficient for quotation generation without specific vehicle details
 
 CONTACT METHOD ASSESSMENT:
 - If email OR phone is provided, consider contact information COMPLETE
@@ -1328,127 +1417,12 @@ An unexpected error occurred: {error_type}
 # CLEANUP COMPLETE (Task 15.6.2): All legacy resume handlers eliminated
 # =============================================================================
 
-async def handle_quotation_resume(
-    user_response: str,
-    customer_identifier: str,
-    vehicle_requirements: str,
-    additional_notes: Optional[str] = None,
-    conversation_context: str = "",
-    quotation_validity_days: int = 30,
-    existing_context: Optional[Dict[str, Any]] = None
-) -> str:
-    """
-    UNIVERSAL RESUME HANDLER (Task 15.5.1)
-    
-    Single function to handle any quotation resume scenario using LLM-driven logic.
-    Replaces multiple step-specific resume functions with intelligent context understanding.
-    
-    ENHANCED INTEGRATION (Task 15.5.4):
-    - Leverages existing context extraction and completeness assessment from QuotationContextIntelligence
-    - Provides unified resume analysis that builds upon previous context
-    - Maintains context continuity across multiple resume cycles
-    - Uses intelligent context merging and conflict resolution
-    
-    UNIVERSAL HITL SYSTEM LEVERAGE (Task 15.5.5):
-    - Seamlessly integrates with @hitl_recursive_tool decorator for automatic tool re-calling
-    - No duplicate context analysis - universal HITL system preserves context across cycles
-    - Automatic parameter management for user_response, hitl_phase, conversation_context
-    - Leverages existing universal HITL infrastructure without reinventing context handling
-    
-    CLEANUP COMPLETE (Task 15.6.2):
-    - ELIMINATED unused resume handler functions: _handle_quotation_resume, _resume_customer_lookup, 
-      _resume_vehicle_requirements, _resume_employee_data, _resume_missing_information, 
-      _resume_pricing_issues, _resume_quotation_approval
-    - ELIMINATED complex state management: quotation_state dictionaries, current_step tracking,
-      step-specific routing logic, fragmented context preservation
-    - SIMPLIFIED to single universal resume handler with LLM-driven context understanding
-    
-    This function:
-    1) Integrates user response with existing context using QuotationContextIntelligence
-    2) Re-evaluates completeness with updated information
-    3) Continues quotation flow (HITL or final generation)
-    
-    Args:
-        user_response: User's response to previous HITL prompt
-        customer_identifier: Original customer identifier
-        vehicle_requirements: Original vehicle requirements
-        additional_notes: Original additional notes
-        conversation_context: Full conversation context
-        quotation_validity_days: Quote validity period
-        existing_context: Previous context for continuity (ENHANCED in Task 15.5.4)
-        
-    Returns:
-        Updated HITL request or final quotation based on completeness
-    """
-    try:
-        logger.info(f"[QUOTATION_RESUME] 🔄 Starting universal resume handler")
-        logger.info(f"[QUOTATION_RESUME] User response: {user_response[:100]}...")
-        
-        # STEP 1: EXTRACT UPDATED CONTEXT
-        # ENHANCED INTEGRATION (Task 15.5.4): Pass existing context for unified resume analysis
-        logger.info("[QUOTATION_RESUME] 📝 STEP 1: Extract updated context with user response")
-        logger.info(f"[QUOTATION_RESUME] 🔗 Leveraging existing context: {existing_context is not None}")
-        context_result = await _extract_comprehensive_context(
-            customer_identifier=customer_identifier,
-            vehicle_requirements=vehicle_requirements,
-            additional_notes=additional_notes,
-            conversation_context=conversation_context,
-            user_response=user_response,  # KEY: User response integrated into context analysis
-            existing_context=existing_context  # ENHANCED: Pass existing context for continuity
-        )
-        
-        if context_result["status"] == "error":
-            logger.error(f"[QUOTATION_RESUME] Context extraction failed: {context_result['message']}")
-            return context_result["message"]
-        
-        extracted_context = context_result["context"]
-        logger.info("[QUOTATION_RESUME] ✅ STEP 1 Complete - Updated context extraction successful")
-        
-        # STEP 2: RE-VALIDATE COMPLETENESS
-        # Check if user response provided enough information to proceed
-        logger.info("[QUOTATION_RESUME] 🔍 STEP 2: Re-validate completeness with updated context")
-        completeness_result = await _validate_quotation_completeness(
-            extracted_context=extracted_context
-        )
-        
-        if completeness_result["status"] == "error":
-            logger.error(f"[QUOTATION_RESUME] Completeness validation failed: {completeness_result['message']}")
-            return completeness_result["message"]
-        
-        is_complete = completeness_result["is_complete"]
-        missing_info = completeness_result["missing_info"]
-        logger.info(f"[QUOTATION_RESUME] ✅ STEP 2 Complete - Updated completeness: {is_complete}")
-        
-        # STEP 3: CONTINUE QUOTATION FLOW
-        # Either generate final quotation or request additional information
-        logger.info("[QUOTATION_RESUME] 📄 STEP 3: Continue quotation flow based on completeness")
-        if not is_complete:
-            logger.info(f"[QUOTATION_RESUME] 🔄 Still missing information, generating updated HITL request")
-            return await _generate_intelligent_hitl_request(
-                missing_info=missing_info,
-                extracted_context=extracted_context
-            )
-        else:
-            logger.info("[QUOTATION_RESUME] 🎯 All information complete, generating final quotation")
-            return await _generate_final_quotation(
-                extracted_context=extracted_context,
-                quotation_validity_days=quotation_validity_days
-            )
-            
-    except Exception as e:
-        logger.error(f"[QUOTATION_RESUME] Critical error in universal resume handler: {e}")
-        
-        # Use communication intelligence for graceful error handling
-        try:
-            comm_intelligence = QuotationCommunicationIntelligence()
-            return await comm_intelligence.generate_intelligent_error_explanation(
-                error_type="resume_handler_error",
-                error_context={"error": str(e), "user_response": user_response},
-                extracted_context=None
-            )
-        except Exception as fallback_error:
-            logger.error(f"[QUOTATION_RESUME] Fallback error handling failed: {fallback_error}")
-            return f"❌ Error processing your response. Please try again or contact support."
+
+# TASK 7.7.3.2: Removed _handle_approval_response() function completely
+# Decorator handles corrections automatically - no tool-specific correction logic needed
+
+# TASK 7.7.3.2: Removed handle_quotation_resume() function completely
+# Decorator handles corrections automatically - no tool-specific correction logic needed
 
 # =============================================================================
 # HELPER FUNCTIONS FOR 3-STEP FLOW
@@ -1459,7 +1433,6 @@ async def _extract_comprehensive_context(
     vehicle_requirements: str,
     additional_notes: Optional[str] = None,
     conversation_context: str = "",
-    user_response: str = "",
     existing_context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
@@ -1470,10 +1443,26 @@ async def _extract_comprehensive_context(
     try:
         logger.info("[EXTRACT_CONTEXT] 🧠 Using QuotationContextIntelligence for comprehensive analysis")
         
+        # FIRST: Search for existing customer information in database
+        from .toolbox import lookup_customer
+        logger.info(f"[EXTRACT_CONTEXT] 🔍 Searching for existing customer: {customer_identifier}")
+        
+        enhanced_customer_identifier = customer_identifier  # Track if enhancement happens
+        customer_db_info = await lookup_customer(customer_identifier)
+        if customer_db_info:
+            logger.info(f"[EXTRACT_CONTEXT] ✅ Found existing customer: {customer_db_info.get('name', 'Unknown')} - {customer_db_info.get('email', 'No Email')}")
+            # Enhance customer_identifier with complete database information
+            enhanced_customer_info = f"{customer_db_info.get('name', customer_identifier)} (Email: {customer_db_info.get('email', 'N/A')}, Phone: {customer_db_info.get('phone', customer_db_info.get('mobile_number', 'N/A'))}, Address: {customer_db_info.get('address', 'N/A')})"
+            enhanced_customer_identifier = enhanced_customer_info  # Store enhanced version
+            customer_identifier = enhanced_customer_info
+            logger.info(f"[EXTRACT_CONTEXT] 🎯 Enhanced customer info: {customer_identifier}")
+        else:
+            logger.info(f"[EXTRACT_CONTEXT] ⚠️ Customer not found in database: {customer_identifier}")
+        
         # SIMPLIFIED APPROACH: Use improved tool parameter extraction
-        # The customer_identifier should now contain complete information due to improved parameter description
+        # The customer_identifier now contains complete information from database lookup
         conversation_history = []
-        logger.info("[EXTRACT_CONTEXT] 🎯 Using improved customer_identifier parameter with complete information")
+        logger.info("[EXTRACT_CONTEXT] 🎯 Using enhanced customer_identifier with database information")
         
         # If we couldn't get conversation history, try to parse conversation_context parameter
         if not conversation_history and conversation_context:
@@ -1496,8 +1485,13 @@ async def _extract_comprehensive_context(
         if additional_notes:
             current_input_parts.append(f"Additional Notes: {additional_notes}")
         
-        if user_response:
-            current_input_parts.append(f"User Response: {user_response}")
+        # BUSINESS LOGIC: Include user response from conversation context if available
+        # This allows the tool to process user corrections/updates naturally
+        if conversation_context and "Latest user response:" in conversation_context:
+            user_response_part = conversation_context.replace("Latest user response: ", "")
+            if user_response_part.strip():
+                current_input_parts.append(f"Latest User Input: {user_response_part}")
+                logger.info(f"[EXTRACT_CONTEXT] 🔄 Including user response in context analysis: {user_response_part}")
         
         current_user_input = "\n".join(current_input_parts)
         logger.info(f"[EXTRACT_CONTEXT] 📝 Built input from improved parameters: {len(current_user_input)} characters")
@@ -1516,7 +1510,8 @@ async def _extract_comprehensive_context(
         
         return {
             "status": "success",
-            "context": analysis_result
+            "context": analysis_result,
+            "enhanced_customer_identifier": enhanced_customer_identifier
         }
         
     except Exception as e:
@@ -1628,6 +1623,174 @@ async def _generate_intelligent_hitl_request(
         except:
             # Final fallback
             return f"❌ Error generating information request. Please provide: {', '.join(missing_info.get('critical', ['customer details', 'vehicle requirements']))}"
+
+async def _create_quotation_preview(
+    extracted_context: 'ContextAnalysisResult',
+    quotation_validity_days: int = 30
+) -> str:
+    """
+    TASK 7.6.1.2: Create enhanced quotation preview function with field classification.
+    
+    Display required info: customer (name, email, phone), vehicle (make, model)
+    Display optional info: customer details, vehicle details, purchase preferences, timeline
+    Clear visual distinction between required and optional information sections.
+    """
+    try:
+        logger.info("[CREATE_PREVIEW] 📋 Creating enhanced quotation preview with required/optional sections")
+        
+        # Extract information from context
+        customer_info = extracted_context.extracted_context.customer_info
+        vehicle_requirements = extracted_context.extracted_context.vehicle_requirements
+        purchase_preferences = extracted_context.extracted_context.purchase_preferences
+        timeline_info = extracted_context.extracted_context.timeline_info
+        
+        # === REQUIRED INFORMATION SECTION ===
+        required_section = "🔹 **REQUIRED INFORMATION**\n"
+        
+        # Customer contact (required)
+        customer_name = customer_info.get("name", "Not specified")
+        customer_email = customer_info.get("email", "Not specified")
+        customer_phone = customer_info.get("phone", "Not specified")
+        
+        required_section += f"**Customer Contact:**\n"
+        required_section += f"  • Name: {customer_name}\n"
+        required_section += f"  • Email: {customer_email}\n"
+        required_section += f"  • Phone: {customer_phone}\n\n"
+        
+        # Vehicle basics (required)
+        vehicle_make = vehicle_requirements.get("make", "Not specified")
+        vehicle_model = vehicle_requirements.get("model", "Not specified")
+        
+        required_section += f"**Vehicle Basics:**\n"
+        required_section += f"  • Make: {vehicle_make}\n"
+        required_section += f"  • Model: {vehicle_model}\n\n"
+        
+        # === OPTIONAL INFORMATION SECTION ===
+        optional_section = "🔸 **OPTIONAL INFORMATION**\n"
+        
+        # Customer details (optional)
+        customer_company = customer_info.get("company", "")
+        customer_address = customer_info.get("address", "")
+        
+        if customer_company or customer_address:
+            optional_section += f"**Customer Details:**\n"
+            if customer_company:
+                optional_section += f"  • Company: {customer_company}\n"
+            if customer_address:
+                optional_section += f"  • Address: {customer_address}\n"
+            optional_section += "\n"
+        
+        # Vehicle details (optional)
+        vehicle_year = vehicle_requirements.get("year", "")
+        vehicle_color = vehicle_requirements.get("color", "")
+        vehicle_type = vehicle_requirements.get("type", "")
+        vehicle_quantity = vehicle_requirements.get("quantity", "")
+        
+        if vehicle_year or vehicle_color or vehicle_type or vehicle_quantity:
+            optional_section += f"**Vehicle Details:**\n"
+            if vehicle_year:
+                optional_section += f"  • Year: {vehicle_year}\n"
+            if vehicle_color:
+                optional_section += f"  • Color: {vehicle_color}\n"
+            if vehicle_type:
+                optional_section += f"  • Type: {vehicle_type}\n"
+            if vehicle_quantity:
+                optional_section += f"  • Quantity: {vehicle_quantity}\n"
+            optional_section += "\n"
+        
+        # Purchase preferences (optional)
+        financing = purchase_preferences.get("financing", "")
+        trade_in = purchase_preferences.get("trade_in", "")
+        payment_method = purchase_preferences.get("payment_method", "")
+        
+        if financing or trade_in or payment_method:
+            optional_section += f"**Purchase Preferences:**\n"
+            if financing:
+                optional_section += f"  • Financing: {financing}\n"
+            if trade_in:
+                optional_section += f"  • Trade-in: {trade_in}\n"
+            if payment_method:
+                optional_section += f"  • Payment Method: {payment_method}\n"
+            optional_section += "\n"
+        
+        # Timeline information (optional)
+        urgency = timeline_info.get("urgency", "")
+        decision_timeline = timeline_info.get("decision_timeline", "")
+        delivery_date = timeline_info.get("delivery_date", "")
+        
+        if urgency or decision_timeline or delivery_date:
+            optional_section += f"**Timeline Information:**\n"
+            if urgency:
+                optional_section += f"  • Urgency: {urgency}\n"
+            if decision_timeline:
+                optional_section += f"  • Decision Timeline: {decision_timeline}\n"
+            if delivery_date:
+                optional_section += f"  • Delivery Date: {delivery_date}\n"
+            optional_section += "\n"
+        
+        # Quotation validity
+        validity_section = f"**Quotation Validity:** {quotation_validity_days} days\n\n"
+        
+        # Combine sections with clear visual separation
+        preview = f"{required_section}{'─' * 50}\n\n{optional_section}{'─' * 50}\n\n{validity_section}"
+        
+        logger.info("[CREATE_PREVIEW] ✅ Enhanced quotation preview created successfully")
+        return preview
+        
+    except Exception as e:
+        logger.error(f"[CREATE_PREVIEW] Error creating quotation preview: {e}")
+        return f"❌ Error creating quotation preview: {e}"
+
+async def _request_quotation_approval(
+    extracted_context: 'ContextAnalysisResult',
+    quotation_validity_days: int = 30
+) -> str:
+    """
+    TASK 7.6.1.1: Request approval before final PDF generation.
+    
+    Creates enhanced quotation preview with required and optional information display.
+    Focus on customer/vehicle accuracy confirmation, not completeness status.
+    """
+    try:
+        logger.info("[REQUEST_APPROVAL] 📋 Creating enhanced quotation preview for approval")
+        
+        # Create comprehensive quotation preview
+        preview = await _create_quotation_preview(
+            extracted_context=extracted_context,
+            quotation_validity_days=quotation_validity_days
+        )
+        
+        # Create enhanced approval prompt
+        approval_prompt = f"""📄 **Quotation Ready for Generation**
+
+{preview}
+
+**Please review the information above and confirm:**
+- Is the customer information accurate?
+- Are the vehicle requirements correct?
+- Should we proceed with generating the official PDF quotation?
+
+✅ **Approve** to generate the PDF quotation
+❌ **Deny** to cancel
+🔄 **Correct** any information that needs to be updated
+
+*Note: Once approved, a professional PDF quotation will be generated and made available for sharing.*"""
+
+        # Use existing HITL infrastructure for approval
+        from ..hitl import request_approval
+        return request_approval(
+            prompt=approval_prompt,
+            context={
+                "tool": "generate_quotation",
+                "step": "final_approval",
+                "extracted_context": extracted_context.model_dump() if hasattr(extracted_context, 'model_dump') else str(extracted_context),
+                "quotation_validity_days": quotation_validity_days
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"[REQUEST_APPROVAL] Error requesting quotation approval: {e}")
+        return f"❌ Error preparing quotation for approval: {e}"
 
 async def _generate_final_quotation(
     extracted_context: 'ContextAnalysisResult',
@@ -2187,13 +2350,11 @@ class QuotationIntelligenceCoordinator:
 
 class GenerateQuotationParams(BaseModel):
     """Parameters for generating professional PDF quotations (Employee Only)."""
-    customer_identifier: str = Field(..., description="COMPLETE customer information including: full name, email address, phone number, and company (if mentioned). Example: 'Maria Santos, email: maria@email.com, phone: +63-917-123-4567, company: ABC Corp'")
-    vehicle_requirements: str = Field(..., description="Detailed vehicle specifications: make/brand, model, type (sedan/SUV/pickup), year, color, quantity needed, budget range")
+    customer_identifier: str = Field(default="", description="COMPLETE customer information including: full name, email address, phone number, and company (if mentioned). Leave empty if not provided by user.")
+    vehicle_requirements: str = Field(default="", description="Detailed vehicle specifications: make/brand, model, type (sedan/SUV/pickup), year, color, quantity needed, budget range. Leave empty if not provided by user.")
     additional_notes: Optional[str] = Field(None, description="Special requirements: financing preferences, trade-in details, delivery timeline, custom features")
     quotation_validity_days: Optional[int] = Field(30, description="Quotation validity period in days (default: 30, maximum: 365)")
     # Universal HITL Resume Parameters (handled by @hitl_recursive_tool decorator)
-    # LEVERAGE UNIVERSAL HITL SYSTEM (Task 15.5.5): Seamless tool re-calling without duplicating context analysis
-    user_response: str = Field(default="", description="User's response to HITL prompts (automatically managed by universal HITL system)")
     hitl_phase: str = Field(default="", description="Current HITL phase (automatically managed by universal HITL system)")
     conversation_context: str = Field(default="", description="Conversation context for intelligent processing (preserved across HITL cycles)")
 
@@ -2201,22 +2362,28 @@ class GenerateQuotationParams(BaseModel):
 @traceable(name="generate_quotation")
 @hitl_recursive_tool
 async def generate_quotation(
-    customer_identifier: str,
-    vehicle_requirements: str,
+    customer_identifier: str = "",
+    vehicle_requirements: str = "",
     additional_notes: Optional[str] = None,
     quotation_validity_days: Optional[int] = 30,
     # Universal HITL Resume Parameters (handled by @hitl_recursive_tool decorator)
-    user_response: str = "",
     hitl_phase: str = "",
     conversation_context: str = ""
 ) -> str:
     """
     REVOLUTIONARY SIMPLIFIED QUOTATION GENERATION (Task 15.3.3)
+    ENHANCED WITH AUTOMATIC CORRECTIONS (Task 7.7.3.2)
     
     Generate official PDF quotations for customers using revolutionary 3-step flow:
     1) Extract context using QuotationContextIntelligence
     2) Validate completeness using LLM analysis  
     3) Generate HITL or final quotation based on readiness
+    
+    **AUTOMATIC CORRECTION CAPABILITY:**
+    - @hitl_recursive_tool decorator handles all corrections automatically
+    - LLM understands natural language corrections ("change customer to John", "make it red")
+    - Tool focuses purely on quotation business logic - no correction handling needed
+    - Universal correction capability with zero tool-specific code
     
     **Use this tool when customers need:**
     - Official quotation documents for vehicle purchases
@@ -2236,13 +2403,7 @@ async def generate_quotation(
     - LLM-driven completeness assessment
     - Smart HITL prompts based on missing information priorities
     - Unified error handling with graceful fallbacks
-    - LEVERAGES UNIVERSAL HITL SYSTEM (Task 15.5.5): Seamless tool re-calling without context duplication
-    
-    **ENHANCED INTEGRATION (Task 15.6.7): Comprehensive LLM-driven quotation system**
-    - QuotationIntelligenceCoordinator for unified intelligence coordination
-    - Cross-intelligence data sharing and performance optimization
-    - Coordinated business intelligence and communication style
-    - Enhanced error handling across all intelligence classes
+    - AUTOMATIC CORRECTIONS: Decorator handles all user corrections transparently
     
     **Access Control:** Employee-only tool with comprehensive access verification.
     
@@ -2256,27 +2417,32 @@ async def generate_quotation(
         Professional quotation result with PDF link, or HITL request for missing information
     """
     try:
-        # Enhanced input validation using QuotationCommunicationIntelligence
+        # NO PLACEHOLDERS: Preserve NULL values and let the system handle missing information properly
+        # If customer_identifier is empty/null, keep it as empty - don't generate placeholders
         if not customer_identifier or not customer_identifier.strip():
-            logger.warning("[GENERATE_QUOTATION] Empty customer_identifier provided")
-            
-            # Use communication intelligence for error explanation
-            comm_intelligence = QuotationCommunicationIntelligence()
-            return await comm_intelligence.generate_intelligent_error_explanation(
-                error_type="missing_customer_identifier",
-                error_context={"provided_value": customer_identifier},
-                extracted_context=None
-            )
+            customer_identifier = ""  # Keep as empty - no placeholders
+            logger.info("[GENERATE_QUOTATION] customer_identifier is NULL - preserved as empty")
 
+        # If vehicle_requirements is empty/null, keep it as empty - don't generate placeholders  
         if not vehicle_requirements or not vehicle_requirements.strip():
-            logger.warning("[GENERATE_QUOTATION] Empty vehicle_requirements provided")
-            
-            # Use communication intelligence for error explanation
-            comm_intelligence = QuotationCommunicationIntelligence()
-            return await comm_intelligence.generate_intelligent_error_explanation(
-                error_type="missing_vehicle_requirements",
-                error_context={"provided_value": vehicle_requirements},
-                extracted_context=None
+            vehicle_requirements = ""  # Keep as empty - no placeholders
+            logger.info("[GENERATE_QUOTATION] vehicle_requirements is NULL - preserved as empty")
+
+        # If we have no real information, request it via HITL immediately
+        if not customer_identifier and not vehicle_requirements and not conversation_context:
+            logger.info("[GENERATE_QUOTATION] ⚠️ All parameters are NULL - requesting missing information via HITL")
+            return request_input(
+                prompt="⚡ **Critical Information Needed - Customer**\n\n"
+                       "To generate your quotation, I need the following essential information:\n\n"
+                       "• **Customer Name**\n"
+                       "• **Vehicle Make**\n"
+                       "• **Vehicle Model**\n\n"
+                       "*This information is required to proceed with your quotation request.*",
+                input_type="missing_information",
+                context={
+                    "missing_fields": ["customer_name", "vehicle_make", "vehicle_model"],
+                    "step": "initial_information_gathering"
+                }
             )
 
         # Validate quotation_validity_days
@@ -2300,26 +2466,42 @@ async def generate_quotation(
         
         logger.info(f"[GENERATE_QUOTATION] 🚀 Starting simplified 3-step flow for employee {employee_id}")
         
-        # UNIVERSAL RESUME HANDLER: Check if this is a resume scenario
-        # LEVERAGE UNIVERSAL HITL SYSTEM (Task 15.5.5): The @hitl_recursive_tool decorator automatically
-        # populates user_response when this tool is re-called after HITL interaction
-        if user_response and user_response.strip():
-            logger.info(f"[GENERATE_QUOTATION] 🔄 User response detected, using universal resume handler")
-            logger.info(f"[GENERATE_QUOTATION] 🔗 Seamless tool re-calling via universal HITL system")
+                # INTELLIGENT APPROVAL DETECTION: Use LLM to understand user intent instead of brittle keywords
+        if hitl_phase == "approved" and conversation_context:
+            from utils.hitl_corrections import LLMCorrectionProcessor
+            correction_processor = LLMCorrectionProcessor()
             
-            # UNIFIED RESUME ANALYSIS (Task 15.5.4): Extract existing context for continuity
-            # TODO: In future enhancement, extract existing context from HITL state or conversation analysis
-            existing_context = None  # Could be populated from session state, HITL context, or conversation analysis
+            # Extract the latest user response from conversation context
+            latest_response = conversation_context.split("Latest:")[-1].strip() if "Latest:" in conversation_context else conversation_context
             
-            return await handle_quotation_resume(
-                user_response=user_response,
-                customer_identifier=customer_identifier,
-                vehicle_requirements=vehicle_requirements,
-                additional_notes=additional_notes,
-                conversation_context=conversation_context,
-                quotation_validity_days=quotation_validity_days,
-                existing_context=existing_context  # ENHANCED: Pass existing context for unified analysis
-            )
+            # Use LLM to detect if this is actually an approval
+            user_intent = await correction_processor._detect_user_intent(latest_response)
+            logger.info(f"[GENERATE_QUOTATION] 🧠 LLM detected user intent: '{user_intent}' for response: '{latest_response}'")
+            
+            if user_intent == "approval":
+                logger.info("[GENERATE_QUOTATION] ✅ APPROVAL DETECTED - Proceeding directly to final PDF generation")
+                
+                # Extract context first to get customer/vehicle information
+                context_result = await _extract_comprehensive_context(
+                    customer_identifier=customer_identifier,
+                    vehicle_requirements=vehicle_requirements,
+                    additional_notes=additional_notes,
+                    conversation_context=conversation_context
+                )
+                
+                if context_result["status"] == "error":
+                    return context_result["message"]
+                
+                extracted_context = context_result["context"]
+                
+                # Proceed directly to final quotation generation
+                return await _generate_final_quotation(
+                    extracted_context=extracted_context,
+                    quotation_validity_days=quotation_validity_days
+                )
+        
+        # TASK 7.7.3.2: Removed user_response handling - decorator handles corrections automatically
+        # Tool now focuses purely on quotation business logic
         
         # INITIAL QUOTATION REQUEST: Standard 3-step flow for new requests
         # STEP 1: EXTRACT CONTEXT
@@ -2328,14 +2510,15 @@ async def generate_quotation(
             customer_identifier=customer_identifier,
             vehicle_requirements=vehicle_requirements,
             additional_notes=additional_notes,
-            conversation_context=conversation_context,
-            user_response=user_response
+            conversation_context=conversation_context
         )
         
         if context_result["status"] == "error":
             return context_result["message"]
         
         extracted_context = context_result["context"]
+        
+
         logger.info("[GENERATE_QUOTATION] ✅ STEP 1 Complete - Context extraction successful")
         
         # STEP 2: VALIDATE COMPLETENESS
@@ -2360,8 +2543,11 @@ async def generate_quotation(
                 extracted_context=extracted_context
             )
         else:
-            logger.info("[GENERATE_QUOTATION] 🎯 Generating final quotation - all information complete")
-            return await _generate_final_quotation(
+            logger.info("[GENERATE_QUOTATION] ✅ Information complete - requesting approval before PDF generation")
+            # TASK 7.6.1.1: Add approval step before final PDF generation
+            # Only show approval when completeness validation passes (no critical missing info)
+            # Focus on customer/vehicle accuracy confirmation, not completeness status
+            return await _request_quotation_approval(
                 extracted_context=extracted_context,
                 quotation_validity_days=quotation_validity_days
             )

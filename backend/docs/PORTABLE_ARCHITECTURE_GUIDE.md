@@ -15,7 +15,7 @@ This guide documents the improved separation of concerns and portability princip
 #### Before (Violates Portability):
 ```python
 # Each agent had to implement its own language detection
-# backend/agents/tobi_sales_copilot/language.py
+# backend/agents/tobi_sales_copilot/system_prompts.py
 def detect_user_language(message: str) -> str:
     # 100+ lines of language detection logic
     
@@ -34,7 +34,7 @@ def detect_user_language_from_context(messages, max_messages: int = 10) -> str:
     """PORTABLE: Works with any agent's message format"""
 
 # Agent-specific file now imports portable utilities
-# backend/agents/tobi_sales_copilot/language.py
+# backend/agents/tobi_sales_copilot/system_prompts.py
 from utils.language import detect_user_language, detect_user_language_from_context
 ```
 

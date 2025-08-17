@@ -1,0 +1,35 @@
+{
+  "test_type": "Multi-Customer Quotation Generation",
+  "total_scenarios": 3,
+  "successful_tests": 3,
+  "success_rate": 100.0,
+  "overall_success": true,
+  "scenario_results": [
+    {
+      "employee": "Alex Thompson",
+      "customer": "Alice Johnson",
+      "user_id": "54394d40-ad35-4b5b-a392-1ae7c9329d11",
+      "description": "Employee Alex generating quotation for customer Alice Johnson",
+      "success": true,
+      "message": "All steps completed successfully for Alice Johnson"
+    },
+    {
+      "employee": "Amanda White",
+      "customer": "Bob Smith",
+      "user_id": "f7f1d012-0423-4add-a42c-6da8c2bae08b",
+      "description": "Employee Amanda generating quotation for customer Bob Smith",
+      "success": true,
+      "message": "All steps completed successfully for Bob Smith"
+    },
+    {
+      "employee": "Carlos Rodriguez",
+      "customer": "Carol Thompson",
+      "user_id": "492dbd86-ddc9-4d52-9208-b578e0fccc93",
+      "description": "Employee Carlos generating quotation for customer Carol Thompson",
+      "success": true,
+      "message": "All steps completed successfully for Carol Thompson"
+    }
+  ],
+  "errors_found": [],
+  "timestamp": "2025-08-17T18:04:13.927643"
+}

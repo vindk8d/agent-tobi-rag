@@ -33,7 +33,7 @@ if str(backend_path) not in sys.path:
 
 # Use direct imports (no backend. prefix) for deployment compatibility
 from agents.tobi_sales_copilot.state import AgentState
-from agents.tobi_sales_copilot.language import detect_user_language_from_context, get_employee_system_prompt, get_customer_system_prompt
+from agents.tobi_sales_copilot.system_prompts import detect_user_language_from_context, get_employee_system_prompt, get_customer_system_prompt
 from agents.toolbox import get_all_tools, get_tool_names, UserContext, get_tools_for_user_type
 from agents.memory import memory_manager, memory_scheduler
 from agents.background_tasks import BackgroundTaskManager, BackgroundTask, TaskPriority
@@ -588,6 +588,75 @@ class UnifiedToolCallingRAGAgent:
             logger.error(f"[UNIVERSAL_HITL] Error detecting tool collection need: {e}")
             return False
 
+    def _build_conversation_context_from_state(self, state_dict: Dict[str, Any], current_user_response: str = "") -> str:
+        """
+        Build conversation context by extracting all user messages from state.
+        State is the single source of truth for conversation history.
+        """
+        conversation_messages = state_dict.get("messages", [])
+        user_inputs = []
+        
+        logger.info(f"[STATE_CONTEXT] 🔍 Extracting context from {len(conversation_messages)} messages in state")
+        
+        # Extract all user messages from conversation history
+        for msg in conversation_messages:
+            content = None
+            
+            # Handle different message formats
+            if isinstance(msg, dict) and msg.get("role") == "human":
+                content = msg.get("content", "").strip()
+            elif hasattr(msg, 'content') and hasattr(msg, 'type'):
+                # Handle LangChain message objects
+                if msg.type == "human":
+                    content = str(msg.content).strip()
+            
+            if content and content not in user_inputs:
+                user_inputs.append(content)
+        
+        # Add current user response if provided and not already included
+        if current_user_response and current_user_response not in user_inputs:
+            user_inputs.append(current_user_response)
+        
+        # Build conversation context
+        if user_inputs:
+            context_parts = [f"User: {inp}" for inp in user_inputs]
+            conversation_context = "\n".join(context_parts)
+            if current_user_response:
+                conversation_context += f"\nLatest: {current_user_response}"
+        else:
+            conversation_context = f"Latest: {current_user_response}" if current_user_response else ""
+        
+        logger.info(f"[STATE_CONTEXT] ✅ Built context from {len(user_inputs)} user inputs")
+        return conversation_context
+    
+    def _extract_customer_name_from_context(self, conversation_context: str) -> str:
+        """
+        Extract customer name from conversation context.
+        Look for patterns that indicate a customer name.
+        """
+        if not conversation_context:
+            return ""
+        
+        # Simple pattern matching for names (could be enhanced with NLP)
+        import re
+        
+        # Look for patterns like "User: John Martinez" or "User: Grace Lee"
+        name_patterns = [
+            r"User:\s*([A-Z][a-z]+\s+[A-Z][a-z]+)",  # First Last
+            r"User:\s*([A-Z][a-z]+)",  # Single name
+        ]
+        
+        for pattern in name_patterns:
+            match = re.search(pattern, conversation_context)
+            if match:
+                potential_name = match.group(1).strip()
+                # Filter out common non-names
+                if potential_name.lower() not in ["generate", "quotation", "toyota", "camry", "honda", "nissan"]:
+                    logger.info(f"[NAME_EXTRACTION] ✅ Extracted customer name: {potential_name}")
+                    return potential_name
+        
+        return ""
+
     async def _handle_tool_managed_collection(self, hitl_context: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         """
         REVOLUTIONARY: Handle universal tool-managed collection by re-calling tools (Task 14.5.2).
@@ -654,21 +723,38 @@ class UnifiedToolCallingRAGAgent:
                 logger.error(f"[TOOL_COLLECTION_RECALL] Tool '{source_tool}' not found")
                 return self._create_tool_recall_error_state(state_dict, f"Tool '{source_tool}' not found")
             
+                    # SIMPLIFIED: No complex accumulated context - state is source of truth
+            
             # UNIVERSAL: Use original parameters + HITL resume parameters
             original_params = hitl_context.get("original_params", {})
             tool_params = original_params.copy()
+            
+            # SIMPLIFIED CONTEXT: Always build from state messages - state is source of truth
+            conversation_context = self._build_conversation_context_from_state(state_dict, user_response)
+            
+            # ENHANCED CUSTOMER INFO: Extract customer name from conversation context if empty
+            if not tool_params.get("customer_identifier") or not tool_params.get("customer_identifier").strip():
+                customer_name = self._extract_customer_name_from_context(conversation_context)
+                if customer_name:
+                    tool_params["customer_identifier"] = customer_name
+                    logger.info(f"[CONTEXT_ENHANCEMENT] ✅ Enhanced customer_identifier from state: {customer_name}")
+                else:
+                    # Keep as empty - no placeholders
+                    tool_params["customer_identifier"] = ""
+                    logger.info(f"[CONTEXT_ENHANCEMENT] customer_identifier remains NULL - no placeholders generated")
+            
             tool_params.update({
-                "user_response": user_response,
+                "user_response": user_response,  # Keep for HITL decorator processing
                 "hitl_phase": hitl_phase,
-                # UNIVERSAL CONTEXT UNDERSTANDING (Task 15.5.3): 
-                # Eliminated step-specific parameters in favor of universal context
-                "conversation_context": ""  # Could be populated from messages if needed
+                # SIMPLIFIED CONTEXT: Always from state - state is source of truth
+                "conversation_context": conversation_context
             })
             
             logger.info(f"[UNIVERSAL_HITL] 🔄 Re-calling {source_tool} with universal parameters:")
             logger.info(f"[UNIVERSAL_HITL]   └─ original_params: {list(original_params.keys())}")
             logger.info(f"[UNIVERSAL_HITL]   └─ user_response: '{user_response}'")
             logger.info(f"[UNIVERSAL_HITL]   └─ hitl_phase: {hitl_phase}")
+            # SIMPLIFIED: No accumulated_context logging - state is source of truth
             logger.info(f"[UNIVERSAL_HITL]   └─ final_tool_params: {tool_params}")
             # Ensure employee context is present during tool execution
             user_id = state_dict.get("user_id")
@@ -1044,7 +1130,7 @@ Failed to deliver your message to {customer_name}.
                     current_query = msg.get("content", "")
                     break
             
-            user_language = detect_user_language_from_context(trimmed_messages, max_messages=10)
+            user_language = await detect_user_language_from_context(trimmed_messages, max_messages=10)
             logger.info(f"[EMPLOYEE_AGENT_NODE] Detected user language from context: {user_language}")
 
             # Get conversation context using LangGraph-native simple approach (Task 4.13.8)
@@ -1152,7 +1238,7 @@ Failed to deliver your message to {customer_name}.
                                     employee_id=employee_id
                                 ):
                                     # Execute tool based on type
-                                    if tool_name in ["simple_rag", "simple_query_crm_data", "trigger_customer_message", "collect_sales_requirements", "generate_quotation"]:
+                                    if tool_name in ["simple_rag", "simple_query_crm_data", "trigger_customer_message", "generate_quotation"]:
                                         tool_result = await tool.ainvoke(tool_args)
                                     else:
                                         tool_result = tool.invoke(tool_args)
@@ -1380,7 +1466,7 @@ Failed to deliver your message to {customer_name}.
 
             
             # Detect user language from conversation context
-            user_language = detect_user_language_from_context(original_messages, max_messages=10)
+            user_language = await detect_user_language_from_context(original_messages, max_messages=10)
             logger.info(f"[CUSTOMER_AGENT_NODE] Detected user language from context: {user_language}")
 
             # Log thread_id and conversation_id for debugging
@@ -1490,7 +1576,7 @@ Failed to deliver your message to {customer_name}.
                                         "simple_rag",
                                         "simple_query_crm_data",
                                         "trigger_customer_message",
-                                        "collect_sales_requirements",  # REVOLUTIONARY: Tool-managed recursive collection (Task 9.1)
+
                                         # "gather_further_details", # ELIMINATED - replaced by business-specific recursive collection tools
                                     ]:
                                         tool_result = await tool.ainvoke(tool_args)
@@ -2446,8 +2532,10 @@ Important: Use the tools to help you provide the best possible assistance to the
             conversation_summary=(
                 existing_state.get("summary") if existing_state else None
             ),
-            # REVOLUTIONARY: No execution_data needed - using ultra-minimal 3-field architecture
-            
+            # CRITICAL FIX: Restore HITL state from existing conversation state
+            hitl_phase=existing_state.get("hitl_phase") if existing_state else None,
+            hitl_prompt=existing_state.get("hitl_prompt") if existing_state else None,
+            hitl_context=existing_state.get("hitl_context") if existing_state else None,
         )
 
         # Execute the graph with execution-scoped connection management

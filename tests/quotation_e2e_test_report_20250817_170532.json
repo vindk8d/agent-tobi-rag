@@ -1,0 +1,57 @@
+{
+  "test_summary": {
+    "total_steps": 4,
+    "successful_steps": 3,
+    "success_rate": "75.0%",
+    "overall_success": true,
+    "conversation_id": "9dbf8e92-f818-42f3-b1cb-f1195b271ac9",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T17:05:32.212609"
+  },
+  "errors_found": [],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T17:04:33.363980",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "\u26a1 **Critical Information Needed - None**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Customer Name**\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "9dbf8e92-f818-42f3-b1cb-f1195b271ac9"
+    },
+    {
+      "timestamp": "2025-08-17T17:04:57.484592",
+      "step": "2_customer_info",
+      "request": "John Martinez",
+      "response": "\u26a1 **Critical Information Needed - John Martinez**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\u2022 **Contact Info**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "9dbf8e92-f818-42f3-b1cb-f1195b271ac9"
+    },
+    {
+      "timestamp": "2025-08-17T17:05:15.936294",
+      "step": "3_vehicle_info",
+      "request": "Toyota Camry",
+      "response": "\u26a1 **Critical Information Needed - John Martinez**\n\nFor your Toyota Camry quotation, I need the following essential information:\n\n\u2022 **Contact Info**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request, Context preserved: True",
+      "conversation_id": "9dbf8e92-f818-42f3-b1cb-f1195b271ac9"
+    },
+    {
+      "timestamp": "2025-08-17T17:05:32.201955",
+      "step": "4_contact_info",
+      "request": "john.martinez@email.com, (555) 123-4567",
+      "response": "\u26a1 **Critical Information Needed - John Martinez**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\n*This information is required to proceed with your quotation request.*",
+      "success": false,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "9dbf8e92-f818-42f3-b1cb-f1195b271ac9"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 \u26a1 **Critical Information Needed - None**\n\nTo generate your quotation, I need the following essential...",
+    "[2_customer_info] John Martinez \u2192 \u26a1 **Critical Information Needed - John Martinez**\n\nTo generate your quotation, I need the following ...",
+    "[3_vehicle_info] Toyota Camry \u2192 \u26a1 **Critical Information Needed - John Martinez**\n\nFor your Toyota Camry quotation, I need the follo...",
+    "[4_contact_info] john.martinez@email.com, (555) 123-4567 \u2192 \u26a1 **Critical Information Needed - John Martinez**\n\nTo generate your quotation, I need the following ..."
+  ],
+  "recommendations": []
+}

@@ -1296,38 +1296,7 @@ export default function TobiChatPage() {
                           </div>
                         )}
 
-                        {/* HITL (Human-in-the-loop) indicator */}
-                        {(chatMessage.is_interrupted || chatMessage.metadata?.type === 'hitl_interrupt') && (
-                          <div className="mt-3 pt-3 border-t border-amber-100">
-                            <div className="bg-amber-50 px-3 py-2 rounded-lg">
-                              <div className="flex items-center space-x-2 mb-2">
-                                <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></div>
-                                <span className="text-xs text-amber-700 font-bold">Human approval required</span>
-                              </div>
-                              {chatMessage.hitl_phase && (
-                                <p className="text-xs text-amber-600 mb-2">
-                                  Phase: <span className="font-normal">{chatMessage.hitl_phase}</span>
-                                </p>
-                              )}
-                              {hitlState.isActive && hitlState.conversationId === conversationId && conversationId && (
-                                <div className="flex space-x-2 mt-3">
-                                  <button
-                                    onClick={() => handleHitlApproval(true)}
-                                    className="flex-1 bg-green-600 text-white text-xs py-2 px-3 rounded-lg hover:bg-green-700 transition-colors font-normal"
-                                  >
-                                    ✓ Approve
-                                  </button>
-                                  <button
-                                    onClick={() => handleHitlApproval(false)}
-                                    className="flex-1 bg-red-600 text-white text-xs py-2 px-3 rounded-lg hover:bg-red-700 transition-colors font-normal"
-                                  >
-                                    ✗ Deny
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
+
                     </div>
                     {message.created_at && (
                       <div className="text-xs text-gray-500 mt-1 px-0">
@@ -1371,34 +1340,7 @@ export default function TobiChatPage() {
         </div>
       )}
 
-      {/* HITL Status Bar */}
-      {hitlState.isActive && (
-        <div className="bg-amber-50 border-t border-amber-200 px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <div className="w-3 h-3 bg-amber-500 rounded-full animate-pulse"></div>
-              <div>
-                <p className="text-sm font-normal text-amber-800">Waiting for approval</p>
-                <p className="text-xs text-amber-600">Phase: {hitlState.phase}</p>
-              </div>
-            </div>
-            <div className="flex space-x-2">
-              <button
-                onClick={() => handleHitlApproval(true)}
-                className="bg-green-600 text-white text-sm py-1 px-3 rounded-lg hover:bg-green-700 transition-colors"
-              >
-                Approve
-              </button>
-              <button
-                onClick={() => handleHitlApproval(false)}
-                className="bg-red-600 text-white text-sm py-1 px-3 rounded-lg hover:bg-red-700 transition-colors"
-              >
-                Deny
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Input */}
       <div className="bg-white border-t border-gray-200 p-4">
@@ -1410,21 +1352,14 @@ export default function TobiChatPage() {
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder={hitlState.isActive 
-                ? "HITL mode active - use approval buttons above or type 'approve'/'deny'" 
-                : loadingHistory
+              placeholder={loadingHistory
                 ? "Loading conversation history..."
                 : selectedUser
                 ? "Type a message..."
                 : "Please select a user first..."
               }
               disabled={isLoading || !selectedUser || loadingHistory}
-              className={clsx(
-                "w-full resize-none border rounded-2xl px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed",
-                hitlState.isActive
-                  ? "border-amber-300 focus:ring-amber-500 bg-amber-50"
-                  : "border-gray-300 focus:ring-primary-500"
-              )}
+              className="w-full resize-none border border-gray-300 rounded-2xl px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
               rows={1}
               style={{ minHeight: '44px', maxHeight: '120px' }}
             />
@@ -1435,9 +1370,7 @@ export default function TobiChatPage() {
             className={clsx(
               'flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center transition-all',
               input.trim() && !isLoading
-                ? hitlState.isActive
-                  ? 'bg-amber-600 text-white hover:bg-amber-700 shadow-md'
-                  : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md'
+                ? 'bg-primary-600 text-white hover:bg-primary-700 shadow-md'
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'
             )}
           >
@@ -1465,9 +1398,7 @@ export default function TobiChatPage() {
             ) : (
               <span>ID: {conversationId ? conversationId.substring(0, 8) + '...' : 'New conversation'}</span>
             )}
-            {hitlState.isActive && (
-              <span className="text-amber-600 font-normal">● HITL Active</span>
-            )}
+
             {lastSources.length > 0 && (
               <span className="text-blue-600">📚 {lastSources.length} sources</span>
             )}

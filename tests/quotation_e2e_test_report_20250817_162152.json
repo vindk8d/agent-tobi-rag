@@ -1,0 +1,88 @@
+{
+  "test_summary": {
+    "total_steps": 6,
+    "successful_steps": 0,
+    "success_rate": "0.0%",
+    "overall_success": false,
+    "conversation_id": "02b6b90e-df26-4fb3-b386-3b81aeeb4bc1",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T16:21:52.699936"
+  },
+  "errors_found": [
+    "Step 1 failed: Expected missing info request, got unknown",
+    "Step 2 failed: Expected vehicle info request, got unknown",
+    "Step 3 failed: Still missing [], response type: unknown",
+    "Step 5 failed: Expected quotation generation, got unknown",
+    "Step 6 failed: No PDF link or quotation number found in final response"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T16:21:31.775219",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "",
+      "success": false,
+      "notes": "Response type: unknown",
+      "conversation_id": "02b6b90e-df26-4fb3-b386-3b81aeeb4bc1"
+    },
+    {
+      "timestamp": "2025-08-17T16:21:34.894515",
+      "step": "2_customer_info",
+      "request": "Grace Lee",
+      "response": "",
+      "success": false,
+      "notes": "Response type: unknown",
+      "conversation_id": "02b6b90e-df26-4fb3-b386-3b81aeeb4bc1"
+    },
+    {
+      "timestamp": "2025-08-17T16:21:43.932828",
+      "step": "3_vehicle_info",
+      "request": "Toyota Camry",
+      "response": "",
+      "success": false,
+      "notes": "Response type: unknown",
+      "conversation_id": "02b6b90e-df26-4fb3-b386-3b81aeeb4bc1"
+    },
+    {
+      "timestamp": "2025-08-17T16:21:48.853326",
+      "step": "4_additional_vehicle_info",
+      "request": "Toyota Camry 2024",
+      "response": "",
+      "success": false,
+      "notes": "Retry with more detail. Response type: unknown",
+      "conversation_id": "02b6b90e-df26-4fb3-b386-3b81aeeb4bc1"
+    },
+    {
+      "timestamp": "2025-08-17T16:21:52.698731",
+      "step": "5_final_approval",
+      "request": "Approve",
+      "response": "",
+      "success": false,
+      "notes": "Response type: unknown",
+      "conversation_id": "02b6b90e-df26-4fb3-b386-3b81aeeb4bc1"
+    },
+    {
+      "timestamp": "2025-08-17T16:21:52.698934",
+      "step": "6_verify_quotation",
+      "request": "Verification check",
+      "response": "PDF link found: False, Quotation number found: False",
+      "success": false,
+      "notes": "Final verification of quotation generation",
+      "conversation_id": "02b6b90e-df26-4fb3-b386-3b81aeeb4bc1"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 ...",
+    "[2_customer_info] Grace Lee \u2192 ...",
+    "[3_vehicle_info] Toyota Camry \u2192 ...",
+    "[4_additional_vehicle_info] Toyota Camry 2024 \u2192 ...",
+    "[5_final_approval] Approve \u2192 ...",
+    "[6_verify_quotation] Verification check \u2192 PDF link found: False, Quotation number found: False..."
+  ],
+  "recommendations": [
+    "Verify deterministic boolean logic is working correctly",
+    "Check initial tool routing - may not be calling generate_quotation correctly",
+    "Review Docker logs for detailed error analysis",
+    "Test individual HITL cycles in isolation"
+  ]
+}

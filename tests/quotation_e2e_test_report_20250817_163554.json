@@ -1,0 +1,53 @@
+{
+  "test_summary": {
+    "total_steps": 3,
+    "successful_steps": 2,
+    "success_rate": "66.7%",
+    "overall_success": false,
+    "conversation_id": "c97bb160-d342-454b-af64-29a59a99ca25",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T16:35:54.026201"
+  },
+  "errors_found": [
+    "Step 3 failed: Still missing ['customer_name', 'contact_info'], response type: missing_info_request"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T16:35:10.894113",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "\u26a1 **Critical Information Needed - None**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Customer Name**\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "c97bb160-d342-454b-af64-29a59a99ca25"
+    },
+    {
+      "timestamp": "2025-08-17T16:35:35.448491",
+      "step": "2_customer_info",
+      "request": "Grace Lee",
+      "response": "\u26a1 **Critical Information Needed - Grace Lee**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\u2022 **Contact Info**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "c97bb160-d342-454b-af64-29a59a99ca25"
+    },
+    {
+      "timestamp": "2025-08-17T16:35:54.025566",
+      "step": "3_vehicle_info",
+      "request": "Toyota Camry",
+      "response": "\u26a1 **Critical Information Needed - None**\n\nFor your Toyota Camry quotation, I need the following essential information:\n\n\u2022 **Customer Name**\n\u2022 **Contact Info**\n\n*This information is required to proceed with your quotation request.*",
+      "success": false,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "c97bb160-d342-454b-af64-29a59a99ca25"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 \u26a1 **Critical Information Needed - None**\n\nTo generate your quotation, I need the following essential...",
+    "[2_customer_info] Grace Lee \u2192 \u26a1 **Critical Information Needed - Grace Lee**\n\nTo generate your quotation, I need the following esse...",
+    "[3_vehicle_info] Toyota Camry \u2192 \u26a1 **Critical Information Needed - None**\n\nFor your Toyota Camry quotation, I need the following esse..."
+  ],
+  "recommendations": [
+    "Test individual HITL cycles in isolation",
+    "Review Docker logs for detailed error analysis",
+    "Verify deterministic boolean logic is working correctly"
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "test_summary": {
+    "total_steps": 1,
+    "successful_steps": 0,
+    "success_rate": "0.0%",
+    "overall_success": false,
+    "conversation_id": "be95d784-fa61-4732-85ef-aaf47437a504",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T16:25:41.854518"
+  },
+  "errors_found": [
+    "Step 1 failed: Expected missing info request, got unknown"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T16:25:41.851396",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "",
+      "success": false,
+      "notes": "Response type: unknown",
+      "conversation_id": "be95d784-fa61-4732-85ef-aaf47437a504"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 ..."
+  ],
+  "recommendations": [
+    "Check initial tool routing - may not be calling generate_quotation correctly",
+    "Verify deterministic boolean logic is working correctly",
+    "Review Docker logs for detailed error analysis",
+    "Test individual HITL cycles in isolation"
+  ]
+}

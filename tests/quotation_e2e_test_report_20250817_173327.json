@@ -1,0 +1,43 @@
+{
+  "test_summary": {
+    "total_steps": 2,
+    "successful_steps": 1,
+    "success_rate": "50.0%",
+    "overall_success": false,
+    "conversation_id": "289eb5b5-94d6-4ee5-9e63-df5e6c83139d",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T17:33:27.886384"
+  },
+  "errors_found": [
+    "Step 2 failed: Expected vehicle info request, got error"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T17:33:25.840521",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "\u26a1 **Critical Information Needed - Customer**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Customer Name**\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "289eb5b5-94d6-4ee5-9e63-df5e6c83139d"
+    },
+    {
+      "timestamp": "2025-08-17T17:33:27.885783",
+      "step": "2_customer_info",
+      "request": "John Martinez",
+      "response": "\u274c Critical error in quotation generation. Please try again or contact support.",
+      "success": false,
+      "notes": "Response type: error",
+      "conversation_id": "289eb5b5-94d6-4ee5-9e63-df5e6c83139d"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 \u26a1 **Critical Information Needed - Customer**\n\nTo generate your quotation, I need the following essen...",
+    "[2_customer_info] John Martinez \u2192 \u274c Critical error in quotation generation. Please try again or contact support...."
+  ],
+  "recommendations": [
+    "Verify deterministic boolean logic is working correctly",
+    "Test individual HITL cycles in isolation",
+    "Review Docker logs for detailed error analysis"
+  ]
+}

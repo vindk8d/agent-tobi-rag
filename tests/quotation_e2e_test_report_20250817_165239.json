@@ -1,0 +1,53 @@
+{
+  "test_summary": {
+    "total_steps": 3,
+    "successful_steps": 2,
+    "success_rate": "66.7%",
+    "overall_success": false,
+    "conversation_id": "80924f25-7caf-4e6f-87b0-c29d4f24828e",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T16:52:39.527765"
+  },
+  "errors_found": [
+    "CRITICAL BUG: Context not preserved - system forgot previous information"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T16:51:57.924832",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "To generate a quotation, I need some specific details. Please provide the following information:\n\n1. Customer information: Full name, email address, phone number, and company (if applicable).\n2. Vehicle requirements: Make/brand, model, type (sedan/SUV/pickup), year, color, quantity needed, and budget range.\n3. Any special requirements: Financing preferences, trade-in details, delivery timeline, or custom features.\n\nOnce I have this information, I can create the quotation for you.",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "80924f25-7caf-4e6f-87b0-c29d4f24828e"
+    },
+    {
+      "timestamp": "2025-08-17T16:52:16.269102",
+      "step": "2_customer_info",
+      "request": "Grace Lee",
+      "response": "\u26a1 **Critical Information Needed - Grace Lee**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "80924f25-7caf-4e6f-87b0-c29d4f24828e"
+    },
+    {
+      "timestamp": "2025-08-17T16:52:39.415757",
+      "step": "3_vehicle_info",
+      "request": "Toyota Camry",
+      "response": "\ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: Grace Lee\n  \u2022 Email: grace.lee@consulting.com\n  \u2022 Phone: 555-7777\n\n**Vehicle Basics:**\n  \u2022 Make: Toyota\n  \u2022 Model: Camry\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\ud83d\udd38 **OPTIONAL INFORMATION**\n**Customer Details:**\n  \u2022 Address: 987 Executive Plaza\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n**Quotation Validity:** 30 days\n\n\n\n**Please review the information above and confirm:**\n- Is t...",
+      "success": false,
+      "notes": "Response type: approval_request, Context preserved: False",
+      "conversation_id": "80924f25-7caf-4e6f-87b0-c29d4f24828e"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 To generate a quotation, I need some specific details. Please provide the following information:\n\n1....",
+    "[2_customer_info] Grace Lee \u2192 \u26a1 **Critical Information Needed - Grace Lee**\n\nTo generate your quotation, I need the following esse...",
+    "[3_vehicle_info] Toyota Camry \u2192 \ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: Gra..."
+  ],
+  "recommendations": [
+    "Test individual HITL cycles in isolation",
+    "Verify deterministic boolean logic is working correctly",
+    "Review Docker logs for detailed error analysis"
+  ]
+}

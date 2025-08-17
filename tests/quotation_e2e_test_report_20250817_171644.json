@@ -1,0 +1,43 @@
+{
+  "test_summary": {
+    "total_steps": 2,
+    "successful_steps": 1,
+    "success_rate": "50.0%",
+    "overall_success": false,
+    "conversation_id": "25d388d5-4a42-4b60-90f9-16750c201aca",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T17:16:44.208693"
+  },
+  "errors_found": [
+    "Step 2 failed: Expected vehicle info request, got error"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T17:16:41.038298",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "\u26a1 **Critical Information Needed - Customer**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\u2022 **Contact Info**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "25d388d5-4a42-4b60-90f9-16750c201aca"
+    },
+    {
+      "timestamp": "2025-08-17T17:16:44.207932",
+      "step": "2_customer_info",
+      "request": "John Martinez",
+      "response": "I encountered an error while processing your request: name 'accumulated_context' is not defined. Please try again.",
+      "success": false,
+      "notes": "Response type: error",
+      "conversation_id": "25d388d5-4a42-4b60-90f9-16750c201aca"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 \u26a1 **Critical Information Needed - Customer**\n\nTo generate your quotation, I need the following essen...",
+    "[2_customer_info] John Martinez \u2192 I encountered an error while processing your request: name 'accumulated_context' is not defined. Ple..."
+  ],
+  "recommendations": [
+    "Verify deterministic boolean logic is working correctly",
+    "Review Docker logs for detailed error analysis",
+    "Test individual HITL cycles in isolation"
+  ]
+}

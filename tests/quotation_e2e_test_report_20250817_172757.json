@@ -1,0 +1,43 @@
+{
+  "test_summary": {
+    "total_steps": 2,
+    "successful_steps": 1,
+    "success_rate": "50.0%",
+    "overall_success": false,
+    "conversation_id": "859c2588-98da-4275-8ae4-4e30e12ef4d6",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T17:27:57.249375"
+  },
+  "errors_found": [
+    "Step 2 failed: Expected vehicle info request, got quotation_generated"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T17:27:25.338698",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "\u26a1 **Critical Information Needed - Customer**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Customer Name**\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "859c2588-98da-4275-8ae4-4e30e12ef4d6"
+    },
+    {
+      "timestamp": "2025-08-17T17:27:57.248717",
+      "step": "2_customer_info",
+      "request": "John Martinez",
+      "response": "\ud83c\udfaf **Professional Vehicle Quotation**\n\n**Customer**: John Martinez\n**Pricing Strategy**: Value-optimized with comprehensive benefits\n**Validity**: 30 days\n\n\ud83c\udf81 **Available Opportunities:**\n\u2022 Standard manufacturer promotions\n\u2022 Trade-in opportunities based on vehicle condition\n\u2022 Standard financing incentives\n\n\ud83d\udca1 **Recommendations:**\n\u2022 Value-based pricing strategy\n\u2022 Standard negotiation guidelines\n\n\ud83d\udcca **Pricing Analysis:**\n*The pricing strategy and business recommendations are based on the customer's st...",
+      "success": false,
+      "notes": "Response type: quotation_generated",
+      "conversation_id": "859c2588-98da-4275-8ae4-4e30e12ef4d6"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 \u26a1 **Critical Information Needed - Customer**\n\nTo generate your quotation, I need the following essen...",
+    "[2_customer_info] John Martinez \u2192 \ud83c\udfaf **Professional Vehicle Quotation**\n\n**Customer**: John Martinez\n**Pricing Strategy**: Value-optimi..."
+  ],
+  "recommendations": [
+    "Review Docker logs for detailed error analysis",
+    "Test individual HITL cycles in isolation",
+    "Verify deterministic boolean logic is working correctly"
+  ]
+}

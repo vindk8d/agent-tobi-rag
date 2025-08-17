@@ -14,7 +14,7 @@ from .generate_quotation import generate_quotation
 from .crm_query_tools import simple_query_crm_data, get_detailed_schema
 from .rag_tools import simple_rag
 from .customer_message_tools import trigger_customer_message
-from .sales_collection_tools import collect_sales_requirements
+
 
 # Import toolbox utilities
 from .toolbox import (
@@ -39,7 +39,6 @@ def get_all_tools():
         simple_query_crm_data,      # CRM database queries and analytics
         simple_rag,                 # Document retrieval and knowledge base
         trigger_customer_message,   # Customer outreach and communication (Employee only)
-        collect_sales_requirements, # Revolutionary tool-managed recursive collection
         generate_quotation,         # Professional PDF quotation generation (Employee only)
     ]
 
@@ -50,7 +49,6 @@ def get_tools_for_user_type(user_type: str = "employee") -> List:
         return [
             simple_query_crm_data,      # Limited to vehicle and pricing data only
             simple_rag,                 # Full access to knowledge base
-            collect_sales_requirements, # Revolutionary tool-managed collection
         ]
     elif user_type in ["employee", "admin"]:
         # Employees get full access to all tools
@@ -58,7 +56,6 @@ def get_tools_for_user_type(user_type: str = "employee") -> List:
             simple_query_crm_data,      # Full CRM database access
             simple_rag,                 # Full access to knowledge base
             trigger_customer_message,   # Employee only - customer outreach
-            collect_sales_requirements, # Revolutionary tool-managed collection
             generate_quotation,         # Employee only - professional quotation generation
         ]
     else:
@@ -84,7 +81,7 @@ def get_employee_only_tools():
 
 def get_customer_accessible_tools():
     """Get tools that customers can access."""
-    return [simple_query_crm_data, simple_rag, collect_sales_requirements]
+    return [simple_query_crm_data, simple_rag]
 
 # =============================================================================
 # TOOL VALIDATION AND METADATA
@@ -120,13 +117,7 @@ def get_tool_metadata() -> Dict[str, Dict[str, Any]]:
             "employee_restrictions": False,
             "customer_restrictions": True,  # Completely blocked
         },
-        "collect_sales_requirements": {
-            "description": "Collect comprehensive sales requirements with intelligent pre-population",
-            "access_level": "all_users",
-            "category": "data_collection",
-            "employee_restrictions": False,
-            "customer_restrictions": False,
-        },
+
         "generate_quotation": {
             "description": "Generate professional PDF quotations with LLM-driven intelligence",
             "access_level": "employee_only",
@@ -252,7 +243,7 @@ __all__ = [
     'simple_query_crm_data',
     'simple_rag',
     'trigger_customer_message',
-    'collect_sales_requirements',
+
     'get_detailed_schema',
     
     # Utilities

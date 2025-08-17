@@ -1,0 +1,77 @@
+{
+  "test_summary": {
+    "total_steps": 6,
+    "successful_steps": 6,
+    "success_rate": "100.0%",
+    "overall_success": true,
+    "conversation_id": "f175c377-28ef-4172-b99a-d72b35486e76",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T17:36:29.238924"
+  },
+  "errors_found": [],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T17:34:55.602604",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "\u26a1 **Critical Information Needed - Customer**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Customer Name**\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "f175c377-28ef-4172-b99a-d72b35486e76"
+    },
+    {
+      "timestamp": "2025-08-17T17:35:16.034692",
+      "step": "2_customer_info",
+      "request": "John Martinez",
+      "response": "\u26a1 **Critical Information Needed - John Martinez**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\u2022 **Contact Info**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "f175c377-28ef-4172-b99a-d72b35486e76"
+    },
+    {
+      "timestamp": "2025-08-17T17:35:37.501425",
+      "step": "3_vehicle_info",
+      "request": "Toyota Camry",
+      "response": "\u26a1 **Critical Information Needed - John Martinez**\n\nFor your Toyota Camry quotation, I need the following essential information:\n\n\u2022 **Contact Info**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request, Context preserved: True",
+      "conversation_id": "f175c377-28ef-4172-b99a-d72b35486e76"
+    },
+    {
+      "timestamp": "2025-08-17T17:35:56.921887",
+      "step": "4_contact_info",
+      "request": "john.martinez@email.com, (555) 123-4567",
+      "response": "\ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: John Martinez\n  \u2022 Email: john.martinez@email.com\n  \u2022 Phone: (555) 123-4567\n\n**Vehicle Basics:**\n  \u2022 Make: Toyota\n  \u2022 Model: Camry\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\ud83d\udd38 **OPTIONAL INFORMATION**\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n**Quotation Validity:** 30 days\n\n\n\n**Please review the information above and confirm:**\n- Is the customer information accurate?\n- Are the veh...",
+      "success": true,
+      "notes": "Response type: approval_request",
+      "conversation_id": "f175c377-28ef-4172-b99a-d72b35486e76"
+    },
+    {
+      "timestamp": "2025-08-17T17:36:29.237785",
+      "step": "5_final_approval",
+      "request": "Approve",
+      "response": "\ud83c\udfaf **Professional Vehicle Quotation**\n\n**Customer**: John Martinez\n**Vehicle**: Toyota Camry\n**Pricing Strategy**: Value-optimized with comprehensive benefits\n**Validity**: 30 days\n\n\ud83c\udf81 **Available Opportunities:**\n\u2022 Manufacturer incentives\n\u2022 Trade-in opportunities\n\u2022 Financing incentives\n\n\ud83d\udca1 **Recommendations:**\n\u2022 Offer value-based pricing\n\u2022 Negotiate within 5% of asking price\n\n\ud83d\udcca **Pricing Analysis:**\n*Given the customer's standard tier and the high value assessment of the vehicle, a value-based pri...",
+      "success": true,
+      "notes": "Response type: quotation_generated",
+      "conversation_id": "f175c377-28ef-4172-b99a-d72b35486e76"
+    },
+    {
+      "timestamp": "2025-08-17T17:36:29.238471",
+      "step": "6_verify_quotation",
+      "request": "Verification check",
+      "response": "PDF link found: False, Quotation number found: True",
+      "success": true,
+      "notes": "Final verification of quotation generation",
+      "conversation_id": "f175c377-28ef-4172-b99a-d72b35486e76"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 \u26a1 **Critical Information Needed - Customer**\n\nTo generate your quotation, I need the following essen...",
+    "[2_customer_info] John Martinez \u2192 \u26a1 **Critical Information Needed - John Martinez**\n\nTo generate your quotation, I need the following ...",
+    "[3_vehicle_info] Toyota Camry \u2192 \u26a1 **Critical Information Needed - John Martinez**\n\nFor your Toyota Camry quotation, I need the follo...",
+    "[4_contact_info] john.martinez@email.com, (555) 123-4567 \u2192 \ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: Joh...",
+    "[5_final_approval] Approve \u2192 \ud83c\udfaf **Professional Vehicle Quotation**\n\n**Customer**: John Martinez\n**Vehicle**: Toyota Camry\n**Pricin...",
+    "[6_verify_quotation] Verification check \u2192 PDF link found: False, Quotation number found: True..."
+  ],
+  "recommendations": []
+}

@@ -1,0 +1,34 @@
+{
+  "test_summary": {
+    "total_steps": 1,
+    "successful_steps": 0,
+    "success_rate": "0.0%",
+    "overall_success": false,
+    "conversation_id": "7c9a0781-4583-4141-8de3-6a88c76f6eb3",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T16:32:14.952619"
+  },
+  "errors_found": [
+    "Step 1 failed: Expected missing info request, got approval_request"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T16:32:14.950547",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "\ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: Customer Name\n  \u2022 Email: customer@example.com\n  \u2022 Phone: +1234567890\n\n**Vehicle Basics:**\n  \u2022 Make: Toyota\n  \u2022 Model: Camry\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\ud83d\udd38 **OPTIONAL INFORMATION**\n**Vehicle Details:**\n  \u2022 Year: 2024\n  \u2022 Type: sedan\n  \u2022 Quantity: 1\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n**Quotation Validity:** 30 days\n\n\n\n**Please review the information above and c...",
+      "success": false,
+      "notes": "Response type: approval_request",
+      "conversation_id": "7c9a0781-4583-4141-8de3-6a88c76f6eb3"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 \ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: Cus..."
+  ],
+  "recommendations": [
+    "Verify deterministic boolean logic is working correctly",
+    "Review Docker logs for detailed error analysis",
+    "Check initial tool routing - may not be calling generate_quotation correctly",
+    "Test individual HITL cycles in isolation"
+  ]
+}

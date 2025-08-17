@@ -161,6 +161,13 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
             # Agent is awaiting HITL response when hitl_phase indicates waiting for user input
             is_awaiting_hitl = hitl_phase in ["awaiting_response", "needs_confirmation", "needs_prompt"]
             
+            # DEBUG: Log what we found in the state
+            logger.info(f"🔍 [CHAT_DEBUG] Retrieved state_values keys: {list(state_values.keys())}")
+            logger.info(f"🔍 [CHAT_DEBUG] Current state type: {type(current_state)}")
+            logger.info(f"🔍 [CHAT_DEBUG] Current state values: {state_values}")
+        else:
+            logger.warning(f"🔍 [CHAT_DEBUG] No current_state or values found. current_state: {current_state}")
+            
         logger.info(f"🔍 [CHAT_DEBUG] HITL 3-field state check: phase={hitl_phase}, awaiting_hitl={is_awaiting_hitl}")
         if hitl_phase:
             logger.info(f"🔍 [CHAT_DEBUG] HITL phase: {hitl_phase}")

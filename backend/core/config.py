@@ -227,6 +227,12 @@ class Settings(BaseSettings):
 
     # Telegram Configuration
     telegram_bot_token: Optional[str] = Field(default=None, env="TELEGRAM_BOT_TOKEN")
+    
+    # Language Detection Configuration
+    language_detection_use_llm: bool = Field(default=True, env="LANGUAGE_DETECTION_USE_LLM", description="Enable LLM-based language detection")
+    language_detection_fallback_enabled: bool = Field(default=True, env="LANGUAGE_DETECTION_FALLBACK_ENABLED", description="Enable algorithmic fallback when LLM fails")
+    language_detection_cache_enabled: bool = Field(default=True, env="LANGUAGE_DETECTION_CACHE_ENABLED", description="Enable caching of language detection results")
+    language_detection_cache_size: int = Field(default=1000, env="LANGUAGE_DETECTION_CACHE_SIZE", description="Maximum number of cached language detection results")
 
     # Convenience properties to maintain compatibility
     @property
@@ -305,6 +311,16 @@ class Settings(BaseSettings):
             endpoint=self.langsmith_endpoint,
             api_key=self.langsmith_api_key,
             project=self.langsmith_project
+        )
+    
+    @property
+    def language_detection(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            use_llm=self.language_detection_use_llm,
+            fallback_enabled=self.language_detection_fallback_enabled,
+            cache_enabled=self.language_detection_cache_enabled,
+            cache_size=self.language_detection_cache_size
         )
 
 

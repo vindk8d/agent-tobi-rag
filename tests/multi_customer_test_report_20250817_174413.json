@@ -1,0 +1,36 @@
+{
+  "test_type": "Multi-Customer Quotation Generation",
+  "total_customers": 3,
+  "successful_tests": 0,
+  "success_rate": 0.0,
+  "overall_success": false,
+  "customer_results": [
+    {
+      "customer": "Alice Johnson",
+      "user_id": "a0b81a3b-3ac0-4a7d-b27c-dadf0fdbbe8b",
+      "description": "Individual customer",
+      "success": false,
+      "message": "Step 1 failed: Expected missing_info_request, got quotation_generated"
+    },
+    {
+      "customer": "Bob Smith",
+      "user_id": "e8a13560-3b49-4495-bb47-c95c30de5165",
+      "description": "Personal customer",
+      "success": false,
+      "message": "Step 1 failed: Expected missing_info_request, got quotation_generated"
+    },
+    {
+      "customer": "Carol Thompson",
+      "user_id": "95b070ff-e574-40c5-89f2-331cbf9ecdbb",
+      "description": "Logistics company customer",
+      "success": false,
+      "message": "Step 1 failed: Expected missing_info_request, got quotation_generated"
+    }
+  ],
+  "errors_found": [
+    "Alice Johnson: Step 1 failed: Expected missing_info_request, got quotation_generated",
+    "Bob Smith: Step 1 failed: Expected missing_info_request, got quotation_generated",
+    "Carol Thompson: Step 1 failed: Expected missing_info_request, got quotation_generated"
+  ],
+  "timestamp": "2025-08-17T17:44:13.620019"
+}

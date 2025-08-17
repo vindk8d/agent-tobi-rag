@@ -1,0 +1,67 @@
+{
+  "test_summary": {
+    "total_steps": 5,
+    "successful_steps": 5,
+    "success_rate": "100.0%",
+    "overall_success": true,
+    "conversation_id": "a3ad73a2-7377-4b61-9358-97549301f9d0",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T16:58:42.835879"
+  },
+  "errors_found": [],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T16:57:41.885142",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "To generate a quotation, I need some specific details. Please provide the following information:\n\n1. Customer information (full name, email address, phone number, and company if applicable).\n2. Vehicle requirements (make/brand, model, type, year, color, quantity needed, and budget range).\n3. Any special requirements (financing preferences, trade-in details, delivery timeline, or custom features).\n\nOnce I have this information, I can create the quotation for you.",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "a3ad73a2-7377-4b61-9358-97549301f9d0"
+    },
+    {
+      "timestamp": "2025-08-17T16:58:01.028501",
+      "step": "2_customer_info",
+      "request": "Grace Lee",
+      "response": "\u26a1 **Critical Information Needed - Grace Lee**\n\nTo generate your quotation, I need the following essential information:\n\n\u2022 **Vehicle Make**\n\u2022 **Vehicle Model**\n\n*This information is required to proceed with your quotation request.*",
+      "success": true,
+      "notes": "Response type: missing_info_request",
+      "conversation_id": "a3ad73a2-7377-4b61-9358-97549301f9d0"
+    },
+    {
+      "timestamp": "2025-08-17T16:58:19.058366",
+      "step": "3_vehicle_info",
+      "request": "Toyota Camry",
+      "response": "\ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: Grace Lee\n  \u2022 Email: grace.lee@consulting.com\n  \u2022 Phone: 555-7777\n\n**Vehicle Basics:**\n  \u2022 Make: Toyota\n  \u2022 Model: Camry\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\ud83d\udd38 **OPTIONAL INFORMATION**\n**Customer Details:**\n  \u2022 Address: 987 Executive Plaza\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n**Quotation Validity:** 30 days\n\n\n\n**Please review the information above and confirm:**\n- Is t...",
+      "success": true,
+      "notes": "Response type: approval_request, Context preserved: True",
+      "conversation_id": "a3ad73a2-7377-4b61-9358-97549301f9d0"
+    },
+    {
+      "timestamp": "2025-08-17T16:58:42.835018",
+      "step": "5_final_approval",
+      "request": "Approve",
+      "response": "\ud83d\udcbc **Vehicle Quotation**\n\n**Customer**: Grace Lee\n**Pricing Strategy**: Competitive market pricing\n**Validity**: 30 days\n\n\ud83c\udf81 **Available Opportunities:**\n\u2022 Standard Promotions\n\u2022 Trade-In Opportunities\n\u2022 Financing Incentives\n\n\ud83d\udca1 **Recommendations:**\n\u2022 Value-Based Pricing Strategy\n\u2022 Standard Negotiation Guidelines\n\n\ud83d\udcca **Pricing Analysis:**\n*The pricing strategy and business recommendations are based on the customer's standard profile and preferences, as well as the standard market conditions. The valu...",
+      "success": true,
+      "notes": "Response type: quotation_generated",
+      "conversation_id": "a3ad73a2-7377-4b61-9358-97549301f9d0"
+    },
+    {
+      "timestamp": "2025-08-17T16:58:42.835808",
+      "step": "6_verify_quotation",
+      "request": "Verification check",
+      "response": "PDF link found: False, Quotation number found: True",
+      "success": true,
+      "notes": "Final verification of quotation generation",
+      "conversation_id": "a3ad73a2-7377-4b61-9358-97549301f9d0"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 To generate a quotation, I need some specific details. Please provide the following information:\n\n1....",
+    "[2_customer_info] Grace Lee \u2192 \u26a1 **Critical Information Needed - Grace Lee**\n\nTo generate your quotation, I need the following esse...",
+    "[3_vehicle_info] Toyota Camry \u2192 \ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: Gra...",
+    "[5_final_approval] Approve \u2192 \ud83d\udcbc **Vehicle Quotation**\n\n**Customer**: Grace Lee\n**Pricing Strategy**: Competitive market pricing\n**...",
+    "[6_verify_quotation] Verification check \u2192 PDF link found: False, Quotation number found: True..."
+  ],
+  "recommendations": []
+}

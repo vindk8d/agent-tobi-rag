@@ -1,0 +1,34 @@
+{
+  "test_summary": {
+    "total_steps": 1,
+    "successful_steps": 0,
+    "success_rate": "0.0%",
+    "overall_success": false,
+    "conversation_id": "829870ab-5d01-4166-9496-f57924c528fc",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T17:17:41.967452"
+  },
+  "errors_found": [
+    "Step 1 failed: Expected missing info request, got approval_request"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T17:17:41.967116",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "\ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: Maria Santos\n  \u2022 Email: maria@email.com\n  \u2022 Phone: +63-917-123-4567\n\n**Vehicle Basics:**\n  \u2022 Make: Toyota\n  \u2022 Model: RAV4\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\ud83d\udd38 **OPTIONAL INFORMATION**\n**Customer Details:**\n  \u2022 Company: ABC Corp\n\n**Vehicle Details:**\n  \u2022 Year: 2024\n  \u2022 Type: SUV\n  \u2022 Quantity: 1\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n**Quotation Validity:** 30 days\n\n\n\n**...",
+      "success": false,
+      "notes": "Response type: approval_request",
+      "conversation_id": "829870ab-5d01-4166-9496-f57924c528fc"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 \ud83d\udcc4 **Quotation Ready for Generation**\n\n\ud83d\udd39 **REQUIRED INFORMATION**\n**Customer Contact:**\n  \u2022 Name: Mar..."
+  ],
+  "recommendations": [
+    "Check initial tool routing - may not be calling generate_quotation correctly",
+    "Review Docker logs for detailed error analysis",
+    "Verify deterministic boolean logic is working correctly",
+    "Test individual HITL cycles in isolation"
+  ]
+}

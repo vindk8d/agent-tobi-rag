@@ -1,0 +1,21 @@
+{
+  "test_type": "Multi-Customer Quotation Generation",
+  "total_scenarios": 3,
+  "successful_tests": 0,
+  "success_rate": 0.0,
+  "overall_success": false,
+  "scenario_results": [
+    {
+      "employee": "Alex Thompson",
+      "customer": "Alice Johnson",
+      "user_id": "54394d40-ad35-4b5b-a392-1ae7c9329d11",
+      "description": "Employee Alex generating quotation for customer Alice Johnson",
+      "success": false,
+      "message": "Step 4 failed: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=30)"
+    }
+  ],
+  "errors_found": [
+    "Alex Thompson -> Alice Johnson: Step 4 failed: HTTPConnectionPool(host='localhost', port=8000): Read timed out. (read timeout=30)"
+  ],
+  "timestamp": "2025-08-17T17:58:21.101494"
+}

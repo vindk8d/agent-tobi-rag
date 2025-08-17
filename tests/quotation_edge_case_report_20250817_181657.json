@@ -1,0 +1,41 @@
+{
+  "test_type": "Quotation Generation Edge Cases",
+  "total_test_categories": 6,
+  "successful_categories": 6,
+  "success_rate": 100.0,
+  "overall_success": true,
+  "test_results": [
+    {
+      "test_name": "Non-existent Customer",
+      "success": true,
+      "message": "Non-existent customer handled correctly"
+    },
+    {
+      "test_name": "Malformed Vehicle Specs",
+      "success": true,
+      "message": "Malformed vehicle spec 'xyz123' handled gracefully"
+    },
+    {
+      "test_name": "HITL Flow Interruptions",
+      "success": true,
+      "message": "Invalid HITL response handled gracefully"
+    },
+    {
+      "test_name": "Approval Variations",
+      "success": true,
+      "message": "Non-standard approval 'yes please' handled correctly"
+    },
+    {
+      "test_name": "Concurrent Sessions",
+      "success": true,
+      "message": "Concurrent sessions handled with separate conversation IDs"
+    },
+    {
+      "test_name": "Database Edge Cases",
+      "success": true,
+      "message": "Customer with special characters 'O'Connor-Smith' handled correctly"
+    }
+  ],
+  "errors_found": [],
+  "timestamp": "2025-08-17T18:16:57.955627"
+}

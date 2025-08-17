@@ -1,0 +1,23 @@
+{
+  "test_type": "Quotation Generation Edge Cases",
+  "total_test_categories": 6,
+  "successful_categories": 1,
+  "success_rate": 16.666666666666664,
+  "overall_success": false,
+  "test_results": [
+    {
+      "test_name": "Non-existent Customer",
+      "success": true,
+      "message": "Non-existent customer handled correctly"
+    },
+    {
+      "test_name": "Malformed Vehicle Specs",
+      "success": false,
+      "message": "Step 3 failed: Exception"
+    }
+  ],
+  "errors_found": [
+    "Malformed Vehicle Specs: Step 3 failed: Exception"
+  ],
+  "timestamp": "2025-08-17T18:11:36.396404"
+}

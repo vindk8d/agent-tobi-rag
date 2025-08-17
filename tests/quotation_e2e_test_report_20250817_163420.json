@@ -1,0 +1,34 @@
+{
+  "test_summary": {
+    "total_steps": 1,
+    "successful_steps": 0,
+    "success_rate": "0.0%",
+    "overall_success": false,
+    "conversation_id": "cfabbf58-1a71-4de1-8530-ac2a16af47b0",
+    "test_duration": "N/A",
+    "timestamp": "2025-08-17T16:34:20.170007"
+  },
+  "errors_found": [
+    "Step 1 failed: Expected missing info request, got unknown"
+  ],
+  "step_results": [
+    {
+      "timestamp": "2025-08-17T16:34:20.169044",
+      "step": "1_initial_request",
+      "request": "generate a quotation",
+      "response": "To generate a quotation, I need some specific details from you. Please provide the following information:\n\n1. Customer information, including full name, email address, phone number, and company (if applicable).\n2. Detailed vehicle specifications, including make/brand, model, type (sedan/SUV/pickup), year, color, quantity needed, and budget range.\n3. Any special requirements, such as financing preferences, trade-in details, or delivery timeline.\n\nOnce I have this information, I can create the quo...",
+      "success": false,
+      "notes": "Response type: unknown",
+      "conversation_id": "cfabbf58-1a71-4de1-8530-ac2a16af47b0"
+    }
+  ],
+  "conversation_log": [
+    "[1_initial_request] generate a quotation \u2192 To generate a quotation, I need some specific details from you. Please provide the following informa..."
+  ],
+  "recommendations": [
+    "Check initial tool routing - may not be calling generate_quotation correctly",
+    "Review Docker logs for detailed error analysis",
+    "Verify deterministic boolean logic is working correctly",
+    "Test individual HITL cycles in isolation"
+  ]
+}

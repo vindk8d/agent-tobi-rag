@@ -1,12 +1,13 @@
 """
-Language detection and Taglish support for the Tobi Sales Copilot agent.
+System prompt generation and behavioral patterns for the Tobi Sales Copilot agent.
 
-This module provides agent-specific language features:
+This module provides agent-specific behavioral configuration:
 1. Language-adapted system prompts for employees and customers  
-2. Taglish code-switching patterns and examples
-3. Agent-specific conversation templates
+2. Taglish code-switching patterns and conversation examples
+3. Agent-specific conversation templates and behavioral guidelines
+4. Context-aware prompt generation with memory optimization
 
-Core language detection utilities have been moved to utils/language.py for portability.
+Core language detection utilities are imported from utils/language.py for portability.
 """
 
 import logging

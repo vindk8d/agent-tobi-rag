@@ -334,6 +334,7 @@ class UniversalHITLControl:
             "param1": "value1",
             "param2": "value2"
         }
+        # SIMPLIFIED: No accumulated_context - state is source of truth
     }
     
     Usage:
@@ -359,6 +360,7 @@ class UniversalHITLControl:
         self.source_tool = source_tool
         self.collection_mode = "tool_managed"  # Universal detection marker
         self.original_params = original_params or {}
+        # SIMPLIFIED: No accumulated_context - state is source of truth
     
     @classmethod
     def create(cls, source_tool: str, original_params: Dict[str, Any]) -> 'UniversalHITLControl':
@@ -392,7 +394,7 @@ class UniversalHITLControl:
         source_tool = hitl_context.get("source_tool")
         collection_mode = hitl_context.get("collection_mode")
         original_params = hitl_context.get("original_params")
-        
+
         if source_tool and collection_mode == "tool_managed" and original_params is not None:
             return cls(source_tool, original_params)
         
@@ -409,6 +411,7 @@ class UniversalHITLControl:
             "source_tool": self.source_tool,
             "collection_mode": self.collection_mode,
             "original_params": self.original_params.copy()
+            # SIMPLIFIED: No accumulated_context - state is source of truth
         }
     
     def is_universal(self) -> bool:
@@ -461,10 +464,94 @@ class UniversalHITLControl:
         """
         self.original_params.update(kwargs)
     
+    # SIMPLIFIED: Removed update_accumulated_context - state is source of truth
+    
     def __repr__(self) -> str:
         """String representation for debugging."""
         return f"UniversalHITLControl(tool='{self.source_tool}', params={list(self.original_params.keys())})"
 
+
+# =============================================================================
+# AUTOMATIC LLM-BASED CORRECTION PROCESSING - Task 7.7.3.1
+# =============================================================================
+
+async def _process_automatic_corrections(
+    user_response: str,
+    original_params: Dict[str, Any],
+    tool_name: str,
+    bound_args
+) -> Dict[str, Any]:
+    """
+    TASK 7.7.3.1: Process automatic LLM-based corrections for universal HITL.
+    
+    Handles three cases:
+    - approve: Continue with tool execution
+    - correct: Re-call tool with updated parameters  
+    - deny: Cancel tool execution
+    
+    Returns:
+        Dict with action and relevant data:
+        - {"action": "continue"} - proceed with normal tool processing
+        - {"action": "re_call_with_corrections", "updated_args": {...}} - re-call with corrections
+        - {"action": "cancel", "message": "..."} - user cancelled
+    """
+    try:
+        logger.info(f"[AUTO_CORRECTION] 🤖 Processing automatic corrections for {tool_name}")
+        
+        # Import the correction processor
+        from backend.utils.hitl_corrections import LLMCorrectionProcessor
+        
+        processor = LLMCorrectionProcessor()
+        intent, updated_params = await processor.process_correction(
+            user_response, original_params, tool_name
+        )
+        
+        logger.info(f"[AUTO_CORRECTION] 🧠 LLM detected intent: {intent}")
+        
+        if intent == "approval":
+            # User approved - continue with normal tool processing
+            return {"action": "continue"}
+            
+        elif intent == "denial":
+            # User denied - cancel tool execution
+            return {
+                "action": "cancel",
+                "message": f"❌ **{tool_name.replace('_', ' ').title()} Cancelled**\n\nThe operation has been cancelled as requested."
+            }
+            
+        elif intent == "correction" and updated_params:
+            # User provided corrections - update parameters and re-call tool
+            logger.info(f"[AUTO_CORRECTION] 🔄 Applying parameter corrections")
+            
+            # Update bound_args with corrected parameters
+            updated_bound_args = {}
+            for param_name, param_value in updated_params.items():
+                if param_name in bound_args.arguments:
+                    updated_bound_args[param_name] = param_value
+                    logger.info(f"[AUTO_CORRECTION]   └─ {param_name}: {str(param_value)[:100]}...")
+            
+            # Keep non-corrected parameters
+            for param_name, param_value in bound_args.arguments.items():
+                if param_name not in updated_bound_args:
+                    updated_bound_args[param_name] = param_value
+            
+            # Clear user_response to avoid infinite loops
+            updated_bound_args['user_response'] = ""
+            updated_bound_args['hitl_phase'] = ""
+            
+            return {
+                "action": "re_call_with_corrections",
+                "updated_args": updated_bound_args
+            }
+        else:
+            # Fallback - continue with normal processing
+            logger.warning(f"[AUTO_CORRECTION] Could not process correction, continuing normally")
+            return {"action": "continue"}
+            
+    except Exception as e:
+        logger.error(f"[AUTO_CORRECTION] Error in automatic correction processing: {e}")
+        # Fallback to normal processing on error
+        return {"action": "continue"}
 
 # REVOLUTIONARY: @hitl_recursive_tool DECORATOR (Task 14.3)
 #
@@ -539,9 +626,20 @@ def hitl_recursive_tool(func: Callable) -> Callable:
                 logger.info(f"[UNIVERSAL_HITL]   └─ user_response: '{user_response}'")
                 logger.info(f"[UNIVERSAL_HITL]   └─ hitl_phase: '{hitl_phase}'")
                 
-                # Add user response to parameters for tool processing
+                # TASK 7.7.3.1: Automatic LLM-based correction processing
                 if user_response:
-                    bound_args.arguments['user_response'] = user_response
+                    correction_result = await _process_automatic_corrections(
+                        user_response, original_params, tool_name, bound_args
+                    )
+                    
+                    if correction_result["action"] == "re_call_with_corrections":
+                        # LLM detected corrections - re-call tool with updated parameters
+                        logger.info(f"[UNIVERSAL_HITL] 🔄 Auto-corrections detected - re-calling {tool_name}")
+                        return await func(**correction_result["updated_args"])
+                    elif correction_result["action"] == "cancel":
+                        # User denied - return cancellation message
+                        return correction_result["message"]
+                    # If action is "continue", proceed with normal tool processing
             else:
                 logger.info(f"[UNIVERSAL_HITL] 🆕 {tool_name} initial call - universal context will be auto-created")
             
