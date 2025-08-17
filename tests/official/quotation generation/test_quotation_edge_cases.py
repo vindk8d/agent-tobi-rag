@@ -134,77 +134,174 @@ class QuotationEdgeCaseTests:
             print(f"   ❌ Exception: {str(e)}")
             return False, f"Exception: {str(e)}"
 
-    async def test_malformed_vehicle_specs(self) -> Tuple[bool, str]:
-        """Test with malformed vehicle specifications - FAIL-FAST on first issue."""
-        print("\n🧪 EDGE CASE: Malformed Vehicle Specifications")
+    async def test_invalid_vehicle_inputs(self) -> Tuple[bool, str]:
+        """Test with 3 different invalid vehicle inputs - FAIL-FAST on first issue."""
+        print("\n🧪 EDGE CASE: Invalid Vehicle Inputs")
         
-        # Test the most problematic case first (random text)
-        malformed_spec = "xyz123"  # Random text that makes no sense
+        # Test 3 different types of invalid vehicle inputs
+        invalid_vehicles = [
+            ("xyz123", "Random nonsense text - should be ignored by LLM"),
+            ("Jaguar Sedan", "Non-existent vehicle (not in database)"),
+            ("Ferrari LaFerrari", "Luxury vehicle not in inventory")
+        ]
         
-        try:
-            # Step 1: Start quotation
-            print("   📝 STEP 1: Initial Quotation Request")
-            result = self.send_message("generate a quotation", self.test_employee["user_id"])
-            if not result["success"]:
-                print(f"      ❌ Step 1 Error: {result['error']}")
-                return False, f"Step 1 failed: {result['error']}"
+        for i, (invalid_vehicle, description) in enumerate(invalid_vehicles, 1):
+            print(f"\n   🚗 INVALID VEHICLE TEST {i}/3: {description}")
+            print(f"       Testing: '{invalid_vehicle}'")
             
-            conversation_id = result.get("conversation_id")
-            print(f"      📋 Conversation ID: {conversation_id}")
-            print("      ✅ Step 1 Success: Quotation request initiated")
-            
-            # Step 2: Provide valid customer
-            print("   👤 STEP 2: Provide Valid Customer Name")
-            result = self.send_message("Alice Johnson", self.test_employee["user_id"], conversation_id)
-            if not result["success"]:
-                print(f"      ❌ Step 2 Error: {result['error']}")
-                return False, f"Step 2 failed: {result['error']}"
-            
-            print("      ✅ Step 2 Success: Customer recognized")
-            
-            # Step 3: Provide malformed vehicle spec
-            print(f"   🚗 STEP 3: Provide Malformed Vehicle Spec: '{malformed_spec}'")
-            result = self.send_message(malformed_spec, self.test_employee["user_id"], conversation_id, timeout=30)
-            
-            if not result["success"]:
-                print(f"      ❌ Step 3 Error: {result['error']}")
-                return False, f"Step 3 failed: {result['error']}"
-            
-            # System should handle gracefully by generating a new HITL request
-            # Check if it's asking for more information (which is the correct behavior)
-            response_type = self.analyze_response_type(result["response"])
-            response_lower = result["response"].lower()
-            
-            # The system should either:
-            # 1. Generate a new missing_info_request (asking for proper vehicle info)
-            # 2. Ask for clarification
-            # 3. Request specific vehicle details
-            handled_gracefully = (
-                response_type == "missing_info_request" or
-                "clarification" in response_lower or
-                "specify" in response_lower or
-                "vehicle" in response_lower or
-                "make" in response_lower or
-                "model" in response_lower or
-                "information" in response_lower or
-                "essential" in response_lower or
-                "critical" in response_lower
-            )
-            
-            if handled_gracefully:
-                print(f"      ✅ Step 3 Success: Malformed input handled gracefully")
-                print(f"         Response Type: {response_type}")
-                print(f"         Response: {result['response'][:200]}...")
-                return True, f"Malformed vehicle spec '{malformed_spec}' handled gracefully"
-            else:
-                print(f"      ❌ Step 3 Error: System did not handle malformed input gracefully")
-                print(f"         Response Type: {response_type}")
-                print(f"         Response: {result['response'][:300]}...")
-                return False, f"System did not handle malformed vehicle spec gracefully"
+            try:
+                # Step 1: Start quotation
+                print("      📝 STEP 1: Initial Quotation Request")
+                result = self.send_message("generate a quotation", self.test_employee["user_id"])
+                if not result["success"]:
+                    print(f"         ❌ Step 1 Error: {result['error']}")
+                    return False, f"Invalid vehicle test {i} - Step 1 failed: {result['error']}"
                 
-        except Exception as e:
-            print(f"   ❌ Exception: {str(e)}")
-            return False, f"Exception: {str(e)}"
+                conversation_id = result.get("conversation_id")
+                print(f"         📋 Conversation ID: {conversation_id}")
+                print("         ✅ Step 1 Success: Quotation request initiated")
+                
+                # Step 2: Provide valid customer
+                print("      👤 STEP 2: Provide Valid Customer Name")
+                result = self.send_message("Alice Johnson", self.test_employee["user_id"], conversation_id)
+                if not result["success"]:
+                    print(f"         ❌ Step 2 Error: {result['error']}")
+                    return False, f"Invalid vehicle test {i} - Step 2 failed: {result['error']}"
+                
+                print("         ✅ Step 2 Success: Customer recognized")
+                
+                # Step 3: Provide invalid vehicle
+                print(f"      🚫 STEP 3: Provide Invalid Vehicle: '{invalid_vehicle}'")
+                result = self.send_message(invalid_vehicle, self.test_employee["user_id"], conversation_id, timeout=30)
+                
+                if not result["success"]:
+                    print(f"         ❌ Step 3 Error: {result['error']}")
+                    return False, f"Invalid vehicle test {i} - Step 3 failed: {result['error']}"
+                
+                # System should handle gracefully by:
+                # For nonsense text: LLM ignores it and asks for proper vehicle info
+                # For real but non-existent vehicles: System blocks and shows inventory message
+                response_lower = result["response"].lower()
+                
+                if invalid_vehicle == "xyz123":
+                    # Special case: nonsense text should be ignored by LLM, system asks for vehicle info
+                    handled_correctly = (
+                        "vehicle make" in response_lower or
+                        "vehicle model" in response_lower or
+                        ("vehicle" in response_lower and "information" in response_lower)
+                    )
+                    
+                    if handled_correctly:
+                        print(f"         ✅ Step 3 Success: Nonsense input '{invalid_vehicle}' correctly ignored, asking for proper vehicle info")
+                        print(f"            Response: {result['response'][:200]}...")
+                    else:
+                        print(f"         ❌ Step 3 Error: Nonsense input '{invalid_vehicle}' not handled correctly!")
+                        print(f"            Response: {result['response'][:300]}...")
+                        return False, f"Nonsense input '{invalid_vehicle}' was not handled correctly"
+                else:
+                    # Real vehicle names that don't exist in database should be blocked
+                    vehicle_blocked = (
+                        "not in our current inventory" in response_lower or
+                        "available vehicle options" in response_lower or
+                        "not available" in response_lower or
+                        "choose from our available" in response_lower or
+                        "special orders" in response_lower or
+                        "valid vehicle" in response_lower
+                    )
+                    
+                    if vehicle_blocked:
+                        print(f"         ✅ Step 3 Success: Invalid vehicle '{invalid_vehicle}' correctly blocked")
+                        print(f"            Response: {result['response'][:200]}...")
+                    else:
+                        print(f"         ❌ Step 3 Error: Invalid vehicle '{invalid_vehicle}' was NOT blocked!")
+                        print(f"            Response: {result['response'][:300]}...")
+                        return False, f"Invalid vehicle '{invalid_vehicle}' was not blocked by the system"
+                
+                print(f"      🎉 Invalid vehicle test {i}/3 PASSED")
+                
+                # Small delay between tests
+                time.sleep(1)
+                
+            except Exception as e:
+                print(f"      ❌ Exception in invalid vehicle test {i}: {str(e)}")
+                return False, f"Exception in invalid vehicle test {i}: {str(e)}"
+        
+        return True, "All 3 invalid vehicle inputs were correctly blocked"
+
+    async def test_valid_vehicle_formats(self) -> Tuple[bool, str]:
+        """Test with 3 different valid vehicle input formats."""
+        print("\n🧪 EDGE CASE: Valid Vehicle Input Formats")
+        
+        # Test 3 different formats of valid vehicle inputs (all should work)
+        valid_vehicles = [
+            ("Toyota Camry", "Standard format: Make Model"),
+            ("Honda CR-V", "With hyphen in model name"),
+            ("Ford F-150", "With alphanumeric model")
+        ]
+        
+        for i, (valid_vehicle, description) in enumerate(valid_vehicles, 1):
+            print(f"\n   ✅ VALID VEHICLE TEST {i}/3: {description}")
+            print(f"       Testing: '{valid_vehicle}'")
+            
+            try:
+                # Step 1: Start quotation
+                print("      📝 STEP 1: Initial Quotation Request")
+                result = self.send_message("generate a quotation", self.test_employee["user_id"])
+                if not result["success"]:
+                    print(f"         ❌ Step 1 Error: {result['error']}")
+                    return False, f"Valid vehicle test {i} - Step 1 failed: {result['error']}"
+                
+                conversation_id = result.get("conversation_id")
+                print(f"         📋 Conversation ID: {conversation_id}")
+                print("         ✅ Step 1 Success: Quotation request initiated")
+                
+                # Step 2: Provide valid customer
+                print("      👤 STEP 2: Provide Valid Customer Name")
+                result = self.send_message("Alice Johnson", self.test_employee["user_id"], conversation_id)
+                if not result["success"]:
+                    print(f"         ❌ Step 2 Error: {result['error']}")
+                    return False, f"Valid vehicle test {i} - Step 2 failed: {result['error']}"
+                
+                print("         ✅ Step 2 Success: Customer recognized")
+                
+                # Step 3: Provide valid vehicle
+                print(f"      ✅ STEP 3: Provide Valid Vehicle: '{valid_vehicle}'")
+                result = self.send_message(valid_vehicle, self.test_employee["user_id"], conversation_id, timeout=30)
+                
+                if not result["success"]:
+                    print(f"         ❌ Step 3 Error: {result['error']}")
+                    return False, f"Valid vehicle test {i} - Step 3 failed: {result['error']}"
+                
+                # System should accept the valid vehicle and ask for contact info
+                response_lower = result["response"].lower()
+                
+                vehicle_accepted = (
+                    "contact info" in response_lower or
+                    "email" in response_lower or
+                    "phone" in response_lower
+                ) and (
+                    "not in our current inventory" not in response_lower and
+                    "not available" not in response_lower
+                )
+                
+                if vehicle_accepted:
+                    print(f"         ✅ Step 3 Success: Valid vehicle '{valid_vehicle}' correctly accepted")
+                    print(f"            Response: {result['response'][:200]}...")
+                else:
+                    print(f"         ❌ Step 3 Error: Valid vehicle '{valid_vehicle}' was NOT accepted!")
+                    print(f"            Response: {result['response'][:300]}...")
+                    return False, f"Valid vehicle '{valid_vehicle}' was not accepted by the system"
+                
+                print(f"      🎉 Valid vehicle test {i}/3 PASSED")
+                
+                # Small delay between tests
+                time.sleep(1)
+                
+            except Exception as e:
+                print(f"      ❌ Exception in valid vehicle test {i}: {str(e)}")
+                return False, f"Exception in valid vehicle test {i}: {str(e)}"
+        
+        return True, "All 3 valid vehicle formats were correctly accepted"
 
     async def test_hitl_flow_interruptions(self) -> Tuple[bool, str]:
         """Test HITL flow interruption with invalid response."""
@@ -428,10 +525,11 @@ class QuotationEdgeCaseTests:
         print(f"Test started at: {datetime.now().isoformat()}")
         print("🛑 FAIL-FAST MODE: Test will stop at first edge case failure for immediate debugging")
         
-        # Define all test cases
+        # Define all test cases - FOCUS ON VEHICLE VALIDATION
         test_cases = [
+            ("Invalid Vehicle Inputs", self.test_invalid_vehicle_inputs),
+            ("Valid Vehicle Formats", self.test_valid_vehicle_formats),
             ("Non-existent Customer", self.test_non_existent_customer),
-            ("Malformed Vehicle Specs", self.test_malformed_vehicle_specs),
             ("HITL Flow Interruptions", self.test_hitl_flow_interruptions),
             ("Approval Variations", self.test_approval_variations),
             ("Concurrent Sessions", self.test_concurrent_quotations),

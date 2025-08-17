@@ -57,11 +57,48 @@ class QuotationContextIntelligence:
     def __init__(self):
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
     
-    def _compute_quotation_readiness_logic(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _validate_vehicle_exists(self, vehicle_make: str, vehicle_model: str) -> bool:
+        """
+        Validate if a vehicle exists in the database inventory.
+        
+        Args:
+            vehicle_make: Vehicle brand/make (e.g., "Toyota", "Honda")
+            vehicle_model: Vehicle model (e.g., "Camry", "Civic")
+            
+        Returns:
+            bool: True if vehicle exists in database, False otherwise
+        """
+        try:
+            from core.database import get_db_client
+            
+            # Get database client
+            db_client = get_db_client()
+            supabase = await db_client.async_client()
+            
+            # Query vehicles table for matching make and model
+            response = supabase.table("vehicles").select("id").ilike("brand", f"%{vehicle_make}%").ilike("model", f"%{vehicle_model}%").limit(1).execute()
+            
+            # Check if any vehicles were found
+            vehicle_exists = len(response.data) > 0
+            
+            if vehicle_exists:
+                self.logger.info(f"[VEHICLE_VALIDATION] ✅ Found vehicle: {vehicle_make} {vehicle_model}")
+            else:
+                self.logger.warning(f"[VEHICLE_VALIDATION] ❌ Vehicle not found in database: {vehicle_make} {vehicle_model}")
+                
+            return vehicle_exists
+            
+        except Exception as e:
+            self.logger.error(f"[VEHICLE_VALIDATION] ❌ Error validating vehicle {vehicle_make} {vehicle_model}: {e}")
+            # In case of database error, return False to prevent quotations for unvalidated vehicles
+            return False
+    
+    async def _compute_quotation_readiness_logic(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Compute deterministic boolean logic for quotation readiness.
         
         This eliminates LLM interpretation ambiguity by pre-computing the boolean conditions.
+        ENHANCED: Now includes vehicle database validation to prevent quotations for non-existent vehicles.
         """
         try:
             # Extract the relevant fields
@@ -76,8 +113,17 @@ class QuotationContextIntelligence:
             has_phone = bool(customer_info.get("phone"))
             has_contact_info = has_email or has_phone
             
-            # Compute the final quotation readiness
-            quotation_ready = has_customer_name and has_vehicle_make and has_vehicle_model and has_contact_info
+            # CRITICAL: Vehicle database validation
+            vehicle_exists_in_database = False
+            if has_vehicle_make and has_vehicle_model:
+                vehicle_make = vehicle_requirements.get("make")
+                vehicle_model = vehicle_requirements.get("model")
+                vehicle_exists_in_database = await self._validate_vehicle_exists(vehicle_make, vehicle_model)
+                logger.info(f"[VEHICLE_VALIDATION] {vehicle_make} {vehicle_model} exists in database: {vehicle_exists_in_database}")
+            
+            # Compute the final quotation readiness (now includes vehicle validation)
+            quotation_ready = (has_customer_name and has_vehicle_make and has_vehicle_model and 
+                             has_contact_info and vehicle_exists_in_database)
             
             # Identify missing critical fields
             critical_missing = []
@@ -89,6 +135,12 @@ class QuotationContextIntelligence:
                 critical_missing.append("vehicle_model")
             if not has_contact_info:
                 critical_missing.append("contact_info")
+            if has_vehicle_make and has_vehicle_model and not vehicle_exists_in_database:
+                critical_missing.append("valid_vehicle")
+                # Log the specific vehicle that was not found for debugging
+                vehicle_make = vehicle_requirements.get("make")
+                vehicle_model = vehicle_requirements.get("model")
+                logger.warning(f"[VEHICLE_VALIDATION] ❌ Quotation blocked: {vehicle_make} {vehicle_model} not available in inventory")
             
             # Determine next action based on logic
             if quotation_ready:
@@ -194,7 +246,7 @@ Please provide a comprehensive JSON analysis following the exact structure speci
             
             # Apply deterministic boolean logic to override LLM interpretation
             parsed_data = json.loads(response.content)
-            readiness_logic = self._compute_quotation_readiness_logic(parsed_data)
+            readiness_logic = await self._compute_quotation_readiness_logic(parsed_data)
             
             # Override the LLM's assessment with deterministic logic
             result.completeness_assessment.quotation_ready = readiness_logic["quotation_ready"]
@@ -1008,10 +1060,20 @@ class QuotationCommunicationIntelligence:
         
         prompt_parts.extend([context_intro, ""])
         
-        # UNIFIED STYLE: Consistent item formatting
+        # UNIFIED STYLE: Consistent item formatting with special handling for invalid vehicles
         for item in critical_items[:3]:  # Limit to top 3 critical items
-            formatted_item = item.replace('_', ' ').title()
-            prompt_parts.append(f"• **{formatted_item}**")
+            if item == "valid_vehicle":
+                # Special handling for invalid vehicle - show available options
+                vehicle_info = extracted_context.extracted_context.vehicle_requirements
+                requested_vehicle = f"{vehicle_info.get('make', '')} {vehicle_info.get('model', '')}".strip()
+                if requested_vehicle:
+                    prompt_parts.append(f"• **Available Vehicle Options** ('{requested_vehicle}' is not in our current inventory)")
+                    prompt_parts.append("  - Please choose from our available vehicles or contact us for special orders")
+                else:
+                    prompt_parts.append(f"• **Valid Vehicle Selection**")
+            else:
+                formatted_item = item.replace('_', ' ').title()
+                prompt_parts.append(f"• **{formatted_item}**")
         
         prompt_parts.append("")
         

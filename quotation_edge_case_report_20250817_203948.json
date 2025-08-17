@@ -1,0 +1,18 @@
+{
+  "test_type": "Quotation Generation Edge Cases",
+  "total_test_categories": 7,
+  "successful_categories": 0,
+  "success_rate": 0.0,
+  "overall_success": false,
+  "test_results": [
+    {
+      "test_name": "Invalid Vehicle Inputs",
+      "success": false,
+      "message": "Invalid vehicle 'xyz123' was not blocked by the system"
+    }
+  ],
+  "errors_found": [
+    "Invalid Vehicle Inputs: Invalid vehicle 'xyz123' was not blocked by the system"
+  ],
+  "timestamp": "2025-08-17T20:39:48.342935"
+}
