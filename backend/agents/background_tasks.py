@@ -466,6 +466,8 @@ class BackgroundTaskManager:
                 await self._handle_summary_generation(task)
             elif task.task_type == "context_loading":
                 await self._handle_context_loading(task)
+            elif task.task_type == "vehicle_cleanup":
+                await self._handle_vehicle_cleanup(task)
             else:
                 raise ValueError(f"Unknown task type: {task.task_type}")
             
@@ -847,6 +849,77 @@ class BackgroundTaskManager:
         except Exception as e:
             logger.error(f"Error in conversation consolidation for user {user_id}: {e}")
             return {"consolidated_count": 0, "error": str(e)}
+
+    def schedule_vehicle_cleanup_task(self, cleanup_type: str = "backup", days_old: int = 30, max_delete: int = 200) -> str:
+        """
+        Schedule a vehicle cleanup task following existing background task patterns.
+        
+        Args:
+            cleanup_type: Type of cleanup ("backup" or "orphan")
+            days_old: Number of days for backup cleanup
+            max_delete: Maximum number of items to delete
+            
+        Returns:
+            Task ID
+        """
+        task_data = {
+            "cleanup_type": cleanup_type,
+            "days_old": days_old,
+            "max_delete": max_delete
+        }
+        
+        # Use LOW priority for cleanup tasks (non-urgent maintenance)
+        task = BackgroundTask(
+            task_type="vehicle_cleanup",
+            priority=TaskPriority.LOW,
+            data=task_data,
+            scheduled_at=datetime.utcnow()  # Execute immediately
+        )
+        
+        return self.schedule_task(task)
+
+    async def _handle_vehicle_cleanup(self, task: BackgroundTask):
+        """
+        Handle vehicle cleanup tasks following existing task patterns.
+        
+        Args:
+            task: BackgroundTask with vehicle cleanup data
+        """
+        try:
+            cleanup_type = task.data.get("cleanup_type", "backup")
+            days_old = task.data.get("days_old", 30)
+            max_delete = task.data.get("max_delete", 200)
+            
+            logger.info(f"Starting vehicle {cleanup_type} cleanup task: days_old={days_old}, max_delete={max_delete}")
+            
+            if cleanup_type == "backup":
+                # Import here to avoid circular imports
+                from monitoring.vehicle_cleanup import cleanup_old_vehicle_specifications
+                result = await cleanup_old_vehicle_specifications(days_old=days_old, max_delete=max_delete)
+            elif cleanup_type == "orphan":
+                from monitoring.vehicle_cleanup import cleanup_orphaned_vehicle_documents
+                result = await cleanup_orphaned_vehicle_documents(max_delete=max_delete)
+            else:
+                raise ValueError(f"Unknown cleanup type: {cleanup_type}")
+            
+            # Log results following existing patterns
+            logger.info(
+                f"Vehicle {cleanup_type} cleanup completed: selected={result.get('selected', 0)}, "
+                f"deleted={result.get('deleted', 0)}, failed={result.get('failed', 0)}, "
+                f"status={result.get('status', 'unknown')}"
+            )
+            
+            # Log any errors
+            if result.get("errors"):
+                for error in result["errors"]:
+                    logger.warning(f"Vehicle {cleanup_type} cleanup error: {error}")
+            
+            return result
+            
+        except Exception as e:
+            error_msg = f"Vehicle cleanup task failed: {str(e)}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
 
 
 # Global instance

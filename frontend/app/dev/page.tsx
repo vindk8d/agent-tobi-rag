@@ -15,7 +15,16 @@ export default function DevHomePage() {
       try {
         const healthResponse = await apiClient.getHealth();
         if (healthResponse.success && healthResponse.data) {
-          setSystemHealth(healthResponse.data);
+          // Transform backend health response to match frontend SystemHealth interface
+          const backendHealth = healthResponse.data;
+          const transformedHealth: SystemHealth = {
+            database: backendHealth.checks?.database || 'unhealthy',
+            embeddings: 'healthy', // Not provided by backend yet
+            scraping: 'healthy',   // Not provided by backend yet
+            api: backendHealth.status === 'healthy' ? 'healthy' : 'unhealthy',
+            last_check: new Date(backendHealth.timestamp * 1000).toISOString()
+          };
+          setSystemHealth(transformedHealth);
         }
       } catch (err) {
         console.error('Error fetching system health:', err);
@@ -49,6 +58,13 @@ export default function DevHomePage() {
       description: 'Debug memory systems, conversation summaries, and long-term memory storage',
       status: 'Active',
       features: ['Memory Inspector', 'Conversation Summaries', 'User Context Debug', 'Memory Consolidation']
+    },
+    {
+      title: 'Vehicle Spec Upload',
+      path: '/dev/specupload',
+      description: 'Upload and manage vehicle specification documents for RAG processing',
+      status: 'Active',
+      features: ['Vehicle Selection', 'Spec Upload', 'Section-Based Chunking', 'Document Replacement']
     }
   ];
 

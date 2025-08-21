@@ -28,6 +28,7 @@ from contextlib import asynccontextmanager
 from models.base import APIResponse
 from core.database import db_client
 from api import api_router
+from monitoring.scheduler import DataSourceScheduler
 
 # Configure logging
 logging.basicConfig(
@@ -68,6 +69,16 @@ async def lifespan(app: FastAPI):
             else:
                 logger.error("Failed to establish database connection after all retries")
 
+    # Initialize and start background schedulers following existing patterns
+    scheduler = None
+    try:
+        # Start DataSourceScheduler (includes vehicle cleanup jobs)
+        scheduler = DataSourceScheduler()
+        scheduler.start()
+        logger.info("Background schedulers started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start background schedulers: {e}")
+
     # Log successful startup
     logger.info("RAG-Tobi API startup completed")
 
@@ -75,6 +86,14 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down RAG-Tobi API...")
+    
+    # Stop schedulers gracefully
+    if scheduler:
+        try:
+            scheduler.stop()
+            logger.info("Background schedulers stopped successfully")
+        except Exception as e:
+            logger.error(f"Error stopping schedulers: {e}")
 
 
 # Initialize FastAPI app

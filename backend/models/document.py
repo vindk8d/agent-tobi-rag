@@ -18,6 +18,7 @@ class DocumentType(str, Enum):
     HTML = "html"
     MARKDOWN = "markdown"
     WEB_PAGE = "web_page"
+    VEHICLE_SPECIFICATION = "vehicle_specification"
 
 
 class DocumentStatus(str, Enum):
@@ -43,6 +44,7 @@ class DocumentModel(IdentifiedModel):
     embedding_count: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     data_source_id: Optional[UUID] = None
+    vehicle_id: Optional[UUID] = None  # Added for vehicle specification documents
 
 
 class DocumentChunk(IdentifiedModel):
@@ -54,6 +56,7 @@ class DocumentChunk(IdentifiedModel):
     embedding: Optional[List[float]] = None
     metadata: Optional[Dict[str, Any]] = None
     page_number: Optional[int] = None
+    vehicle_id: Optional[UUID] = None  # Added for vehicle specification chunks
 
 
 class DocumentUploadRequest(BaseModel):
@@ -80,3 +83,44 @@ class DocumentListResponse(BaseModel):
     total_count: int
     page: int = 1
     page_size: int = 10
+
+
+# Vehicle-specific models
+
+class VehicleModel(BaseModel):
+    """Vehicle model for API responses"""
+    
+    id: UUID
+    brand: str
+    model: str
+    year: int
+    type: Optional[str] = None
+    variant: Optional[str] = None
+    key_features: Optional[List[str]] = None
+    is_available: bool = True
+
+
+class VehicleListResponse(BaseModel):
+    """Response model for vehicle listing"""
+    
+    vehicles: List[VehicleModel]
+    total_count: int
+
+
+class VehicleSpecificationRequest(BaseModel):
+    """Request model for vehicle specification upload"""
+    
+    file_path: str
+    file_name: str
+    file_size: Optional[int] = None
+    vehicle_id: UUID
+
+
+class VehicleSpecificationResponse(BaseModel):
+    """Response model for vehicle specification operations"""
+    
+    data_source_id: Optional[UUID] = None
+    vehicle_id: UUID
+    status: DocumentStatus
+    message: str
+    document: Optional[Dict[str, Any]] = None

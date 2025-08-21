@@ -20,10 +20,14 @@ class DocumentProcessingPipeline:
         self.embedder = OpenAIEmbeddings()
         self.vector_store = SupabaseVectorStore()
 
-    def _store_document_chunk(self, data_source_id: str, chunk_index: int, chunk: Document, metadata: Optional[Dict[str, Any]] = None) -> str:
+    def _store_document_chunk(self, source_id: str, chunk_index: int, chunk: Document, metadata: Optional[Dict[str, Any]] = None, vehicle_id: Optional[str] = None, document_type: Optional[str] = None, is_document_centric: bool = False) -> str:
         """
         Store a document chunk in the document_chunks table.
         Returns the chunk document ID.
+        
+        Args:
+            source_id: Either data_source_id or document_id depending on is_document_centric
+            is_document_centric: If True, source_id is a document_id; if False, it's a data_source_id
         """
         from core.database import db_client
 
@@ -32,18 +36,33 @@ class DocumentProcessingPipeline:
         word_count = len(content.split()) if content else 0
         character_count = len(content) if content else 0
 
-        # Prepare document chunk data
-        chunk_data = {
-            "data_source_id": data_source_id,  # Link to data source
-            "title": chunk.metadata.get('title', f"Chunk {chunk_index}"),
-            "content": content,
-            "document_type": chunk.metadata.get('document_type', 'text'),
-            "chunk_index": chunk_index,
-            "word_count": word_count,
-            "character_count": character_count,
-            "status": "completed",
-            "metadata": {**(chunk.metadata or {}), **(metadata or {})}
-        }
+        # Prepare document chunk data based on approach
+        if is_document_centric:
+            chunk_data = {
+                "document_id": source_id,  # Link to document (documents-centric)
+                "vehicle_id": vehicle_id,  # Link to vehicle (if applicable)
+                "title": chunk.metadata.get('title', f"Chunk {chunk_index}"),
+                "content": content,
+                "document_type": document_type or chunk.metadata.get('document_type', 'text'),
+                "chunk_index": chunk_index,
+                "word_count": word_count,
+                "character_count": character_count,
+                "status": "completed",
+                "metadata": {**(chunk.metadata or {}), **(metadata or {})}
+            }
+        else:
+            chunk_data = {
+                "data_source_id": source_id,  # Link to data source (legacy)
+                "vehicle_id": vehicle_id,  # Link to vehicle (if applicable)
+                "title": chunk.metadata.get('title', f"Chunk {chunk_index}"),
+                "content": content,
+                "document_type": document_type or chunk.metadata.get('document_type', 'text'),
+                "chunk_index": chunk_index,
+                "word_count": word_count,
+                "character_count": character_count,
+                "status": "completed",
+                "metadata": {**(chunk.metadata or {}), **(metadata or {})}
+            }
 
         try:
             result = db_client.client.table("document_chunks").insert(chunk_data).execute()
@@ -90,20 +109,43 @@ class DocumentProcessingPipeline:
             return ""
 
 
-    async def process_file(self, file_path: str, file_type: str, data_source_id: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def process_file(self, file_path: str, file_type: str, source_id: str, metadata: Optional[Dict[str, Any]] = None, vehicle_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Process a file: load, split, embed, and store chunks.
-        Requires a valid data_source_id that exists in the data_sources table.
+        
+        Args:
+            source_id: Either data_source_id or document_id depending on upload method
+            metadata: Should contain 'upload_method' to determine if documents-centric
+        
         Returns a summary dict.
         """
+        from core.database import db_client
+        
+        # Determine if this is documents-centric (vehicle upload) or data-sources-centric (legacy)
+        is_document_centric = metadata and metadata.get('upload_method') == 'vehicle_specification_upload'
+        
+        # Get document_type from appropriate table
+        try:
+            if is_document_centric:
+                # Get document_type from documents table
+                doc_result = db_client.client.table('documents').select('document_type').eq('id', source_id).execute()
+                document_type = doc_result.data[0]['document_type'] if doc_result.data else 'vehicle_specification'
+            else:
+                # Get document_type from data_sources table (legacy)
+                ds_result = db_client.client.table('data_sources').select('document_type').eq('id', source_id).execute()
+                document_type = ds_result.data[0]['document_type'] if ds_result.data else 'text'
+        except Exception as e:
+            logger.warning(f"Could not get document_type from source {source_id}: {e}")
+            document_type = 'vehicle_specification' if is_document_centric else 'text'
         # 1. Load document
         docs: List[Document] = DocumentLoader.load_from_file(file_path, file_type)
         if not docs:
             logger.error(f"No content loaded from {file_path}")
             return {"success": False, "error": "No content loaded"}
 
-        # 2. Split into chunks
-        chunks = await split_documents(docs)
+        # 2. Split into chunks (use section-based chunking for vehicle specifications)
+        chunking_method = "section_based" if (metadata and metadata.get('upload_method') == 'vehicle_specification_upload') else "recursive"
+        chunks = await split_documents(docs, chunking_method=chunking_method)
         if not chunks:
             logger.error(f"No chunks generated from {file_path}")
             return {"success": False, "error": "No chunks generated"}
@@ -113,14 +155,34 @@ class DocumentProcessingPipeline:
         stored_chunk_ids = []
 
         for i, chunk in enumerate(chunks):
-            # Store the chunk content in documents table
-            chunk_doc_id = self._store_document_chunk(data_source_id, i, chunk, metadata)
+            # Enhance chunk with vehicle context if vehicle_id is provided
+            enhanced_chunk = chunk
+            if vehicle_id and metadata and metadata.get('vehicle_info'):
+                vehicle_info = metadata['vehicle_info']
+                vehicle_context = f"Vehicle: {vehicle_info.get('brand', '')} {vehicle_info.get('model', '')} {vehicle_info.get('year', '')}\n\n"
+                
+                # Prepend vehicle context to chunk content for better embeddings
+                enhanced_content = vehicle_context + chunk.page_content
+                enhanced_chunk = Document(
+                    page_content=enhanced_content,
+                    metadata={
+                        **(chunk.metadata or {}),
+                        'vehicle_id': vehicle_id,
+                        'vehicle_brand': vehicle_info.get('brand'),
+                        'vehicle_model': vehicle_info.get('model'),
+                        'vehicle_year': vehicle_info.get('year'),
+                        'has_vehicle_context': True
+                    }
+                )
+            
+            # Store the chunk content in document_chunks table
+            chunk_doc_id = self._store_document_chunk(source_id, i, enhanced_chunk, metadata, vehicle_id, document_type, is_document_centric)
             if chunk_doc_id:
                 stored_chunk_ids.append(chunk_doc_id)
                 chunk_dicts.append({
                     "id": chunk_doc_id,
-                    "content": chunk.page_content,
-                    "metadata": {**(chunk.metadata or {}), **(metadata or {})}
+                    "content": enhanced_chunk.page_content,
+                    "metadata": {**(enhanced_chunk.metadata or {}), **(metadata or {})}
                 })
 
         if not chunk_dicts:
@@ -156,7 +218,8 @@ class DocumentProcessingPipeline:
 
         return {
             "success": True,
-            "data_source_id": data_source_id,
+            "source_id": source_id,
+            "source_type": "document" if is_document_centric else "data_source",
             "file_path": file_path,
             "chunks": len(chunks),
             "stored_chunk_ids": stored_chunk_ids,

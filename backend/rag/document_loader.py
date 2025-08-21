@@ -45,10 +45,9 @@ class DocumentLoader:
     @staticmethod
     def load_markdown_from_string(md: str, source: Optional[str] = None) -> List[Document]:
         """Load Markdown content from a string and return a Document object."""
-        # Optionally, use the markdown package to convert to HTML, then extract text
-        import markdown as mdlib
-        html = mdlib.markdown(md)
-        return DocumentLoader.load_html_from_string(html, url=source)
+        # Keep the raw markdown content to preserve section headers for chunking
+        metadata = {"source": source} if source else {}
+        return [Document(page_content=md, metadata=metadata)]
 
     @staticmethod
     def load_from_file(file_path: str, file_type: str) -> List[Document]:
@@ -73,15 +72,80 @@ class DocumentLoader:
             raise ValueError(f"Unsupported file type: {file_type}")
 
 
+def split_by_sections(documents: List[Document], section_header: str = "##") -> List[Document]:
+    """
+    Split documents by section headers (e.g., ## for markdown H2 headers).
+    This is ideal for vehicle specifications that are organized by sections.
+    """
+    section_chunks = []
+    
+    for doc in documents:
+        content = doc.page_content
+        metadata = doc.metadata.copy()
+        
+        # Split by section headers (handle both \n## and line-start ##)
+        sections = content.split(f"\n{section_header} ")
+        
+        # If no splits found, try splitting by section headers at line start
+        if len(sections) == 1:
+            sections = content.split(f"{section_header} ")
+        
+        for i, section in enumerate(sections):
+            if not section.strip():
+                continue
+                
+            # Add back the section header (except for the first section)
+            if i > 0:
+                section = f"{section_header} {section}"
+            
+            # Extract section title from the first line
+            lines = section.strip().split('\n')
+            if lines and lines[0].startswith(section_header):
+                section_title = lines[0].replace(section_header, '').strip()
+                section_metadata = {
+                    **metadata,
+                    'section_title': section_title,
+                    'section_index': i,
+                    'chunking_method': 'section_based'
+                }
+            else:
+                section_metadata = {
+                    **metadata,
+                    'section_index': i,
+                    'chunking_method': 'section_based'
+                }
+            
+            section_chunks.append(Document(
+                page_content=section.strip(),
+                metadata=section_metadata
+            ))
+    
+    return section_chunks
+
+
 async def split_documents(
     documents: List[Document],
     chunk_size: Optional[int] = None,
-    chunk_overlap: Optional[int] = None
+    chunk_overlap: Optional[int] = None,
+    chunking_method: str = "recursive"
 ) -> List[Document]:
     """
-    Split a list of LangChain Document objects into text chunks using RecursiveCharacterTextSplitter.
-    Uses chunk size and overlap from config if not provided.
+    Split a list of LangChain Document objects into text chunks.
+    
+    Args:
+        documents: List of documents to split
+        chunk_size: Size of each chunk (uses config default if not provided)
+        chunk_overlap: Overlap between chunks (uses config default if not provided)
+        chunking_method: Method to use ('recursive' or 'section_based')
+    
+    Returns:
+        List of chunked documents
     """
+    if chunking_method == "section_based":
+        # Use section-based chunking for vehicle specifications
+        return split_by_sections(documents)
+    
+    # Default recursive character text splitting
     from core.config import get_settings
     settings = await get_settings()
     chunk_size = chunk_size or settings.rag.chunk_size

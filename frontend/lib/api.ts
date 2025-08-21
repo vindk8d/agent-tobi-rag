@@ -139,6 +139,68 @@ class APIClient {
   }
 
   /**
+   * Vehicle specification endpoints
+   */
+  async getVehicles(): Promise<APIResponse<{ vehicles: any[]; total_count: number }>> {
+    return this.request<{ vehicles: any[]; total_count: number }>('/api/v1/documents/vehicles');
+  }
+
+  async getVehicleSpecification(vehicleId: string): Promise<APIResponse<any>> {
+    return this.request<any>(`/api/v1/documents/vehicles/${vehicleId}/specification`);
+  }
+
+  async uploadVehicleSpecification(
+    vehicleId: string, 
+    file: File, 
+    onProgress?: (progress: number) => void
+  ): Promise<APIResponse<any>> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // Create XMLHttpRequest for progress tracking
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && onProgress) {
+          const progress = Math.round((event.loaded / event.total) * 100);
+          onProgress(progress);
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        try {
+          const response = JSON.parse(xhr.responseText);
+          resolve(response);
+        } catch (error) {
+          resolve({
+            success: false,
+            error: 'Failed to parse response',
+            message: 'Failed to parse response'
+          });
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        resolve({
+          success: false,
+          error: 'Upload failed',
+          message: 'Upload failed'
+        });
+      });
+
+      xhr.open('POST', `${this.baseURL}/api/v1/documents/vehicles/${vehicleId}/specification`);
+      xhr.send(formData);
+    });
+  }
+
+  async deleteVehicleSpecification(vehicleId: string): Promise<APIResponse<void>> {
+    return this.request<void>(`/api/v1/documents/vehicles/${vehicleId}/specification`, {
+      method: 'DELETE',
+    });
+  }
+
+  /**
    * Memory debug endpoints
    */
   async getUsers(): Promise<APIResponse<any[]>> {
