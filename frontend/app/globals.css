@@ -191,6 +191,41 @@ html {
       opacity: 1;
     }
   }
+  
+  /* Chat-specific text wrapping utilities */
+  .word-wrap {
+    word-wrap: break-word;
+  }
+  
+  .overflow-wrap-anywhere {
+    overflow-wrap: anywhere;
+  }
+  
+  .break-words {
+    word-break: break-word;
+  }
+  
+  /* Custom scrollbar styles for chat */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #d1d5db;
+    border-radius: 2px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: #9ca3af;
+  }
 }
 
 /* Reset default styles - keep the original reset at the bottom */
