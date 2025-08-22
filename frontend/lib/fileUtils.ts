@@ -10,8 +10,8 @@ export interface FileValidation {
 
 export interface FileUploadConfig {
   maxSize: number; // in bytes
-  allowedTypes: string[];
-  allowedExtensions: string[];
+  allowedTypes: readonly string[];
+  allowedExtensions: readonly string[];
   maxSizeLabel: string; // human readable, e.g., "10MB"
 }
 
@@ -72,7 +72,7 @@ export function validateFile(file: File, config: FileUploadConfig = FILE_UPLOAD_
   }
   
   // Check MIME type (if provided by browser)
-  if (file.type && !config.allowedTypes.includes(file.type)) {
+  if (file.type && !(config.allowedTypes as string[]).includes(file.type)) {
     const typeDescription = getFileTypeDescription(config.allowedExtensions);
     return {
       isValid: false,
@@ -86,7 +86,7 @@ export function validateFile(file: File, config: FileUploadConfig = FILE_UPLOAD_
 /**
  * Generate human-readable file type description from extensions
  */
-function getFileTypeDescription(extensions: string[]): string {
+function getFileTypeDescription(extensions: readonly string[]): string {
   const typeMap: Record<string, string> = {
     '.pdf': 'PDF',
     '.doc': 'Word',
@@ -97,7 +97,7 @@ function getFileTypeDescription(extensions: string[]): string {
     '.xlsx': 'Excel'
   };
   
-  const types = [...new Set(extensions.map(ext => typeMap[ext] || ext))];
+  const types = Array.from(new Set(extensions.map(ext => typeMap[ext] || ext)));
   
   if (types.length === 1) {
     return `${types[0]} files`;

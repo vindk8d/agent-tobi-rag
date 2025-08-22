@@ -70,7 +70,7 @@ export const designTokens = {
 
 // Tailwind CSS custom classes that match Figma design
 export const figmaClasses = {
-  heroText: 'text-[48px] font-semibold leading-[0.95] tracking-[-1.92px] text-center',
+  heroText: 'text-[48px] font-bold leading-[0.95] tracking-[-1.92px] text-center',
   buttonText: 'text-[14px] font-semibold leading-none text-center',
   inputText: 'text-[14px] font-medium tracking-[-0.56px] text-[#b3b3b3]',
   actionButton: 'bg-white border border-black rounded-lg px-[29px] py-3 opacity-[0.81] hover:opacity-100 transition-opacity',

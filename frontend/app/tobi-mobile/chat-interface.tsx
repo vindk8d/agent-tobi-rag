@@ -349,9 +349,9 @@ export const ChatInterface = ({
           <div className="basis-0 content-stretch flex gap-2.5 grow h-full items-center justify-start min-h-px min-w-px overflow-clip relative shrink-0">
             <button 
               onClick={onBack}
-              className="flex flex-col font-semibold h-7 justify-center leading-[0] not-italic relative shrink-0 text-[#000000] text-[32px] tracking-[-1.28px] w-[312px] cursor-pointer bg-transparent border-none p-0 hover:opacity-70 transition-opacity"
+              className="flex flex-col font-semibold h-7 justify-center leading-tight not-italic relative shrink-0 text-[#000000] text-[32px] tracking-[-1.28px] w-[312px] cursor-pointer bg-transparent border-none p-0 hover:opacity-70 transition-opacity"
             >
-              <p className="leading-[0.95] text-left">Tobi</p>
+              <p className="leading-tight text-left">Tobi</p>
             </button>
           </div>
         </div>

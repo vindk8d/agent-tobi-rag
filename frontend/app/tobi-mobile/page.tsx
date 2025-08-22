@@ -44,8 +44,8 @@ function SuggestedActionsRow({ onActionClick }: { onActionClick: (action: string
         className="bg-[#ffffff] box-border content-stretch cursor-pointer flex gap-2.5 items-center justify-center min-h-[52px] opacity-[0.81] overflow-visible px-[29px] py-3 relative rounded-lg shrink-0 w-60 hover:opacity-100 transition-opacity"
       >
         <div aria-hidden="true" className="absolute border border-[#000000] border-solid inset-0 pointer-events-none rounded-lg" />
-        <div className="flex flex-col font-semibold justify-center leading-[0] not-italic relative shrink-0 text-[#000000] text-[14px] text-center w-[182px]">
-          <p className="leading-none">Generate an Informal Quote</p>
+        <div className="flex flex-col font-semibold justify-center leading-tight not-italic relative shrink-0 text-[#000000] text-[14px] text-center w-[182px]">
+          <p className="leading-tight">Generate an Informal Quote</p>
         </div>
       </button>
       
@@ -54,8 +54,8 @@ function SuggestedActionsRow({ onActionClick }: { onActionClick: (action: string
         className="bg-[#ffffff] box-border content-stretch cursor-pointer flex gap-2.5 items-center justify-center min-h-[52px] opacity-[0.81] px-[29px] py-3 relative rounded-lg shrink-0 hover:opacity-100 transition-opacity"
       >
         <div aria-hidden="true" className="absolute border border-[#000000] border-solid inset-0 pointer-events-none rounded-lg" />
-        <div className="flex flex-col font-semibold justify-center leading-[0] not-italic relative shrink-0 text-[#000000] text-[14px] text-center w-[182px]">
-          <p className="leading-none">Update Opportunities</p>
+        <div className="flex flex-col font-semibold justify-center leading-tight not-italic relative shrink-0 text-[#000000] text-[14px] text-center w-[182px]">
+          <p className="leading-tight">Update Opportunities</p>
         </div>
       </button>
       
@@ -64,8 +64,8 @@ function SuggestedActionsRow({ onActionClick }: { onActionClick: (action: string
         className="bg-[#ffffff] box-border content-stretch cursor-pointer flex gap-2.5 items-center justify-center min-h-[52px] opacity-[0.81] px-[29px] py-3 relative rounded-lg shrink-0 w-60 hover:opacity-100 transition-opacity"
       >
         <div aria-hidden="true" className="absolute border border-[#000000] border-solid inset-0 pointer-events-none rounded-lg" />
-        <div className="flex flex-col font-semibold justify-center leading-[0] not-italic relative shrink-0 text-[#000000] text-[14px] text-center w-[182px]">
-          <p className="leading-none">Vehicle Information</p>
+        <div className="flex flex-col font-semibold justify-center leading-tight not-italic relative shrink-0 text-[#000000] text-[14px] text-center w-[182px]">
+          <p className="leading-tight">Vehicle Information</p>
         </div>
       </button>
     </div>
@@ -163,8 +163,8 @@ export default function TobiMobilePage() {
       
       {/* Welcome Message */}
       <div className="basis-0 box-border content-stretch flex gap-2.5 grow items-center justify-center min-h-px min-w-[391px] overflow-clip px-9 py-6 relative shrink-0 w-full">
-        <div className="basis-0 flex flex-col font-semibold grow justify-center leading-[0] min-h-px min-w-px not-italic relative shrink-0 text-[#000000] text-[48px] text-center tracking-[-1.92px]">
-          <p className="leading-[0.95]">Hello, my name is Tobi, your sales assistant</p>
+        <div className="flex flex-col grow justify-center text-center">
+          <p className="text-[48px] font-semibold text-black leading-[0.95] tracking-[-2.4px]">Hello, my name is Tobi, your sales assistant</p>
         </div>
       </div>
       
