@@ -1,0 +1,325 @@
+{
+  "timestamp": "2025-08-22T14:40:28.204567",
+  "summary": {
+    "total": 10,
+    "passed": 4,
+    "failed": 6,
+    "errors": 0,
+    "success_rate": 0.4,
+    "total_time": 29.568744,
+    "avg_response_time": 2.5867296,
+    "categories": {
+      "basic_facts": {
+        "total": 3,
+        "passed": 1
+      },
+      "features": {
+        "total": 3,
+        "passed": 1
+      },
+      "complex": {
+        "total": 2,
+        "passed": 0
+      },
+      "edge_case": {
+        "total": 1,
+        "passed": 1
+      },
+      "irrelevant": {
+        "total": 1,
+        "passed": 1
+      }
+    }
+  },
+  "results": [
+    {
+      "test_id": "engine_specs",
+      "question": "What engine does the Ford Bronco have and what is its power output?",
+      "category": "basic_facts",
+      "response": "\ud83d\udd0d **No Relevant Documents Found**\n\nI couldn't find any relevant documents to answer your question: 'What engine does the Ford Bronco have and what is its power output?'\n\n**You might want to try:**\n- Rephrasing your question with different keywords\n- Asking about our business data using CRM tools instead\n- Checking if the relevant documents have been uploaded to our knowledge base\n- Contacting support if you believe this information should be available\n\n**Alternative:** If you're looking for customer data, vehicle inventory, or sales information, try using the CRM query tools instead.",
+      "response_time": 0.943291,
+      "expected_keywords": [
+        "2.7L",
+        "EcoBoost",
+        "V6",
+        "335 PS",
+        "555 Nm"
+      ],
+      "analysis": {
+        "score": 0.0,
+        "found_keywords": [],
+        "missing_keywords": [
+          "2.7L",
+          "EcoBoost",
+          "V6",
+          "335 PS",
+          "555 Nm"
+        ],
+        "keyword_coverage": 0.0,
+        "response_length": 590,
+        "has_no_docs_message": true
+      },
+      "status": "FAIL",
+      "timestamp": "2025-08-22T14:40:03.279039"
+    },
+    {
+      "test_id": "transmission",
+      "question": "What type of transmission does the Ford Bronco use?",
+      "category": "basic_facts",
+      "response": "\ud83d\udd0d **No Relevant Documents Found**\n\nI couldn't find any relevant documents to answer your question: 'What type of transmission does the Ford Bronco use?'\n\n**You might want to try:**\n- Rephrasing your question with different keywords\n- Asking about our business data using CRM tools instead\n- Checking if the relevant documents have been uploaded to our knowledge base\n- Contacting support if you believe this information should be available\n\n**Alternative:** If you're looking for customer data, vehicle inventory, or sales information, try using the CRM query tools instead.",
+      "response_time": 1.474802,
+      "expected_keywords": [
+        "10-Speed",
+        "Automatic"
+      ],
+      "analysis": {
+        "score": 0.0,
+        "found_keywords": [],
+        "missing_keywords": [
+          "10-Speed",
+          "Automatic"
+        ],
+        "keyword_coverage": 0.0,
+        "response_length": 574,
+        "has_no_docs_message": true
+      },
+      "status": "FAIL",
+      "timestamp": "2025-08-22T14:40:04.753998"
+    },
+    {
+      "test_id": "dimensions",
+      "question": "What are the dimensions and ground clearance of the Ford Bronco?",
+      "category": "basic_facts",
+      "response": "Based on the retrieved document for the Ford Bronco 2024, here are the dimensions and ground clearance of the vehicle:\n\n- **Dimensions**:\n  - Length x Width x Height: 4,811 x 2,190 x 1,846 mm (with mirrors)\n  - Wheelbase: 2,950 mm\n\n- **Ground Clearance**:\n  - The Ford Bronco has a ground clearance of 292 mm.\n\nThese specifications provide a clear picture of the size and height of the Ford Bronco, making it suitable for off-road adventures and challenging terrains. If you require additional information or have any more questions, feel free to ask.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 4.362265,
+      "expected_keywords": [
+        "4,811",
+        "2,190",
+        "1,846",
+        "292 mm",
+        "ground clearance"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "4,811",
+          "2,190",
+          "1,846",
+          "292 mm",
+          "ground clearance"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 625,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:40:09.116368"
+    },
+    {
+      "test_id": "safety_features",
+      "question": "What safety features does the Ford Bronco include?",
+      "category": "features",
+      "response": "**Safety Features of the Ford Bronco**\n\nBased on the retrieved document for the Ford Bronco 2024, the vehicle comes equipped with a range of safety features to ensure the well-being of its occupants. Here are the safety features included in the Ford Bronco:\n\n- **AdvanceTrac\u00ae with RSC\u00ae (Roll Stability Control\u2122):** This feature helps maintain vehicle stability and control, especially in challenging driving conditions.\n  \n- **Airbags:** The Ford Bronco is equipped with front airbags for the driver and passenger, as well as side airbags for the front seats and a Safety Canopy\u00ae to provide additional protection in case of a side impact or rollover.\n  \n- **Rear View Camera with Rollover Sensor:** The rear view camera helps the driver with visibility when reversing, while the rollover sensor can detect potential rollover situations and trigger safety measures.\n  \n- **Tire Pressure Monitoring System (TPMS):** This system monitors the tire pressure and alerts the driver if there is a significant drop in pressure, helping to prevent potential tire-related accidents.\n  \n- **Front and Rear Parking Sensors:** These sensors assist the driver in parking by providing alerts when the vehicle is close to obstacles, enhancing safety during parking maneuvers.\n\nThese safety features in the Ford Bronco aim to provide a secure driving experience for both the driver and passengers. If you have any more questions or need further information, feel free to ask.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 5.934106,
+      "expected_keywords": [
+        "Co-Pilot360",
+        "Pre-Collision",
+        "BLIS",
+        "Lane-Keeping",
+        "360-Degree Camera"
+      ],
+      "analysis": {
+        "score": 0.2,
+        "found_keywords": [],
+        "missing_keywords": [
+          "Co-Pilot360",
+          "Pre-Collision",
+          "BLIS",
+          "Lane-Keeping",
+          "360-Degree Camera"
+        ],
+        "keyword_coverage": 0.0,
+        "response_length": 1531,
+        "has_no_docs_message": false
+      },
+      "status": "FAIL",
+      "timestamp": "2025-08-22T14:40:15.050571"
+    },
+    {
+      "test_id": "entertainment_system",
+      "question": "Describe the entertainment system in the Ford Bronco.",
+      "category": "features",
+      "response": "\ud83d\udd0d **No Relevant Documents Found**\n\nI couldn't find any relevant documents to answer your question: 'Describe the entertainment system in the Ford Bronco.'\n\n**You might want to try:**\n- Rephrasing your question with different keywords\n- Asking about our business data using CRM tools instead\n- Checking if the relevant documents have been uploaded to our knowledge base\n- Contacting support if you believe this information should be available\n\n**Alternative:** If you're looking for customer data, vehicle inventory, or sales information, try using the CRM query tools instead.",
+      "response_time": 0.813324,
+      "expected_keywords": [
+        "SYNC",
+        "12-inch",
+        "Apple CarPlay",
+        "Android Auto",
+        "B&O"
+      ],
+      "analysis": {
+        "score": 0.0,
+        "found_keywords": [],
+        "missing_keywords": [
+          "SYNC",
+          "12-inch",
+          "Apple CarPlay",
+          "Android Auto",
+          "B&O"
+        ],
+        "keyword_coverage": 0.0,
+        "response_length": 576,
+        "has_no_docs_message": true
+      },
+      "status": "FAIL",
+      "timestamp": "2025-08-22T14:40:15.864075"
+    },
+    {
+      "test_id": "off_road_capabilities",
+      "question": "What off-road capabilities does the Ford Bronco have?",
+      "category": "features",
+      "response": "### Off-Road Capabilities of the Ford Bronco\n\nBased on the technical specifications of the Ford Bronco 2024 retrieved from the provided document, here are the off-road capabilities of the vehicle:\n\n1. **4x4 System**: The Ford Bronco is equipped with an Advanced 4x4 system with Automatic On-Demand Engagement, enhancing its off-road capabilities by providing traction and stability on various terrains.\n\n2. **Suspension**: The Bronco features a High-Performance, Off-Road, Stability Suspension (HOSS) System with BILSTEIN\u00ae Position-Sensitive Shock Absorbers. This setup is designed to handle rough terrain and provide a smoother ride off-road.\n\n3. **Drive Modes**: The Bronco comes with a Terrain Management System\u2122 with G.O.A.T. Modes\u2122 (Goes Over Any Type of Terrain), offering various drive modes like Normal, Eco, Sport, Slippery, Mud/Ruts, and Sand. These modes optimize the vehicle's performance for different off-road conditions.\n\n4. **Wheels and Tires**: The Bronco is equipped with 17\" Black High Gloss-Painted Aluminum wheels with LT315/70R17 Mud-Terrain (M/T) tires, measuring 35 inches. These wheels and tires are specifically designed for off-road use, providing traction and durability in challenging environments.\n\n5. **Differential**: The Bronco features Electronic-Locking Front and Rear Axles, enhancing traction and control in off-road situations where individual wheel slip needs to be managed.\n\n6. **Ground Clearance and Water Wading**: With a ground clearance of 292 mm and a water wading capability of 850 mm, the Bronco is well-equipped to navigate rough terrain and water crossings, allowing for a more adventurous off-road experience.\n\nOverall, the Ford Bronco's off-road capabilities are bolstered by its advanced 4x4 system, specialized suspension, versatile drive modes, rugged wheels and tires, electronic-locking differentials, ample ground clearance, and impressive water wading capability. These features make the Bronco a capable off-road vehicle suitable for various challenging terrains and conditions.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 6.86863,
+      "expected_keywords": [
+        "Sasquatch",
+        "4x4",
+        "G.O.A.T.",
+        "Mud-Terrain",
+        "850 mm",
+        "wading"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "Sasquatch",
+          "4x4",
+          "G.O.A.T.",
+          "Mud-Terrain",
+          "850 mm",
+          "wading"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 2111,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:40:22.732925"
+    },
+    {
+      "test_id": "drive_modes",
+      "question": "What are all the available drive modes in the Ford Bronco?",
+      "category": "complex",
+      "response": "\ud83d\udd0d **No Relevant Documents Found**\n\nI couldn't find any relevant documents to answer your question: 'What are all the available drive modes in the Ford Bronco?'\n\n**You might want to try:**\n- Rephrasing your question with different keywords\n- Asking about our business data using CRM tools instead\n- Checking if the relevant documents have been uploaded to our knowledge base\n- Contacting support if you believe this information should be available\n\n**Alternative:** If you're looking for customer data, vehicle inventory, or sales information, try using the CRM query tools instead.",
+      "response_time": 1.265127,
+      "expected_keywords": [
+        "Normal",
+        "Eco",
+        "Sport",
+        "Slippery",
+        "Mud/Ruts",
+        "Sand",
+        "G.O.A.T."
+      ],
+      "analysis": {
+        "score": 0.0,
+        "found_keywords": [],
+        "missing_keywords": [
+          "Normal",
+          "Eco",
+          "Sport",
+          "Slippery",
+          "Mud/Ruts",
+          "Sand",
+          "G.O.A.T."
+        ],
+        "keyword_coverage": 0.0,
+        "response_length": 581,
+        "has_no_docs_message": true
+      },
+      "status": "FAIL",
+      "timestamp": "2025-08-22T14:40:23.998231"
+    },
+    {
+      "test_id": "warranty_service",
+      "question": "What warranty and service options are available for the Ford Bronco?",
+      "category": "complex",
+      "response": "\ud83d\udd0d **No Relevant Documents Found**\n\nI couldn't find any relevant documents to answer your question: 'What warranty and service options are available for the Ford Bronco?'\n\n**You might want to try:**\n- Rephrasing your question with different keywords\n- Asking about our business data using CRM tools instead\n- Checking if the relevant documents have been uploaded to our knowledge base\n- Contacting support if you believe this information should be available\n\n**Alternative:** If you're looking for customer data, vehicle inventory, or sales information, try using the CRM query tools instead.",
+      "response_time": 1.215046,
+      "expected_keywords": [
+        "5 years",
+        "150,000 km",
+        "Extended Warranty",
+        "Roadside Assistance",
+        "Express Service"
+      ],
+      "analysis": {
+        "score": 0.0,
+        "found_keywords": [],
+        "missing_keywords": [
+          "5 years",
+          "150,000 km",
+          "Extended Warranty",
+          "Roadside Assistance",
+          "Express Service"
+        ],
+        "keyword_coverage": 0.0,
+        "response_length": 591,
+        "has_no_docs_message": true
+      },
+      "status": "FAIL",
+      "timestamp": "2025-08-22T14:40:25.213510"
+    },
+    {
+      "test_id": "color_options",
+      "question": "What colors is the Ford Bronco available in?",
+      "category": "edge_case",
+      "response": "**Ford Bronco Available Colors**\n\nBased on the retrieved document for the Ford Bronco 2024, the available colors for this vehicle are:\n\n- Eruption Green\n- Race Red\n- Cactus Gray\n- Oxford White\n- Azure Gray\n- Shadow Black\n\nThese are the color options provided for the Ford Bronco model, offering a range of choices for customers to select from. If you require further information or assistance, feel free to ask.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 2.271692,
+      "expected_keywords": [
+        "Eruption Green",
+        "Race Red",
+        "Cactus Gray",
+        "Oxford White",
+        "Azure Gray",
+        "Shadow Black"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "Eruption Green",
+          "Race Red",
+          "Cactus Gray",
+          "Oxford White",
+          "Azure Gray",
+          "Shadow Black"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 485,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:40:27.485355"
+    },
+    {
+      "test_id": "irrelevant_question",
+      "question": "What is the price of Tesla Model 3?",
+      "category": "irrelevant",
+      "response": "\ud83d\udd0d **No Relevant Documents Found**\n\nI couldn't find any relevant documents to answer your question: 'What is the price of Tesla Model 3?'\n\n**You might want to try:**\n- Rephrasing your question with different keywords\n- Asking about our business data using CRM tools instead\n- Checking if the relevant documents have been uploaded to our knowledge base\n- Contacting support if you believe this information should be available\n\n**Alternative:** If you're looking for customer data, vehicle inventory, or sales information, try using the CRM query tools instead.",
+      "response_time": 0.719013,
+      "expected_keywords": [],
+      "analysis": {
+        "score": 1.0,
+        "found_keywords": [],
+        "missing_keywords": [],
+        "has_no_docs_message": true,
+        "response_length": 558
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:40:28.204466"
+    }
+  ]
+}

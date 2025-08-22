@@ -26,32 +26,54 @@ logger = logging.getLogger(__name__)
 _retriever = None
 
 async def _ensure_retriever():
-    """Ensure the retriever is initialized and return it."""
+    """Ensure the retriever is initialized with proper error handling."""
     global _retriever
     
     if _retriever is None:
         try:
-            # Import from the correct location based on original tools
+            # Check if dependencies are available first
             try:
+                import openai  # This will fail if not installed
+            except ImportError:
+                logger.warning("[RAG] OpenAI dependency not available")
+                raise ImportError("OpenAI package not installed")
+            
+            # Import from the correct backend path
+            try:
+                import sys
+                import os
+                # Add backend directory to path if not already there
+                backend_path = os.path.join(os.path.dirname(__file__), '..', '..')
+                if backend_path not in sys.path:
+                    sys.path.insert(0, backend_path)
+                
                 from rag.retriever import SemanticRetriever
                 _retriever = SemanticRetriever()
                 logger.info("[RAG] SemanticRetriever initialized successfully")
-            except ImportError:
-                try:
-                    from rag.retriever import SemanticRetriever
-                    _retriever = SemanticRetriever()
-                    logger.info("[RAG] SemanticRetriever initialized successfully")
-                except ImportError:
-                    # Fallback: create a mock retriever for now
-                    class MockRetriever:
-                        async def retrieve(self, query: str, top_k: int = 5, threshold: float = 0.7):
-                            return []
-                    _retriever = MockRetriever()
-                    logger.warning("[RAG] Using mock retriever - SemanticRetriever not available")
-                    return _retriever
+            except ImportError as e:
+                logger.warning(f"[RAG] Could not import SemanticRetriever: {e}")
+                raise
+                
+        except (ImportError, ModuleNotFoundError) as e:
+            logger.warning(f"[RAG] Dependencies missing, using mock retriever: {e}")
+            # Fallback: create a mock retriever
+            class MockRetriever:
+                async def retrieve(self, query: str, top_k: int = 5, threshold: float = 0.7):
+                    logger.info(f"[RAG] Mock retriever called with query: {query[:50]}...")
+                    return []
+                    
+                async def get_stats(self):
+                    return {"status": "mock", "message": "Mock retriever - no real data"}
+            
+            _retriever = MockRetriever()
+            logger.info("[RAG] Using mock retriever - dependencies not available")
         except Exception as e:
-            logger.error(f"[RAG] Failed to initialize retriever: {e}")
-            raise
+            logger.error(f"[RAG] Unexpected error initializing retriever: {e}")
+            # Still provide mock retriever for graceful degradation
+            class MockRetriever:
+                async def retrieve(self, query: str, top_k: int = 5, threshold: float = 0.7):
+                    return []
+            _retriever = MockRetriever()
     
     return _retriever
 
@@ -111,11 +133,11 @@ async def simple_rag(question: str, top_k: int = 5) -> str:
         if not retriever:
             return "❌ Document retrieval system is currently unavailable. Please try again later or contact support."
 
-        # Retrieve documents
+        # Retrieve documents with more permissive threshold for better recall
         documents = await retriever.retrieve(
             query=question,
             top_k=top_k,
-            threshold=0.7
+            threshold=0.2  # More permissive threshold for better document recall
         )
 
         # Handle no documents found

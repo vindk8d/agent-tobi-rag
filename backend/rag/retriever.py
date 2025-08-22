@@ -34,11 +34,28 @@ class SemanticRetriever:
         embedding_result = await self.embedder.embed_single_text(query)
         embedding = embedding_result.embedding
         # 2. Use threshold and top_k from config if not provided
-        final_threshold: float = threshold or self.settings.rag.similarity_threshold or 0.8
-        final_top_k: int = top_k or self.settings.rag.max_retrieved_documents or 10
+        # Use more permissive default threshold (0.3) for better recall
+        config_threshold = getattr(self.settings.rag, 'similarity_threshold', 0.3) if self.settings else 0.3
+        final_threshold: float = threshold if threshold is not None else config_threshold
+        
+        config_top_k = getattr(self.settings.rag, 'max_retrieved_documents', 10) if self.settings else 10
+        final_top_k: int = top_k if top_k is not None else config_top_k
         # 3. Search
         results = await self.vector_store.similarity_search(embedding, threshold=final_threshold, top_k=final_top_k)
-        # 4. Add source attribution
+        # 4. Add source attribution and ensure consistent format
         for r in results:
-            r["source"] = r.get("metadata", {}).get("source")
+            # Ensure source attribution from metadata
+            metadata = r.get("metadata", {})
+            r["source"] = (
+                metadata.get("source") or 
+                metadata.get("original_filename") or 
+                metadata.get("storage_path") or 
+                f"Document {r.get('document_chunk_id', 'Unknown')}"
+            )
+            
+            # Ensure all expected fields are present
+            r.setdefault("content", "")
+            r.setdefault("similarity", 0.0)
+            
+        logger.info(f"[RAG] Retrieved {len(results)} documents for query: {query[:50]}...")
         return results

@@ -175,13 +175,19 @@ class SupabaseVectorStore:
             # Format results to match expected structure
             formatted_results = []
             for row in result.data:
-                formatted_results.append({
+                formatted_result = {
                     "id": row["id"],
                     "document_chunk_id": row["document_chunk_id"],
                     "content": row["content"],
                     "similarity": row["similarity"],
                     "metadata": row["metadata"]
-                })
+                }
+                
+                # Include vehicle_id if present (for vehicle-specific searches)
+                if "vehicle_id" in row and row["vehicle_id"]:
+                    formatted_result["vehicle_id"] = row["vehicle_id"]
+                    
+                formatted_results.append(formatted_result)
 
             return formatted_results
         except Exception as e:
@@ -209,7 +215,7 @@ class SupabaseVectorStore:
             # Format results to match expected structure
             formatted_results = []
             for row in result.data:
-                formatted_results.append({
+                formatted_result = {
                     "id": row["id"],
                     "document_chunk_id": row["document_chunk_id"],
                     "content": row["content"],
@@ -217,7 +223,13 @@ class SupabaseVectorStore:
                     "keyword_rank": row["keyword_rank"],
                     "combined_score": row["combined_score"],
                     "metadata": row["metadata"]
-                })
+                }
+                
+                # Include vehicle_id if present (for vehicle-specific searches)
+                if "vehicle_id" in row and row["vehicle_id"]:
+                    formatted_result["vehicle_id"] = row["vehicle_id"]
+                    
+                formatted_results.append(formatted_result)
 
             return formatted_results
         except Exception as e:

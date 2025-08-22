@@ -87,7 +87,7 @@ class RAGConfig(BaseSettings):
 
     chunk_size: int = Field(default=1000, env="RAG_CHUNK_SIZE")
     chunk_overlap: int = Field(default=200, env="RAG_CHUNK_OVERLAP")
-    similarity_threshold: float = Field(default=0.5, env="RAG_SIMILARITY_THRESHOLD")
+    similarity_threshold: float = Field(default=0.3, env="RAG_SIMILARITY_THRESHOLD")
     max_retrieved_documents: int = Field(default=10, env="RAG_MAX_RETRIEVED_DOCUMENTS")
     embedding_batch_size: int = Field(default=100, env="RAG_EMBEDDING_BATCH_SIZE")
 

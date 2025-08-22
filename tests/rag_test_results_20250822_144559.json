@@ -1,0 +1,337 @@
+{
+  "timestamp": "2025-08-22T14:45:59.416834",
+  "summary": {
+    "total": 10,
+    "passed": 10,
+    "failed": 0,
+    "errors": 0,
+    "success_rate": 1.0,
+    "total_time": 39.351512,
+    "avg_response_time": 3.6130063999999997,
+    "categories": {
+      "basic_facts": {
+        "total": 3,
+        "passed": 3
+      },
+      "features": {
+        "total": 3,
+        "passed": 3
+      },
+      "complex": {
+        "total": 2,
+        "passed": 2
+      },
+      "edge_case": {
+        "total": 1,
+        "passed": 1
+      },
+      "irrelevant": {
+        "total": 1,
+        "passed": 1
+      }
+    }
+  },
+  "results": [
+    {
+      "test_id": "engine_specs",
+      "question": "What engine does the Ford Bronco have and what is its power output?",
+      "category": "basic_facts",
+      "response": "### Answer:\n\nThe Ford Bronco 2024 comes equipped with a 2.7L EcoBoost\u00ae V6 engine. This engine delivers a maximum power output of 335 PS at 5,570 rpm and a maximum torque of 555 Nm at 3,000 rpm. The vehicle also features a 10-Speed Automatic Transmission and an Advanced 4x4 system with Automatic On-Demand Engagement.\n\n### Additional Information:\n- **Engine**: 2.7L EcoBoost\u00ae V6\n  - Maximum Power: 335 PS @ 5,570 rpm\n  - Maximum Torque: 555 Nm @ 3,000 rpm\n- **Transmission**: 10-Speed Automatic Transmission\n\nIf you require more details or have any other questions, feel free to ask!\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 4.473482,
+      "expected_keywords": [
+        "2.7L",
+        "EcoBoost",
+        "V6",
+        "335 PS",
+        "555 Nm"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "2.7L",
+          "EcoBoost",
+          "V6",
+          "335 PS",
+          "555 Nm"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 881,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:27.758510"
+    },
+    {
+      "test_id": "transmission",
+      "question": "What type of transmission does the Ford Bronco use?",
+      "category": "basic_facts",
+      "response": "Based on the retrieved documents, the Ford Bronco 2024 model uses a 10-Speed Automatic Transmission. Here are some key details to support this answer:\n\n- Document 1 under the \"Technical Specifications\" section clearly states that the Ford Bronco comes with a 10-Speed Automatic Transmission.\n- This transmission is paired with a 2.7L EcoBoost\u00ae V6 engine, providing maximum power of 335 PS and maximum torque of 555 Nm.\n\nTherefore, the Ford Bronco utilizes a 10-Speed Automatic Transmission for smooth and efficient shifting. If you need more information or have any other questions, feel free to ask!\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 3.288662,
+      "expected_keywords": [
+        "10-Speed",
+        "Automatic"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "10-Speed",
+          "Automatic"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 898,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:31.047277"
+    },
+    {
+      "test_id": "dimensions",
+      "question": "What are the dimensions and ground clearance of the Ford Bronco?",
+      "category": "basic_facts",
+      "response": "Based on the retrieved documents, here is the information regarding the dimensions and ground clearance of the Ford Bronco:\n\n- **Dimensions**:\n  - Length x Width x Height: 4,811 x 2,190 x 1,846 mm (with mirrors)\n  - Wheelbase: 2,950 mm\n\n- **Ground Clearance**: 292 mm\n\n- The Ford Bronco also features a high clearance fender flares, indicating its off-road capabilities.\n\nUnfortunately, the specific ground clearance and dimensions of the Ford Bronco with the Sasquatch\u2122 Package are not explicitly mentioned in the retrieved documents. Additional information may be needed to provide a complete answer on those specific configurations.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 2.351203,
+      "expected_keywords": [
+        "4,811",
+        "2,190",
+        "1,846",
+        "292 mm",
+        "ground clearance"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "4,811",
+          "2,190",
+          "1,846",
+          "292 mm",
+          "ground clearance"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 933,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:33.398582"
+    },
+    {
+      "test_id": "safety_features",
+      "question": "What safety features does the Ford Bronco include?",
+      "category": "features",
+      "response": "Based on the retrieved documents, the Ford Bronco 2024 comes equipped with a range of safety features to ensure a secure driving experience. Here are the safety features included in the Ford Bronco:\n\n- **AdvanceTrac\u00ae with RSC\u00ae (Roll Stability Control\u2122)** for enhanced stability and control.\n- **Airbags** for the front (Driver & Passenger) and side (Front & Side), along with Safety Canopy\u00ae for added protection.\n- **Rear View Camera with Rollover Sensor** to assist with parking and provide additional safety.\n- **Tire Pressure Monitoring System (TPMS)** to alert you of any underinflated tires.\n- **Front and Rear Parking Sensors** to aid in parking and maneuvering in tight spaces.\n\nAdditionally, the Ford Co-Pilot360\u2122 Technology package offers advanced safety features such as Auto High-Beam Headlights, Hill Start Assist, Pre-Collision Assist with Automatic Emergency Braking, BLIS\u00ae with Cross-Traffic Alert, Lane-Keeping System, 360-Degree Camera, Adaptive Cruise Control, and Evasive Steer Assist.\n\nWhile these documents provide a comprehensive overview of the safety features in the Ford Bronco 2024, specific details on additional safety technologies or features may not be included. For a more detailed understanding, it is recommended to consult the official Ford Bronco 2024 specifications or contact a Ford dealership for further information.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 4.95824,
+      "expected_keywords": [
+        "Co-Pilot360",
+        "Pre-Collision",
+        "BLIS",
+        "Lane-Keeping",
+        "360-Degree Camera"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "Co-Pilot360",
+          "Pre-Collision",
+          "BLIS",
+          "Lane-Keeping",
+          "360-Degree Camera"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 1653,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:38.356943"
+    },
+    {
+      "test_id": "entertainment_system",
+      "question": "Describe the entertainment system in the Ford Bronco.",
+      "category": "features",
+      "response": "### Entertainment System in the Ford Bronco 2024\n\nThe Ford Bronco 2024 comes equipped with an advanced entertainment system that enhances the driving experience. Here are the key features of the entertainment system based on the retrieved documents:\n\n- **SYNC\u00ae 4 Infotainment System**: The Bronco features a SYNC\u00ae 4 Infotainment system with a 12-inch LCD capacitive touchscreen. This system allows for swipe capability and enhanced voice recognition, making it easy to control various functions while driving.\n  \n- **Wireless Apple CarPlay\u00ae and Android Auto\u2122 Compatibility**: The entertainment system supports wireless connectivity with Apple CarPlay\u00ae and Android Auto\u2122, enabling seamless integration with your smartphone for music, navigation, and communication.\n  \n- **Premium B&O\u00ae Sound System**: The Bronco is equipped with a premium B&O\u00ae sound system that includes 10 speakers, including a subwoofer. This setup ensures high-quality audio performance for an immersive listening experience.\n\nOverall, the Ford Bronco 2024 offers a modern and feature-rich entertainment system that caters to the needs of tech-savvy drivers and passengers.\n\nIf you require more specific details or have additional questions about the entertainment system, feel free to ask for further clarification.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 4.20971,
+      "expected_keywords": [
+        "SYNC",
+        "12-inch",
+        "Apple CarPlay",
+        "Android Auto",
+        "B&O"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "SYNC",
+          "12-inch",
+          "Apple CarPlay",
+          "Android Auto",
+          "B&O"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 1583,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:42.566785"
+    },
+    {
+      "test_id": "off_road_capabilities",
+      "question": "What off-road capabilities does the Ford Bronco have?",
+      "category": "features",
+      "response": "The Ford Bronco Outer Banks with Sasquatch\u2122 Package offers impressive off-road capabilities, making it a versatile vehicle for various terrains. Here are the key features that contribute to its off-road prowess based on the retrieved documents:\n\n- **4x4 System**: The Ford Bronco comes equipped with an Advanced 4x4 system with Automatic On-Demand Engagement, ensuring optimal traction and performance off-road.\n  \n- **Suspension**: The High-Performance, Off-Road, Stability Suspension (HOSS) System with BILSTEIN\u00ae Position-Sensitive Shock Absorbers enhances stability and control over rough terrain.\n  \n- **Drive Modes**: The Terrain Management System\u2122 with G.O.A.T. Modes\u2122 offers various driving modes like Normal, Eco, Sport, Slippery, Mud/Ruts, and Sand, allowing the Bronco to adapt to different off-road conditions.\n  \n- **Wheels and Tires**: The Bronco is equipped with 17\" Black High Gloss-Painted Aluminum wheels with LT315/70R17 Mud-Terrain (M/T) tires, providing excellent grip and durability for off-road adventures.\n  \n- **Differential**: Electronic-Locking Front and Rear Axle ensure that power is distributed effectively to the wheels, enhancing traction in challenging off-road situations.\n  \n- **Ground Clearance**: With a ground clearance of 292 mm and the ability to wade through water up to 850 mm, the Bronco can navigate over obstacles and through water crossings with ease.\n\nIn addition to these off-road capabilities, the Ford Bronco also offers safety features like AdvanceTrac\u00ae with RSC\u00ae (Roll Stability Control\u2122), multiple airbags, and a Rear View Camera with Rollover Sensor to enhance driver and passenger safety during off-road excursions.\n\nOverall, the Ford Bronco Outer Banks with Sasquatch\u2122 Package is well-equipped to handle a variety of off-road challenges, providing a thrilling and capable driving experience for adventure seekers.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 5.427626,
+      "expected_keywords": [
+        "Sasquatch",
+        "4x4",
+        "G.O.A.T.",
+        "Mud-Terrain",
+        "850 mm",
+        "wading"
+      ],
+      "analysis": {
+        "score": 1.0333333333333334,
+        "found_keywords": [
+          "Sasquatch",
+          "4x4",
+          "G.O.A.T.",
+          "Mud-Terrain",
+          "850 mm"
+        ],
+        "missing_keywords": [
+          "wading"
+        ],
+        "keyword_coverage": 0.8333333333333334,
+        "response_length": 2166,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:47.994570"
+    },
+    {
+      "test_id": "drive_modes",
+      "question": "What are all the available drive modes in the Ford Bronco?",
+      "category": "complex",
+      "response": "### Available Drive Modes in the Ford Bronco\n\nThe Ford Bronco 2024 offers a Terrain Management System\u2122 with G.O.A.T. Modes\u2122 that provide various drive modes to suit different driving conditions. Here are the available drive modes in the Ford Bronco:\n\n1. **Normal**: Suitable for everyday driving conditions.\n2. **Eco**: Optimizes fuel efficiency for more economical driving.\n3. **Sport**: Enhances performance for a more dynamic driving experience.\n4. **Slippery**: Designed to provide better traction on slippery surfaces.\n5. **Mud/Ruts**: Tailored for off-road driving in muddy or rutted terrains.\n6. **Sand**: Optimizes traction and performance for driving on sandy surfaces.\n\nThese drive modes, along with the advanced 4x4 system and other off-road features like the BILSTEIN\u00ae Position-Sensitive Shock Absorbers and Electronic-Locking Front and Rear Axle, make the Ford Bronco well-equipped for various driving scenarios.\n\nIf you have any more specific questions or need further details about the Ford Bronco's drive modes, feel free to ask!\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 3.257084,
+      "expected_keywords": [
+        "Normal",
+        "Eco",
+        "Sport",
+        "Slippery",
+        "Mud/Ruts",
+        "Sand",
+        "G.O.A.T."
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "Normal",
+          "Eco",
+          "Sport",
+          "Slippery",
+          "Mud/Ruts",
+          "Sand",
+          "G.O.A.T."
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 1343,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:51.251921"
+    },
+    {
+      "test_id": "warranty_service",
+      "question": "What warranty and service options are available for the Ford Bronco?",
+      "category": "complex",
+      "response": "### Warranty and Service Options for the Ford Bronco 2024\n\nBased on the retrieved documents, here are the warranty and service options available for the Ford Bronco 2024:\n\n1. **Ford Family Guarantee**:\n   - Online Service Booking available 24/7 with a Service Price Calculator.\n   - Express Service for quick maintenance without waiting.\n   - Pickup & Delivery service for expert maintenance without disrupting your day.\n   - Scheduled Service Plan offering prepaid maintenance for up to 5 years.\n   - Extended Warranty coverage up to 5 years or 150,000 km.\n   - Emergency Roadside Assistance hotline available 24/7.\n\n2. **Peace of Mind Package**:\n   - Includes a free inspection service within 2 months or 2,000 km (whichever comes first).\n   - Covers Periodic Maintenance Service (PMS) labor.\n\n### Additional Information on the Ford Bronco 2024\n\n- **Technical Specifications**:\n  - Engine: 2.7L EcoBoost\u00ae V6 with specific power and torque details.\n  - Transmission: 10-Speed Automatic Transmission.\n  - 4x4 System: Advanced 4x4 with Automatic On-Demand Engagement.\n  - Various performance features like brakes, suspension, drive modes, wheels, tires, differential, dimensions, ground clearance, and water wading capability.\n\n- **Safety and Security**:\n  - Includes AdvanceTrac\u00ae with RSC\u00ae (Roll Stability Control\u2122), multiple airbags, rearview camera, tire pressure monitoring system, and parking sensors.\n\n- **Interior and Convenience**:\n  - Features like a digital instrument cluster, keyless entry with push-button start, heated seats, power driver and passenger seats, wireless charger, FordPass\u2122 Connect, and more.\n\n### Missing Information\nThe documents do not provide specific details on the duration or coverage of the Peace of Mind Package beyond the initial inspection service and PMS labor. For more detailed information on this package, it is recommended to contact a Ford dealership or service center directly.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 4.011914,
+      "expected_keywords": [
+        "5 years",
+        "150,000 km",
+        "Extended Warranty",
+        "Roadside Assistance",
+        "Express Service"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "5 years",
+          "150,000 km",
+          "Extended Warranty",
+          "Roadside Assistance",
+          "Express Service"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 2220,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:55.264054"
+    },
+    {
+      "test_id": "color_options",
+      "question": "What colors is the Ford Bronco available in?",
+      "category": "edge_case",
+      "response": "Based on the retrieved documents, the Ford Bronco 2024 is available in the following colors:\n\n- Eruption Green\n- Race Red\n- Cactus Gray\n- Oxford White\n- Azure Gray\n- Shadow Black\n\nThese color options provide a range of choices for customers interested in the Ford Bronco. If you have any more questions or need further information, feel free to ask!\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 1.845317,
+      "expected_keywords": [
+        "Eruption Green",
+        "Race Red",
+        "Cactus Gray",
+        "Oxford White",
+        "Azure Gray",
+        "Shadow Black"
+      ],
+      "analysis": {
+        "score": 1.2,
+        "found_keywords": [
+          "Eruption Green",
+          "Race Red",
+          "Cactus Gray",
+          "Oxford White",
+          "Azure Gray",
+          "Shadow Black"
+        ],
+        "missing_keywords": [],
+        "keyword_coverage": 1.0,
+        "response_length": 647,
+        "has_no_docs_message": false
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:57.109555"
+    },
+    {
+      "test_id": "irrelevant_question",
+      "question": "What is the price of Tesla Model 3?",
+      "category": "irrelevant",
+      "response": "**Answer:**\nBased on the retrieved documents, the price of the Tesla Model 3 is not explicitly mentioned. The documents provided information about the Ford Bronco 2024, including details about its exterior features such as the Carbonized Gray Molded-In-Color Hard Top, LED headlights, removable roof and doors, and other specifications. \n\nUnfortunately, the documents do not contain information regarding the price of the Tesla Model 3. To find the current price of the Tesla Model 3, I recommend visiting the official Tesla website or contacting a Tesla dealership for the most up-to-date pricing information.\n\n---\n**Sources:**\n\u2022 /tmp/tmp7uqwa3pg_ford_bronco_outer_banks_sasquatch.md",
+      "response_time": 2.306826,
+      "expected_keywords": [
+        "Tesla Model 3",
+        "price",
+        "not mentioned",
+        "not contain"
+      ],
+      "analysis": {
+        "score": 1.0,
+        "found_keywords": [
+          "Tesla Model 3",
+          "price",
+          "not contain"
+        ],
+        "missing_keywords": [
+          "not mentioned"
+        ],
+        "acknowledges_lack": true,
+        "response_length": 684
+      },
+      "status": "PASS",
+      "timestamp": "2025-08-22T14:45:59.416496"
+    }
+  ]
+}
