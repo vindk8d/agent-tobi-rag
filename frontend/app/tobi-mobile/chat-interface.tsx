@@ -43,27 +43,25 @@ const MessageBubble = ({ message }: { message: ChatMessage }) => {
   const hasSources = message.sources && message.sources.length > 0
   
   return (
-    <div className={`content-stretch flex flex-col gap-2.5 items-start justify-start relative shrink-0 w-full ${
-      isHuman ? '' : 'bg-[#ffffff] box-border overflow-clip px-2.5 py-2'
+    <div className={`flex flex-col gap-2.5 relative shrink-0 w-full ${
+      isHuman ? 'items-end' : 'items-start'
     }`}>
       {isHuman ? (
-        // Human message - right aligned, dark background
-        <div className="bg-[#ffffff] box-border content-stretch flex gap-2.5 items-end justify-end overflow-clip p-[10px] relative shrink-0 w-full">
-          <div className="bg-[#6c6c6c] box-border content-stretch flex gap-2.5 items-start justify-end pl-[15px] pr-[19px] py-3 relative rounded-[18px] shrink-0 max-w-[85%] min-w-[120px]">
-            <div className="content-stretch flex gap-2.5 items-start justify-center relative shrink-0 min-w-0 flex-1">
-              <div className="flex flex-col font-medium justify-start leading-[1.2] not-italic relative shrink-0 text-[#ffffff] text-[14px] text-left tracking-[-0.56px] min-w-0 flex-1">
-                <p className="leading-[1.2] whitespace-pre-wrap break-words">{message.content}</p>
-              </div>
+        // Human message - right aligned, dark background, hugs content
+        <div className="flex justify-end w-full p-[10px]">
+          <div className="bg-[#6c6c6c] inline-flex items-start pl-[15px] pr-[19px] py-3 rounded-[18px] max-w-[85%]">
+            <div className="font-medium leading-[1.2] text-[#ffffff] text-[14px] tracking-[-0.56px]">
+              <p className="leading-[1.2] whitespace-pre-wrap break-words text-left">{message.content}</p>
             </div>
           </div>
         </div>
       ) : (
-        // Bot message - left aligned, light background
-        <div className="w-full">
-          <div className={`box-border content-stretch flex gap-2.5 items-start justify-start pl-[15px] pr-[19px] py-3 relative rounded-[18px] shrink-0 max-w-[85%] min-w-[120px] ${
+        // Bot message - left aligned, light background, hugs content
+        <div className="flex justify-start w-full px-2.5 py-2">
+          <div className={`inline-flex flex-col pl-[15px] pr-[19px] py-3 rounded-[18px] max-w-[85%] ${
             hasError ? 'bg-red-100 border border-red-200' : 'bg-[#e9e9e9]'
           }`}>
-            <div className="flex flex-col font-medium justify-start leading-[1.2] not-italic relative shrink-0 text-[#343434] text-[14px] tracking-[-0.56px] min-w-0 flex-1">
+            <div className="font-medium leading-[1.2] text-[#343434] text-[14px] tracking-[-0.56px]">
               <p className="leading-[1.2] whitespace-pre-wrap break-words text-left">{message.content}</p>
               
               {/* Error indicator */}
@@ -392,12 +390,14 @@ export const ChatInterface = ({
                 
                 {/* Loading indicator - positioned right after messages */}
                 {isLoading && (
-                  <div className="bg-[#ffffff] box-border content-stretch flex flex-col gap-2.5 items-start justify-start overflow-clip px-2.5 py-2 relative shrink-0 w-full">
-                    <div className="bg-[#e9e9e9] box-border content-stretch flex gap-2.5 items-center justify-start pl-[15px] pr-[19px] py-3 relative rounded-[18px] shrink-0">
-                      <div className="flex space-x-1">
-                        <div className="w-2 h-2 bg-[#343434] rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-[#343434] rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                        <div className="w-2 h-2 bg-[#343434] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                  <div className="flex flex-col gap-2.5 relative shrink-0 w-full items-start">
+                    <div className="flex justify-start w-full px-2.5 py-2">
+                      <div className="bg-[#e9e9e9] inline-flex items-center pl-[15px] pr-[19px] py-3 rounded-[18px]">
+                        <div className="flex space-x-1">
+                          <div className="w-2 h-2 bg-[#343434] rounded-full animate-bounce"></div>
+                          <div className="w-2 h-2 bg-[#343434] rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                          <div className="w-2 h-2 bg-[#343434] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                        </div>
                       </div>
                     </div>
                   </div>
