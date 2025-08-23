@@ -272,37 +272,8 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
     # Clear any stale legacy confirmations for completed conversations
     clear_conversation_confirmations(conversation_id)
     
-    # Auto-generate title for new conversations
-    if is_new_conversation:
-        try:
-            # Generate title from first message (first 50 chars)
-            title = request.message.strip()
-            if len(title) > 50:
-                title = title[:47] + "..."
-            
-            # Remove common prefixes to make titles more meaningful
-            prefixes_to_remove = ["Hi", "Hello", "Hey", "Can you", "Please", "I need", "Help me"]
-            for prefix in prefixes_to_remove:
-                if title.startswith(prefix):
-                    title = title[len(prefix):].strip()
-                    break
-            
-            # Capitalize first letter and ensure minimum length
-            if title and len(title) >= 3:
-                title = title[0].upper() + title[1:]
-            else:
-                title = "New Conversation"
-            
-            # Update conversation title
-            await asyncio.to_thread(
-                lambda: db_client.client.table('conversations')
-                .update({'title': title})
-                .eq('id', conversation_id)
-                .execute()
-            )
-            logger.info(f"🔍 [CHAT_DEBUG] Auto-generated title for new conversation {conversation_id}: '{title}'")
-        except Exception as e:
-            logger.warning(f"🔍 [CHAT_DEBUG] Failed to auto-generate title: {e}")
+    # Set interruption status for normal flow
+    is_interrupted = False
     
     agent_response = processed_result.get("message", "I apologize, but I encountered an issue processing your request.")
     
@@ -323,10 +294,47 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
         else:
             error_type = "general_error"
     
+    # Auto-generate title for new conversations as a background task
+    if is_new_conversation and not is_interrupted:
+        # Generate title from first message (first 50 chars)
+        title = request.message.strip()
+        if len(title) > 50:
+            title = title[:47] + "..."
+        
+        # Remove common prefixes to make titles more meaningful
+        prefixes_to_remove = ["Hi", "Hello", "Hey", "Can you", "Please", "I need", "Help me"]
+        for prefix in prefixes_to_remove:
+            if title.startswith(prefix):
+                title = title[len(prefix):].strip()
+                break
+        
+        # Capitalize first letter and ensure minimum length
+        if title and len(title) >= 3:
+            title = title[0].upper() + title[1:]
+        else:
+            title = "New Conversation"
+        
+        # Schedule title update as background task (after conversation creation completes)
+        async def update_conversation_title():
+            await asyncio.sleep(3)  # Wait for background conversation creation to complete
+            try:
+                await asyncio.to_thread(
+                    lambda: db_client.client.table('conversations')
+                    .update({'title': title})
+                    .eq('id', conversation_id)
+                    .execute()
+                )
+                logger.info(f"🔍 [CHAT_DEBUG] Auto-generated title for new conversation {conversation_id}: '{title}'")
+            except Exception as e:
+                logger.warning(f"🔍 [CHAT_DEBUG] Failed to auto-generate title: {e}")
+        
+        # Run title update in background without blocking response
+        asyncio.create_task(update_conversation_title())
+
     return ChatResponse(
         message=agent_response,
         sources=processed_result.get("sources", []),
-        is_interrupted=False,
+        is_interrupted=is_interrupted,
         conversation_id=processed_result.get("conversation_id", conversation_id),
         error=has_error,
         error_type=error_type
