@@ -1476,7 +1476,7 @@ async def _interpret_user_intent_with_llm(human_response: str, hitl_context: Dic
             if tool_name:
                 context_info = f"\nContext: This is a response to a {tool_name} tool request."
         
-        # REVOLUTIONARY: Natural language interpretation prompt
+        # ENHANCED: Natural language interpretation prompt with better cancellation understanding
         system_prompt = """You are an expert at interpreting human responses in conversational interfaces.
 
 Your job is to determine the user's intent from their response. Return EXACTLY one of these categories:
@@ -1485,10 +1485,12 @@ Your job is to determine the user's intent from their response. Return EXACTLY o
 Examples: "yes", "ok", "send it", "go ahead", "proceed", "do it", "sure", "approve", "confirm", "send", "continue"
 
 **DENIAL** - User wants to cancel/deny/stop the action  
-Examples: "no", "cancel", "stop", "don't", "abort", "not now", "skip", "deny", "quit", "exit"
+Examples: "no", "cancel", "stop", "don't", "abort", "not now", "skip", "deny", "quit", "exit", "never mind", "forget it"
 
 **INPUT** - User is providing information/data/input
 Examples: "john@example.com", "Customer ABC", "option 2", "tomorrow", "1234567890", specific names, addresses, etc.
+
+IMPORTANT: Focus on the user's underlying intent. Even if they provide some information, if they clearly want to cancel (e.g., "actually, cancel this" or "john@example.com but never mind"), classify as DENIAL.
 
 Consider the full context and natural language patterns. Don't just match keywords - understand intent.
 
@@ -1537,6 +1539,59 @@ What is the user's intent?"""
         return "input"
 
 
+async def _generate_context_appropriate_cancellation_message(hitl_context: Dict[str, Any], human_response: str) -> str:
+    """
+    Generate a context-appropriate cancellation message using LLM.
+    
+    This lets the LLM create a natural, contextual response instead of using generic messages.
+    """
+    try:
+        llm = await _get_hitl_interpretation_llm()
+        
+        # Build context for the LLM
+        tool_name = hitl_context.get("source_tool", "action") if hitl_context else "action"
+        
+        system_prompt = f"""You are generating a professional, empathetic cancellation response for a conversational AI assistant.
+
+The user said: "{human_response}"
+They were responding to a request from the {tool_name} tool.
+
+Generate a brief, natural cancellation message that:
+1. Acknowledges their decision respectfully
+2. Confirms the action has been cancelled
+3. Offers to help with something else
+4. Matches the context of the {tool_name} tool
+
+Keep it concise and professional. Don't be overly apologetic.
+
+Examples for different tools:
+- quotation: "I understand. I've cancelled the quotation request. Please let me know if you need anything else."
+- customer_message: "I understand. I've cancelled the message sending. No message will be sent."
+- general: "I understand. I've cancelled the request. How else can I help you?"
+
+Generate an appropriate response:"""
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content="Generate the cancellation message.")
+        ]
+        
+        parser = StrOutputParser()
+        chain = llm | parser
+        
+        cancellation_message = await chain.ainvoke(messages)
+        
+        logger.info(f"🧠 [CANCELLATION_MSG] Generated for {tool_name}: '{cancellation_message.strip()}'")
+        
+        return cancellation_message.strip()
+        
+    except Exception as e:
+        logger.error(f"🧠 [CANCELLATION_MSG] Error generating message: {str(e)}")
+        # Fallback to a simple generic message
+        tool_name = hitl_context.get("source_tool", "action") if hitl_context else "action"
+        return f"I understand. I've cancelled the {tool_name.replace('_', ' ')} request. Please let me know if you need anything else."
+
+
 async def _process_hitl_response_llm_driven(hitl_context: Dict[str, Any], human_response: str) -> Dict[str, Any]:
     """
     REVOLUTIONARY: LLM-driven human response processing.
@@ -1574,11 +1629,15 @@ async def _process_hitl_response_llm_driven(hitl_context: Dict[str, Any], human_
         
         elif intent == "denial":
             logger.info(f"🤖 [LLM_HITL] LLM interpreted as DENIAL: '{response_text}'")
+            
+            # ENHANCED: Generate context-appropriate cancellation message
+            cancellation_message = await _generate_context_appropriate_cancellation_message(hitl_context, response_text)
+            
             return {
                 "success": True,
                 "result": "denied", 
                 "context": None,  # Clear context - interaction complete
-                "response_message": "❌ Cancelled - the action has been cancelled as requested."
+                "response_message": cancellation_message
             }
         
         else:  # intent == "input"

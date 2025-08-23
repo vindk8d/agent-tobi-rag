@@ -571,8 +571,10 @@ class UnifiedToolCallingRAGAgent:
             hitl_phase = state_dict.get("hitl_phase")
             collection_mode = hitl_context.get("collection_mode")
             
-            # Must have all universal requirements
-            if not source_tool or hitl_phase not in ["approved", "denied"] or collection_mode != "tool_managed":
+            # CRITICAL FIX: Only continue if user approved (not denied)
+            if not source_tool or hitl_phase != "approved" or collection_mode != "tool_managed":
+                if hitl_phase == "denied":
+                    logger.info(f"🚫 [UNIVERSAL_HITL] User denied - stopping tool execution")
                 return False
             
             # Universal tool-managed collection detected
@@ -2768,9 +2770,37 @@ Important: Use the tools to help you provide the best possible assistance to the
                         "hitl_context": last_hitl_context,
                     }
                 else:
-                    logger.info(f"🔄 [AGENT_RESUME] Routing to memory store - HITL completed")
+                    logger.info(f"🔄 [AGENT_RESUME] HITL completed - phase: {hitl_phase}")
                     
-                    # Update the state with our changes
+                    # CRITICAL FIX: Handle denial case directly
+                    if hitl_phase == "denied":
+                        logger.info(f"🔄 [AGENT_RESUME] ✅ Processing denial - returning cancellation message")
+                        
+                        # Get the cancellation message from the updated state
+                        updated_messages = hitl_update.get("messages", [])
+                        cancellation_message = ""
+                        
+                        # Find the AI cancellation message
+                        for msg in reversed(updated_messages):
+                            if hasattr(msg, 'type') and msg.type == 'ai':
+                                cancellation_message = msg.content
+                                break
+                        
+                        # Return the cancellation result directly
+                        result = {
+                            "messages": current_state.values.get("messages", []) + updated_messages,
+                            "conversation_id": conversation_id,
+                            "user_id": actual_user_id,
+                            "message": cancellation_message,  # CRITICAL: Include the message for API response
+                            "hitl_phase": "denied",
+                            "hitl_prompt": None,
+                            "hitl_context": None,
+                        }
+                        
+                        logger.info(f"🔄 [AGENT_RESUME] ✅ Denial processed - message: '{cancellation_message}'")
+                        return result
+                    
+                    # Update the state with our changes for other cases
                     updated_state = {**current_state.values, **hitl_update}
                     
                     # If this is a tool-managed flow but detection failed, call tool-managed collection directly to avoid echoing user text

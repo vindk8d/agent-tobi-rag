@@ -1,0 +1,450 @@
+{
+  "summary": {
+    "total_tests": 55,
+    "passed_tests": 48,
+    "failed_tests": 7,
+    "success_rate": 87.27272727272727
+  },
+  "detailed_results": [
+    {
+      "test_name": "Basic Detection: 'cancel'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:52:53.825481"
+    },
+    {
+      "test_name": "Basic Detection: 'stop'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:52:55.200882"
+    },
+    {
+      "test_name": "Basic Detection: 'no'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:52:56.516560"
+    },
+    {
+      "test_name": "Basic Detection: 'abort'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:52:57.683222"
+    },
+    {
+      "test_name": "Basic Detection: 'quit'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:52:58.948811"
+    },
+    {
+      "test_name": "Basic Detection: 'exit'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:52:59.714260"
+    },
+    {
+      "test_name": "Basic Detection: 'not now'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:00.947357"
+    },
+    {
+      "test_name": "Basic Detection: 'never mind'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:02.303383"
+    },
+    {
+      "test_name": "Basic Detection: 'forget it'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:02.882025"
+    },
+    {
+      "test_name": "Basic Detection: 'yes'",
+      "expected": "approval",
+      "actual": "approval",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:04.023211"
+    },
+    {
+      "test_name": "Basic Detection: 'send it'",
+      "expected": "approval",
+      "actual": "approval",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:04.638235"
+    },
+    {
+      "test_name": "Basic Detection: 'go ahead'",
+      "expected": "approval",
+      "actual": "approval",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:05.417284"
+    },
+    {
+      "test_name": "Basic Detection: 'proceed'",
+      "expected": "approval",
+      "actual": "approval",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:06.940085"
+    },
+    {
+      "test_name": "Basic Detection: 'do it'",
+      "expected": "approval",
+      "actual": "approval",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:07.598851"
+    },
+    {
+      "test_name": "Basic Detection: 'approve'",
+      "expected": "approval",
+      "actual": "approval",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:08.350459"
+    },
+    {
+      "test_name": "Basic Detection: 'john@example.com'",
+      "expected": "input",
+      "actual": "input",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:10.250956"
+    },
+    {
+      "test_name": "Basic Detection: 'Customer ABC'",
+      "expected": "input",
+      "actual": "input",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:10.937808"
+    },
+    {
+      "test_name": "Basic Detection: 'option 2'",
+      "expected": "input",
+      "actual": "input",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:11.972863"
+    },
+    {
+      "test_name": "Basic Detection: 'tomorrow'",
+      "expected": "input",
+      "actual": "input",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:12.977593"
+    },
+    {
+      "test_name": "Mixed Input: 'john@example.com but cancel'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:13.559961"
+    },
+    {
+      "test_name": "Mixed Input: 'Customer ABC, actually never mind'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:14.920759"
+    },
+    {
+      "test_name": "Mixed Input: 'send to john@test.com but stop'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:15.605919"
+    },
+    {
+      "test_name": "Mixed Input: 'actually, cancel this'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:16.231443"
+    },
+    {
+      "test_name": "Mixed Input: 'forget it, don't send'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:17.000884"
+    },
+    {
+      "test_name": "Mixed Input: 'john@example.com for the quotation'",
+      "expected": "input",
+      "actual": "input",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:17.874754"
+    },
+    {
+      "test_name": "Mixed Input: 'Customer ABC needs this urgently'",
+      "expected": "input",
+      "actual": "input",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:18.550157"
+    },
+    {
+      "test_name": "Mixed Input: 'send to john@test.com please'",
+      "expected": "input",
+      "actual": "approval",
+      "passed": false,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:19.522057"
+    },
+    {
+      "test_name": "Context Message (generate_quotation): 'cancel'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the quotation request. Please let me know if you need anything else.'",
+      "passed": true,
+      "details": "Length: 97 chars",
+      "timestamp": "2025-08-23T12:53:20.993621"
+    },
+    {
+      "test_name": "Context Message (generate_quotation): 'stop'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the quotation request. Please let me know if you need anything else.'",
+      "passed": true,
+      "details": "Length: 97 chars",
+      "timestamp": "2025-08-23T12:53:22.128644"
+    },
+    {
+      "test_name": "Context Message (generate_quotation): 'no thanks'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the quotation request. Please let me know if you need anything else.'",
+      "passed": true,
+      "details": "Length: 97 chars",
+      "timestamp": "2025-08-23T12:53:23.039098"
+    },
+    {
+      "test_name": "Context Message (generate_quotation): 'abort'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the quotation request. Please let me know if you need anything else.'",
+      "passed": true,
+      "details": "Length: 97 chars",
+      "timestamp": "2025-08-23T12:53:23.725154"
+    },
+    {
+      "test_name": "Context Message (trigger_customer_message): 'cancel'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the message sending. No message will be sent. How else can I assist you?'",
+      "passed": true,
+      "details": "Length: 101 chars",
+      "timestamp": "2025-08-23T12:53:24.625761"
+    },
+    {
+      "test_name": "Context Message (trigger_customer_message): 'stop'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the message sending. No message will be sent. How else can I help you?'",
+      "passed": true,
+      "details": "Length: 99 chars",
+      "timestamp": "2025-08-23T12:53:25.945900"
+    },
+    {
+      "test_name": "Context Message (trigger_customer_message): 'no thanks'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the message sending. No message will be sent. How else can I help you?'",
+      "passed": true,
+      "details": "Length: 99 chars",
+      "timestamp": "2025-08-23T12:53:26.661014"
+    },
+    {
+      "test_name": "Context Message (trigger_customer_message): 'abort'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the message sending. No message will be sent. How else can I assist you?'",
+      "passed": true,
+      "details": "Length: 101 chars",
+      "timestamp": "2025-08-23T12:53:27.647698"
+    },
+    {
+      "test_name": "Context Message (crm_query): 'cancel'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the CRM query request. How else can I assist you today?'",
+      "passed": true,
+      "details": "Length: 84 chars",
+      "timestamp": "2025-08-23T12:53:28.789143"
+    },
+    {
+      "test_name": "Context Message (crm_query): 'stop'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the CRM query request. How else can I assist you today?'",
+      "passed": true,
+      "details": "Length: 84 chars",
+      "timestamp": "2025-08-23T12:53:29.453786"
+    },
+    {
+      "test_name": "Context Message (crm_query): 'no thanks'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the query request. How else can I assist you today?'",
+      "passed": true,
+      "details": "Length: 80 chars",
+      "timestamp": "2025-08-23T12:53:30.330625"
+    },
+    {
+      "test_name": "Context Message (crm_query): 'abort'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the CRM query request. How else can I assist you today?'",
+      "passed": true,
+      "details": "Length: 84 chars",
+      "timestamp": "2025-08-23T12:53:31.131020"
+    },
+    {
+      "test_name": "Context Message (upload_vehicle_spec): 'cancel'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the vehicle specification upload request. How else can I assist you today?'",
+      "passed": true,
+      "details": "Length: 103 chars",
+      "timestamp": "2025-08-23T12:53:31.923534"
+    },
+    {
+      "test_name": "Context Message (upload_vehicle_spec): 'stop'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the upload_vehicle_spec request. How else can I assist you today?'",
+      "passed": true,
+      "details": "Length: 94 chars",
+      "timestamp": "2025-08-23T12:53:32.605119"
+    },
+    {
+      "test_name": "Context Message (upload_vehicle_spec): 'no thanks'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the vehicle specification upload request. How else can I assist you today?'",
+      "passed": true,
+      "details": "Length: 103 chars",
+      "timestamp": "2025-08-23T12:53:33.511167"
+    },
+    {
+      "test_name": "Context Message (upload_vehicle_spec): 'abort'",
+      "expected": "Appropriate cancellation message",
+      "actual": "'I understand. I've cancelled the upload_vehicle_spec request. How else can I assist you today?'",
+      "passed": true,
+      "details": "Length: 94 chars",
+      "timestamp": "2025-08-23T12:53:34.196735"
+    },
+    {
+      "test_name": "Full Processing #1: 'yes, send it'",
+      "expected": "Result: approved, Context: True",
+      "actual": "Result: approved, Context preserved: True, Message: '\u2705 Approved - proceeding with the action.'",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:34.814546"
+    },
+    {
+      "test_name": "Full Processing #2: 'cancel'",
+      "expected": "Result: denied, Context: False",
+      "actual": "Result: denied, Context preserved: False, Message: 'I understand. I've cancelled the quotation request. Please let me know if you need anything else.'",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:37.011540"
+    },
+    {
+      "test_name": "Full Processing #3: 'john@example.com'",
+      "expected": "Result: john@example.com, Context: True",
+      "actual": "Result: john@example.com, Context preserved: True, Message: '\ud83d\udcdd Received: john@example.com'",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:38.094394"
+    },
+    {
+      "test_name": "Full Processing #4: 'send to john@test.com but actually cancel'",
+      "expected": "Result: denied, Context: False",
+      "actual": "Result: denied, Context preserved: False, Message: 'I understand. I've cancelled the message sending. No message will be sent. How else can I assist you?'",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:39.446184"
+    },
+    {
+      "test_name": "Edge Case: ''",
+      "expected": "input",
+      "actual": "denial",
+      "passed": false,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:40.205577"
+    },
+    {
+      "test_name": "Edge Case: ' '",
+      "expected": "input",
+      "actual": "denial",
+      "passed": false,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:40.786367"
+    },
+    {
+      "test_name": "Edge Case: '?'",
+      "expected": "input",
+      "actual": "denial",
+      "passed": false,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:42.052568"
+    },
+    {
+      "test_name": "Edge Case: 'maybe'",
+      "expected": "input",
+      "actual": "denial",
+      "passed": false,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:43.317027"
+    },
+    {
+      "test_name": "Edge Case: 'I don't know'",
+      "expected": "input",
+      "actual": "denial",
+      "passed": false,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:44.052206"
+    },
+    {
+      "test_name": "Edge Case: 'hmm'",
+      "expected": "input",
+      "actual": "denial",
+      "passed": false,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:44.749966"
+    },
+    {
+      "test_name": "Edge Case: 'yes but actually no'",
+      "expected": "denial",
+      "actual": "denial",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:45.359347"
+    },
+    {
+      "test_name": "Edge Case: 'cancel... wait, actually send it'",
+      "expected": "approval",
+      "actual": "approval",
+      "passed": true,
+      "details": "",
+      "timestamp": "2025-08-23T12:53:46.067192"
+    }
+  ]
+}

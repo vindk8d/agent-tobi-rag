@@ -197,6 +197,7 @@ export const ChatInterface = ({
   const [isLoading, setIsLoading] = useState(false)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isAwaitingHitl, setIsAwaitingHitl] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const initialMessageSentRef = useRef(false)
   const pendingRequestRef = useRef<string | null>(null) // Track pending requests
@@ -236,6 +237,8 @@ export const ChatInterface = ({
       }, 100)
     }
   }, [messages])
+
+
 
   const handleSendMessage = async (content: string, skipAddingMessage = false) => {
     if (!content.trim()) return
@@ -304,6 +307,14 @@ export const ChatInterface = ({
       // Update conversation ID if changed
       if (chatResponse.conversation_id && chatResponse.conversation_id !== currentConversationId) {
         setConversationId(chatResponse.conversation_id)
+      }
+
+      // Track HITL state for debugging (no UI changes)
+      if (chatResponse.is_interrupted) {
+        console.log('🔍 [MOBILE-CHAT] HITL interrupt detected - user can respond via chat')
+        setIsAwaitingHitl(true)
+      } else {
+        setIsAwaitingHitl(false)
       }
 
       // Add bot response
@@ -410,8 +421,13 @@ export const ChatInterface = ({
         </div>
       )}
 
+
+
       {/* Chat Input - matches Figma exactly */}
-      <ChatInput onSendMessage={handleSendMessage} disabled={isLoading} />
+      <ChatInput 
+        onSendMessage={handleSendMessage} 
+        disabled={isLoading} 
+      />
     </div>
   )
 }

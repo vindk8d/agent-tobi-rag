@@ -158,8 +158,13 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
             hitl_phase = state_values.get('hitl_phase')
             hitl_prompt = state_values.get('hitl_prompt')
             hitl_context = state_values.get('hitl_context')
-            # Agent is awaiting HITL response when hitl_phase indicates waiting for user input
-            is_awaiting_hitl = hitl_phase in ["awaiting_response", "needs_confirmation", "needs_prompt"]
+            # ENHANCED: Agent is awaiting HITL response when:
+            # 1. hitl_phase indicates waiting for user input, OR
+            # 2. There's an active HITL context (user is responding to a displayed prompt)
+            is_awaiting_hitl = (
+                hitl_phase in ["awaiting_response", "needs_confirmation", "needs_prompt"] or
+                (hitl_context is not None and hitl_context.get("source_tool"))  # Active HITL context
+            )
             
             # DEBUG: Log what we found in the state
             logger.info(f"🔍 [CHAT_DEBUG] Retrieved state_values keys: {list(state_values.keys())}")
