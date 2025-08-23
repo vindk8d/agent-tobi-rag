@@ -26,6 +26,121 @@ from core.database import db_client
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# LLM Title Generation
+async def generate_conversation_title(user_message: str, agent_response: str, conversation_id: str = None) -> str:
+    """
+    Generate a concise, descriptive title for a conversation using a simple LLM call.
+    Uses full conversation history for better context.
+    Falls back to rule-based generation if LLM fails.
+    """
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage, HumanMessage
+        
+        # Use GPT-4o-mini for cost-effective title generation
+        import os
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",  # Cost-effective model for simple tasks
+            temperature=0.3,  # Lower temperature for more consistent titles
+            max_tokens=50,  # Increased for better title generation
+            timeout=15,  # Increased timeout for better responses
+            openai_api_key=os.getenv("OPENAI_API_KEY"),  # Explicit API key
+        )
+        
+        # Simple, focused prompt for title generation
+        system_prompt = """Generate a short, descriptive title (3-6 words) for this conversation. 
+Focus on the main business purpose and include key details.
+
+Rules:
+- Include the customer name if mentioned
+- Include the vehicle make/model if mentioned  
+- Include the business action (Quote, Inquiry, Support, etc.)
+- Be specific and professional
+- No quotes or punctuation
+- Examples: "John Smith BMW Quote", "Sarah Toyota Inquiry", "Mike Honda Service Request"
+"""
+        
+        # Get conversation history for better context
+        conversation_context = ""
+        if conversation_id:
+            try:
+                from core.database import db_client
+                messages_result = await asyncio.to_thread(
+                    lambda: db_client.client.table('messages')
+                    .select('role, content')
+                    .eq('conversation_id', conversation_id)
+                    .order('created_at', desc=False)
+                    .limit(10)  # Last 10 messages for context
+                    .execute()
+                )
+                
+                if messages_result.data:
+                    # Build conversation context from all messages
+                    context_parts = []
+                    for msg in messages_result.data:
+                        role = "User" if msg['role'] in ['user', 'human'] else "Assistant"
+                        content = msg['content'][:150]  # Truncate long messages
+                        context_parts.append(f"{role}: {content}")
+                    
+                    conversation_context = "\n".join(context_parts[-6:])  # Last 6 messages
+                    logger.info(f"🔍 [TITLE_DEBUG] Using conversation history: {len(messages_result.data)} messages")
+                else:
+                    # Fallback to current exchange
+                    conversation_context = f"User: {user_message[:200]}\nAssistant: {agent_response[:200]}"
+            except Exception as e:
+                logger.warning(f"Failed to fetch conversation history for title: {e}")
+                # Fallback to current exchange
+                conversation_context = f"User: {user_message[:200]}\nAssistant: {agent_response[:200]}"
+        else:
+            # No conversation ID, use current exchange
+            conversation_context = f"User: {user_message[:200]}\nAssistant: {agent_response[:200]}"
+        
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Generate a title for this conversation:\n{conversation_context}")
+        ]
+        
+        response = await llm.ainvoke(messages)
+        title = response.content.strip()
+        
+        # Debug logging
+        logger.info(f"🔍 [TITLE_DEBUG] Raw LLM response: '{title}' (length: {len(title)})")
+        
+        # Clean up the title
+        title = title.replace('"', '').replace("'", "").strip()
+        
+        # Validate title length and content
+        if len(title) > 60:
+            title = title[:57] + "..."
+        elif len(title) < 2:  # More lenient validation
+            raise ValueError(f"Title too short: '{title}' (length: {len(title)})")
+            
+        return title
+        
+    except Exception as e:
+        logger.warning(f"LLM title generation failed: {e}")
+        # Fallback to rule-based generation
+        return generate_fallback_title(user_message)
+
+def generate_fallback_title(message: str) -> str:
+    """Simple rule-based title generation as fallback"""
+    title = message.strip()
+    
+    # Remove common prefixes
+    prefixes = ["Hi", "Hello", "Hey", "Can you", "Please", "I need", "Help me", "What", "How"]
+    for prefix in prefixes:
+        if title.lower().startswith(prefix.lower()):
+            title = title[len(prefix):].strip()
+            if title.startswith((',', '?', '!', ':')):
+                title = title[1:].strip()
+            break
+    
+    # Truncate and clean
+    if len(title) > 50:
+        title = title[:47] + "..."
+    
+    return title if len(title) >= 3 else "New Conversation"
+
 # Simplified models for ephemeral confirmation flow
 class MessageRequest(BaseModel):
     """Request model for chat messages"""
@@ -92,14 +207,30 @@ async def get_agent():
 async def post_chat_message(request: MessageRequest, background_tasks: BackgroundTasks):
     """Process a chat message with the agent."""
     
-    # EMERGENCY LOGGING - Check if function is being called at all
-    print(f"🚨 [EMERGENCY] Function post_chat_message CALLED with message: '{request.message}'")
-    logger.info(f"🚨 [EMERGENCY] Function post_chat_message CALLED with message: '{request.message}'")
+    logger.info(f"🔍 [CHAT_DEBUG] Processing message: '{request.message}'")
     
     # Generate defaults for optional fields
     conversation_id = request.conversation_id or str(uuid.uuid4())
     user_id = request.user_id or "anonymous"
-    is_new_conversation = not request.conversation_id  # Track if this is a new conversation
+    
+    # Check if this is actually a new conversation by looking in the database
+    is_new_conversation = False
+    if request.conversation_id:
+        try:
+            existing_conv = await asyncio.to_thread(
+                lambda: db_client.client.table("conversations")
+                .select("id")
+                .eq("id", request.conversation_id)
+                .limit(1)
+                .execute()
+            )
+            is_new_conversation = not bool(existing_conv.data)
+            logger.info(f"🔍 [CHAT_DEBUG] Conversation {conversation_id} exists: {bool(existing_conv.data)}, is_new: {is_new_conversation}")
+        except Exception as e:
+            logger.warning(f"🔍 [CHAT_DEBUG] Failed to check conversation existence: {e}")
+            is_new_conversation = True  # Assume new if check fails
+    else:
+        is_new_conversation = True  # No conversation_id provided, definitely new
 
     # Fundamental robustness: if user_id not provided but conversation_id exists,
     # try to derive user_id from the conversation record to preserve employee context
@@ -203,6 +334,59 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
         
         logger.info(f"🔍 [CHAT_DEBUG] Agent processed approval. Interrupted: {processed_result.get('is_interrupted', False)}")
         
+        # Check if conversation needs title generation (for HITL approvals too)
+        should_generate_title = False
+        if conversation_id:
+            try:
+                conv_result = await asyncio.to_thread(
+                    lambda: db_client.client.table("conversations")
+                    .select("title")
+                    .eq("id", conversation_id)
+                    .limit(1)
+                    .execute()
+                )
+                current_title = conv_result.data[0]["title"] if conv_result.data else "New Conversation"
+                should_generate_title = current_title in ["New Conversation", "Untitled Conversation", "", None]
+                logger.info(f"🔍 [CHAT_DEBUG] HITL approval title check: '{current_title}', should_generate: {should_generate_title}")
+            except Exception as e:
+                logger.warning(f"🔍 [CHAT_DEBUG] Failed to check conversation title in HITL: {e}")
+                should_generate_title = False
+        
+        if should_generate_title:
+            # Schedule LLM title generation as background task for HITL approvals
+            async def generate_and_update_title_hitl():
+                await asyncio.sleep(3)  # Wait for background conversation creation to complete
+                try:
+                    logger.info(f"🔍 [CHAT_DEBUG] Starting HITL title generation for conversation {conversation_id}")
+                    # Generate title using LLM with conversation history
+                    title = await generate_conversation_title(request.message, agent_response_message, conversation_id)
+                    logger.info(f"🔍 [CHAT_DEBUG] Generated HITL title: '{title}'")
+                    
+                    await asyncio.to_thread(
+                        lambda: db_client.client.table('conversations')
+                        .update({'title': title})
+                        .eq('id', conversation_id)
+                        .execute()
+                    )
+                    logger.info(f"🔍 [CHAT_DEBUG] LLM-generated HITL title for conversation {conversation_id}: '{title}'")
+                except Exception as e:
+                    logger.error(f"🔍 [CHAT_DEBUG] Failed to generate HITL title: {e}")
+                    # Fallback to rule-based title
+                    try:
+                        fallback_title = generate_fallback_title(request.message)
+                        await asyncio.to_thread(
+                            lambda: db_client.client.table('conversations')
+                            .update({'title': fallback_title})
+                            .eq('id', conversation_id)
+                            .execute()
+                        )
+                        logger.info(f"🔍 [CHAT_DEBUG] Fallback HITL title for conversation {conversation_id}: '{fallback_title}'")
+                    except Exception as fallback_error:
+                        logger.error(f"🔍 [CHAT_DEBUG] Failed to generate fallback HITL title: {fallback_error}")
+            
+            # Start the title generation task in the background
+            asyncio.create_task(generate_and_update_title_hitl())
+        
         # Return the processed approval response
         agent_response_message = processed_result.get("message", "I've processed your approval.")
         return ChatResponse(
@@ -234,6 +418,21 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
 
     # Regular message processing - no approval detected
     logger.info(f"🔍 [CHAT_DEBUG] REGULAR: Processing as regular message")
+    
+    # Store the user's message to database before processing
+    try:
+        from agents.memory import memory_manager
+        await memory_manager.save_message_to_database(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            role="user",  # Store as 'user' role (mapped from 'human')
+            content=request.message,
+            metadata={"source": "chat_api", "timestamp": datetime.now().isoformat()}
+        )
+        logger.info(f"🔍 [CHAT_DEBUG] ✅ Stored user message to database")
+    except Exception as e:
+        logger.warning(f"🔍 [CHAT_DEBUG] Failed to store user message: {e}")
+        # Continue processing even if storage fails
     
     # Use clean semantic interface - no LangGraph details in API layer
     processed_result = await agent.process_user_message(
@@ -294,42 +493,66 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
         else:
             error_type = "general_error"
     
-    # Auto-generate title for new conversations as a background task
-    if is_new_conversation and not is_interrupted:
-        # Generate title from first message (first 50 chars)
-        title = request.message.strip()
-        if len(title) > 50:
-            title = title[:47] + "..."
+    # Auto-generate title for conversations that still have default title
+    # Check if conversation still has default title and needs a descriptive one
+    should_generate_title = False
+    if conversation_id:
+        try:
+            conv_result = await asyncio.to_thread(
+                lambda: db_client.client.table("conversations")
+                .select("title")
+                .eq("id", conversation_id)
+                .limit(1)
+                .execute()
+            )
+            current_title = conv_result.data[0]["title"] if conv_result.data else "New Conversation"
+            should_generate_title = current_title in ["New Conversation", "Untitled Conversation", "", None]
+            logger.info(f"🔍 [CHAT_DEBUG] Current title: '{current_title}', should_generate: {should_generate_title}")
+        except Exception as e:
+            logger.warning(f"🔍 [CHAT_DEBUG] Failed to check conversation title: {e}")
+            should_generate_title = False
+    
+    logger.info(f"🔍 [CHAT_DEBUG] Title generation check: should_generate_title={should_generate_title}")
+    if should_generate_title:
         
-        # Remove common prefixes to make titles more meaningful
-        prefixes_to_remove = ["Hi", "Hello", "Hey", "Can you", "Please", "I need", "Help me"]
-        for prefix in prefixes_to_remove:
-            if title.startswith(prefix):
-                title = title[len(prefix):].strip()
-                break
-        
-        # Capitalize first letter and ensure minimum length
-        if title and len(title) >= 3:
-            title = title[0].upper() + title[1:]
-        else:
-            title = "New Conversation"
-        
-        # Schedule title update as background task (after conversation creation completes)
-        async def update_conversation_title():
+        # Schedule LLM title generation as background task
+        async def generate_and_update_title():
             await asyncio.sleep(3)  # Wait for background conversation creation to complete
             try:
+                logger.info(f"🔍 [CHAT_DEBUG] Starting title generation for conversation {conversation_id}")
+                # Generate title using LLM with conversation history
+                title = await generate_conversation_title(request.message, agent_response, conversation_id)
+                logger.info(f"🔍 [CHAT_DEBUG] Generated title: '{title}'")
+                
                 await asyncio.to_thread(
                     lambda: db_client.client.table('conversations')
                     .update({'title': title})
                     .eq('id', conversation_id)
                     .execute()
                 )
-                logger.info(f"🔍 [CHAT_DEBUG] Auto-generated title for new conversation {conversation_id}: '{title}'")
+                logger.info(f"🔍 [CHAT_DEBUG] LLM-generated title for conversation {conversation_id}: '{title}'")
             except Exception as e:
-                logger.warning(f"🔍 [CHAT_DEBUG] Failed to auto-generate title: {e}")
+                logger.warning(f"🔍 [CHAT_DEBUG] Failed to generate LLM title: {e}")
+                # Fallback to simple title generation
+                try:
+                    fallback_title = request.message.strip()[:50]
+                    if len(fallback_title) > 47:
+                        fallback_title = fallback_title[:47] + "..."
+                    if not fallback_title or len(fallback_title) < 3:
+                        fallback_title = "New Conversation"
+                    
+                    await asyncio.to_thread(
+                        lambda: db_client.client.table('conversations')
+                        .update({'title': fallback_title})
+                        .eq('id', conversation_id)
+                        .execute()
+                    )
+                    logger.info(f"🔍 [CHAT_DEBUG] Used fallback title: '{fallback_title}'")
+                except Exception as fallback_error:
+                    logger.error(f"🔍 [CHAT_DEBUG] Even fallback title failed: {fallback_error}")
         
-        # Run title update in background without blocking response
-        asyncio.create_task(update_conversation_title())
+        # Run title generation in background without blocking response
+        asyncio.create_task(generate_and_update_title())
 
     return ChatResponse(
         message=agent_response,
@@ -545,30 +768,23 @@ async def clear_all_user_conversations(user_id: str):
 
 @router.get("/users/{user_id}/conversations", response_model=APIResponse[List[Dict[str, Any]]])
 async def get_user_conversations(user_id: str):
-    """Get all conversations for a specific user"""
+    """Get all conversations for a specific user - simplified version"""
     try:
-        # Get all conversations for this user, ordered by most recent first
+        # SIMPLIFIED: Just get conversations, no messages
         conversations_result = db_client.client.table('conversations').select(
             'id, title, created_at, updated_at'
         ).eq('user_id', user_id).order('updated_at', desc=True).execute()
 
         conversations = []
         for conv in conversations_result.data or []:
-            # Get the latest message from each conversation for preview
-            latest_message_result = db_client.client.table('messages').select(
-                'content, created_at, role'
-            ).eq('conversation_id', conv['id']).order('created_at', desc=True).limit(1).execute()
-            
-            latest_message = latest_message_result.data[0] if latest_message_result.data else None
-            
             conversations.append({
                 'id': conv['id'],
                 'title': conv.get('title', 'Untitled Conversation'),
                 'created_at': conv['created_at'],
                 'updated_at': conv['updated_at'],
-                'latest_message': latest_message['content'] if latest_message else None,
-                'latest_message_time': latest_message['created_at'] if latest_message else conv['created_at'],
-                'latest_message_role': latest_message['role'] if latest_message else None
+                'latest_message': None,  # Removed for simplicity
+                'latest_message_time': conv['updated_at'],
+                'latest_message_role': None
             })
 
         return APIResponse(

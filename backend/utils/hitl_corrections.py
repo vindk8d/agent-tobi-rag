@@ -27,7 +27,7 @@ class LLMCorrectionProcessor:
     
     def __init__(self):
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model="gpt-4o-mini",  # Use cost-effective model for simple corrections
             temperature=0.1,
             max_tokens=1000
         )

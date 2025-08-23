@@ -71,11 +71,16 @@ async def lifespan(app: FastAPI):
 
     # Initialize and start background schedulers following existing patterns
     scheduler = None
+    background_task_manager = None
     try:
         # Start DataSourceScheduler (includes vehicle cleanup jobs)
         scheduler = DataSourceScheduler()
         scheduler.start()
-        logger.info("Background schedulers started successfully")
+        
+        # Start global BackgroundTaskManager for message persistence
+        from agents.background_tasks import background_task_manager
+        await background_task_manager.start()
+        logger.info("Background schedulers and task manager started successfully")
     except Exception as e:
         logger.error(f"Failed to start background schedulers: {e}")
 
@@ -94,6 +99,14 @@ async def lifespan(app: FastAPI):
             logger.info("Background schedulers stopped successfully")
         except Exception as e:
             logger.error(f"Error stopping schedulers: {e}")
+    
+    # Stop BackgroundTaskManager gracefully
+    if background_task_manager:
+        try:
+            await background_task_manager.stop()
+            logger.info("Background task manager stopped successfully")
+        except Exception as e:
+            logger.error(f"Error stopping background task manager: {e}")
 
 
 # Initialize FastAPI app

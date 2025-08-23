@@ -288,7 +288,7 @@ export const ChatInterface = ({
       // Convert API messages to ChatMessage format
       const chatMessages: ChatMessage[] = messagesData.map((msg, index) => ({
         id: msg.id || `loaded_${index}`,
-        type: msg.role === 'human' ? 'human' : 'bot',
+        type: (msg.role === 'human' || msg.role === 'user') ? 'human' : 'bot',
         content: msg.content,
         timestamp: new Date(msg.created_at),
         sources: msg.metadata?.sources || []

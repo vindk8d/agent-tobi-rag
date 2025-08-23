@@ -1815,7 +1815,7 @@ class MemoryManager:
             logger.error(f"Error creating memory LLM: {e}")
             # Fallback to simple model
             return ChatOpenAI(
-                model="gpt-4o-mini",
+                model="gpt-4o-mini",  # Use cost-effective model for simple memory tasks
                 temperature=0.1,
                 max_tokens=1000,
                 api_key=self.settings.openai_api_key

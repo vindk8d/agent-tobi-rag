@@ -63,11 +63,8 @@ const ConversationItem = ({
       className="bg-[#d9d9d9] box-border content-stretch flex flex-col gap-1 h-auto min-h-[48px] items-start justify-center overflow-clip pl-6 pr-4 py-3 relative shrink-0 w-full hover:bg-[#c9c9c9] transition-colors cursor-pointer"
     >
       <div className="flex justify-between items-start w-full">
-        <div className="flex flex-col font-['Inter:Medium',_sans-serif] font-medium justify-center leading-tight not-italic relative shrink-0 text-[#000000] text-[14px] tracking-[-0.56px] flex-1 text-left">
-          <p className="leading-tight font-semibold">{conversation.title}</p>
-          <p className="leading-tight text-[12px] text-[#666666] mt-1">
-            {truncateMessage(conversation.latest_message)}
-          </p>
+        <div className="flex flex-col font-['Inter:Regular',_sans-serif] font-normal justify-center leading-tight not-italic relative shrink-0 text-[#000000] text-[14px] tracking-[-0.56px] flex-1 text-left">
+          <p className="leading-tight font-normal">{conversation.title}</p>
         </div>
         <div className="text-[10px] text-[#888888] ml-2 shrink-0">
           {formatTime(conversation.latest_message_time)}

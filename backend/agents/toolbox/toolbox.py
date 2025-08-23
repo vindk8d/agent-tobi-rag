@@ -546,7 +546,7 @@ async def get_sql_llm(question: Optional[str] = None) -> ChatOpenAI:
     except Exception as e:
         logger.warning(f"Error getting SQL LLM, using default: {e}")
         return ChatOpenAI(
-            model="gpt-4o-mini",
+            model="gpt-4o-mini",  # Use cost-effective model for fallback
             temperature=0.0,
             max_tokens=1000
         )

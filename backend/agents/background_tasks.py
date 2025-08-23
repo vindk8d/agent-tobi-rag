@@ -138,7 +138,7 @@ class BackgroundTaskManager:
     3. Conversation summary generation using existing conversation_summaries table
     4. Configurable threshold-based processing
     5. Comprehensive error handling and retry logic
-    6. Background task monitoring and health checks
+        6. Background task monitoring and health checks
     """
     
     def __init__(self):

@@ -1803,6 +1803,7 @@ async def _create_quotation_preview(
         logger.error(f"[CREATE_PREVIEW] Error creating quotation preview: {e}")
         return f"❌ Error creating quotation preview: {e}"
 
+
 async def _request_quotation_approval(
     extracted_context: 'ContextAnalysisResult',
     quotation_validity_days: int = 30
@@ -1823,7 +1824,7 @@ async def _request_quotation_approval(
         )
         
         # Create enhanced approval prompt
-        approval_prompt = f"""📄 **Quotation Ready for Generation**
+        base_approval_prompt = f"""📄 **Quotation Ready for Generation**
 
 {preview}
 
@@ -1837,6 +1838,8 @@ async def _request_quotation_approval(
 🔄 **Correct** any information that needs to be updated
 
 *Note: Once approved, a professional PDF quotation will be generated and made available for sharing.*"""
+
+        approval_prompt = base_approval_prompt
 
         # Use existing HITL infrastructure for approval
         from ..hitl import request_approval
