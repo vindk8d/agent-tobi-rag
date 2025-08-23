@@ -184,25 +184,44 @@ const ChatInput = ({ onSendMessage, disabled }: {
 // Main chat interface component
 export const ChatInterface = ({ 
   onBack,
+  onMenuToggle,
   initialMessages = [],
+  conversationId: propConversationId,
   userId = 'f26449e2-dce9-4b29-acd0-cb39a1f671fd' // John Smith - existing employee
 }: { 
   onBack?: () => void
+  onMenuToggle?: () => void
   initialMessages?: ChatMessage[]
+  conversationId?: string | null
   userId?: string
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [conversationId, setConversationId] = useState<string | null>(null)
+  const [conversationId, setConversationId] = useState<string | null>(propConversationId)
   const [error, setError] = useState<string | null>(null)
   const [isAwaitingHitl, setIsAwaitingHitl] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const initialMessageSentRef = useRef(false)
   const pendingRequestRef = useRef<string | null>(null) // Track pending requests
+  const conversationLoadedRef = useRef(false)
+
+  // Load existing conversation if conversationId is provided
+  useEffect(() => {
+    if (propConversationId && !conversationLoadedRef.current) {
+      loadExistingConversation(propConversationId)
+      conversationLoadedRef.current = true
+    }
+    
+    // Reset when conversation changes
+    if (propConversationId !== conversationId) {
+      setConversationId(propConversationId)
+      conversationLoadedRef.current = false
+    }
+  }, [propConversationId])
 
   // Handle initial message if provided
   useEffect(() => {
-    if (initialMessages.length > 0) {
+    if (initialMessages.length > 0 && !propConversationId) {
       // console.log('🔍 [CHAT-INTERFACE] Setting initial messages:', initialMessages)
       // Set initial messages first
       setMessages(initialMessages)
@@ -224,7 +243,7 @@ export const ChatInterface = ({
     return () => {
       initialMessageSentRef.current = false
     }
-  }, [initialMessages.length]) // Depend on length to handle prop changes
+  }, [initialMessages.length, propConversationId]) // Depend on length to handle prop changes
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -236,7 +255,53 @@ export const ChatInterface = ({
     }
   }, [messages])
 
+  // Load existing conversation messages
+  const loadExistingConversation = async (conversationId: string) => {
+    setIsLoading(true)
+    setError(null)
+    
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/memory-debug/conversations/${conversationId}/messages`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
 
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+      
+      // Handle both direct response and wrapped APIResponse formats
+      let messagesData: any[]
+      if (result.data) {
+        if (!result.success) {
+          throw new Error(result.message || 'API request failed')
+        }
+        messagesData = result.data
+      } else {
+        messagesData = result
+      }
+
+      // Convert API messages to ChatMessage format
+      const chatMessages: ChatMessage[] = messagesData.map((msg, index) => ({
+        id: msg.id || `loaded_${index}`,
+        type: msg.role === 'human' ? 'human' : 'bot',
+        content: msg.content,
+        timestamp: new Date(msg.created_at),
+        sources: msg.metadata?.sources || []
+      }))
+
+      setMessages(chatMessages)
+    } catch (err) {
+      console.error('Error loading conversation:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load conversation')
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const handleSendMessage = async (content: string, skipAddingMessage = false) => {
     if (!content.trim()) return
@@ -364,7 +429,10 @@ export const ChatInterface = ({
             </button>
           </div>
         </div>
-        <button className="block cursor-pointer overflow-clip relative shrink-0 size-10 hover:opacity-70 transition-opacity">
+        <button 
+          onClick={onMenuToggle}
+          className="block cursor-pointer overflow-clip relative shrink-0 size-10 hover:opacity-70 transition-opacity"
+        >
           <MenuIcon size="40" />
         </button>
       </div>

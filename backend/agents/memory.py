@@ -2182,11 +2182,7 @@ class MemoryManager:
                                      role: str, content: str,
                                      metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """Save individual message to the messages table."""
-        print(f"            💬 save_message_to_database called:")
-        print(f"               - conversation_id: '{conversation_id}' (type: {type(conversation_id)})")
-        print(f"               - user_id: '{user_id}' (type: {type(user_id)})")
-        print(f"               - role: '{role}'")
-        print(f"               - content length: {len(content)} chars")
+
         try:
             await self._ensure_initialized()
 
@@ -2230,16 +2226,13 @@ class MemoryManager:
     async def _ensure_conversation_exists(self, conversation_id: str, user_id: str) -> str:
         """
         Ensure conversation record exists in the conversations table.
-        Returns the actual conversation_id to use (may reuse existing conversation).
         
-        SINGLE CONVERSATION PER USER APPROACH:
-        - If user has existing conversation, reuse it (ignore provided conversation_id)
-        - Only create new conversation if user has no existing conversations
-        - This maintains conversation continuity across sessions/refreshes
+        MULTIPLE CONVERSATIONS PER USER APPROACH:
+        - If conversation_id provided and exists, use it
+        - Otherwise, create new conversation with provided ID
+        - Each conversation is independent and persistent
         """
-        print(f"            🔍 _ensure_conversation_exists called:")
-        print(f"               - conversation_id: '{conversation_id}' (type: {type(conversation_id)})")
-        print(f"               - user_id: '{user_id}' (type: {type(user_id)})")
+
         
         try:
             try:
@@ -2253,51 +2246,44 @@ class MemoryManager:
                     sys.path.append('/app')
                     from core.database import db_client
 
-            # STEP 1: Check if user already has an existing conversation (prefer reuse)
-            existing_conversations = await asyncio.to_thread(
-                lambda: db_client.client.table('conversations')
-                .select('id, title, created_at')
-                .eq('user_id', user_id)
-                .order('updated_at', desc=True)
-                .limit(1)
-                .execute()
-            )
-            
-            if existing_conversations.data:
-                existing_id = existing_conversations.data[0]['id']
-                existing_title = existing_conversations.data[0].get('title', 'Conversation')
-                
-                print(f"               ✅ Reusing existing conversation:")
-                print(f"                  - existing_id: '{existing_id}'")
-                print(f"                  - title: '{existing_title}'")
-                
-                # Update the conversation timestamp to mark as active
-                await asyncio.to_thread(
+            # STEP 1: Check if specific conversation exists
+            if conversation_id:
+                existing_conversation = await asyncio.to_thread(
                     lambda: db_client.client.table('conversations')
-                    .update({'updated_at': datetime.now().isoformat()})
-                    .eq('id', existing_id)
+                    .select('id, title, user_id')
+                    .eq('id', conversation_id)
+                    .eq('user_id', user_id)  # Ensure user owns this conversation
+                    .limit(1)
                     .execute()
                 )
                 
-                return existing_id
+                if existing_conversation.data:
+                    existing_id = existing_conversation.data[0]['id']
+                    existing_title = existing_conversation.data[0].get('title', 'Conversation')
+                    
+
+                    
+                    # Update timestamp to mark as active
+                    await asyncio.to_thread(
+                        lambda: db_client.client.table('conversations')
+                        .update({'updated_at': datetime.now().isoformat()})
+                        .eq('id', existing_id)
+                        .execute()
+                    )
+                    
+                    return existing_id
             
-            # STEP 2: No existing conversation found - create new one
-            print(f"               🆕 No existing conversation found, creating new one")
-            
+            # STEP 2: Create new conversation
             conversation_data = {
                 'id': conversation_id,
                 'user_id': user_id,
-                'title': 'Ongoing Conversation',  # Better title than "New Conversation"
+                'title': 'New Conversation',  # Will be updated with first message
+                'status': 'active',  # Required by our database migration
                 'metadata': {
                     'created_by': 'memory_manager',
-                    'conversation_type': 'single_persistent'
+                    'conversation_type': 'user_initiated'
                 }
             }
-
-            print(f"               🔄 Creating conversation with data:")
-            print(f"                  - id: '{conversation_data['id']}'")
-            print(f"                  - user_id: '{conversation_data['user_id']}'")
-            print(f"                  - title: '{conversation_data['title']}'")
 
             result = await asyncio.to_thread(
                 lambda: db_client.client.table('conversations').insert(conversation_data).execute()
@@ -2329,6 +2315,7 @@ class MemoryManager:
                                      agent_type: str = "unknown",
                                      user_id: Optional[str] = None) -> Optional[str]:
         """High-level method to store message from agent processing."""
+
         try:
             # Extract conversation ID from config
             conversation_id = self._extract_conversation_id_from_config(config)

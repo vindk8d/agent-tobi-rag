@@ -99,6 +99,7 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
     # Generate defaults for optional fields
     conversation_id = request.conversation_id or str(uuid.uuid4())
     user_id = request.user_id or "anonymous"
+    is_new_conversation = not request.conversation_id  # Track if this is a new conversation
 
     # Fundamental robustness: if user_id not provided but conversation_id exists,
     # try to derive user_id from the conversation record to preserve employee context
@@ -158,13 +159,8 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
             hitl_phase = state_values.get('hitl_phase')
             hitl_prompt = state_values.get('hitl_prompt')
             hitl_context = state_values.get('hitl_context')
-            # ENHANCED: Agent is awaiting HITL response when:
-            # 1. hitl_phase indicates waiting for user input, OR
-            # 2. There's an active HITL context (user is responding to a displayed prompt)
-            is_awaiting_hitl = (
-                hitl_phase in ["awaiting_response", "needs_confirmation", "needs_prompt"] or
-                (hitl_context is not None and hitl_context.get("source_tool"))  # Active HITL context
-            )
+            # Agent is awaiting HITL response when hitl_phase indicates waiting for user input
+            is_awaiting_hitl = hitl_phase in ["awaiting_response", "needs_confirmation", "needs_prompt"]
             
             # DEBUG: Log what we found in the state
             logger.info(f"🔍 [CHAT_DEBUG] Retrieved state_values keys: {list(state_values.keys())}")
@@ -275,6 +271,38 @@ async def post_chat_message(request: MessageRequest, background_tasks: Backgroun
     
     # Clear any stale legacy confirmations for completed conversations
     clear_conversation_confirmations(conversation_id)
+    
+    # Auto-generate title for new conversations
+    if is_new_conversation:
+        try:
+            # Generate title from first message (first 50 chars)
+            title = request.message.strip()
+            if len(title) > 50:
+                title = title[:47] + "..."
+            
+            # Remove common prefixes to make titles more meaningful
+            prefixes_to_remove = ["Hi", "Hello", "Hey", "Can you", "Please", "I need", "Help me"]
+            for prefix in prefixes_to_remove:
+                if title.startswith(prefix):
+                    title = title[len(prefix):].strip()
+                    break
+            
+            # Capitalize first letter and ensure minimum length
+            if title and len(title) >= 3:
+                title = title[0].upper() + title[1:]
+            else:
+                title = "New Conversation"
+            
+            # Update conversation title
+            await asyncio.to_thread(
+                lambda: db_client.client.table('conversations')
+                .update({'title': title})
+                .eq('id', conversation_id)
+                .execute()
+            )
+            logger.info(f"🔍 [CHAT_DEBUG] Auto-generated title for new conversation {conversation_id}: '{title}'")
+        except Exception as e:
+            logger.warning(f"🔍 [CHAT_DEBUG] Failed to auto-generate title: {e}")
     
     agent_response = processed_result.get("message", "I apologize, but I encountered an issue processing your request.")
     
@@ -506,6 +534,74 @@ async def clear_all_user_conversations(user_id: str):
     except Exception as e:
         logger.error(f"Error clearing all conversations for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear user conversations: {str(e)}")
+
+@router.get("/users/{user_id}/conversations", response_model=APIResponse[List[Dict[str, Any]]])
+async def get_user_conversations(user_id: str):
+    """Get all conversations for a specific user"""
+    try:
+        # Get all conversations for this user, ordered by most recent first
+        conversations_result = db_client.client.table('conversations').select(
+            'id, title, created_at, updated_at'
+        ).eq('user_id', user_id).order('updated_at', desc=True).execute()
+
+        conversations = []
+        for conv in conversations_result.data or []:
+            # Get the latest message from each conversation for preview
+            latest_message_result = db_client.client.table('messages').select(
+                'content, created_at, role'
+            ).eq('conversation_id', conv['id']).order('created_at', desc=True).limit(1).execute()
+            
+            latest_message = latest_message_result.data[0] if latest_message_result.data else None
+            
+            conversations.append({
+                'id': conv['id'],
+                'title': conv.get('title', 'Untitled Conversation'),
+                'created_at': conv['created_at'],
+                'updated_at': conv['updated_at'],
+                'latest_message': latest_message['content'] if latest_message else None,
+                'latest_message_time': latest_message['created_at'] if latest_message else conv['created_at'],
+                'latest_message_role': latest_message['role'] if latest_message else None
+            })
+
+        return APIResponse(
+            success=True,
+            message="Conversations retrieved successfully",
+            data=conversations
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving conversations for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve conversations: {str(e)}")
+
+@router.put("/conversations/{conversation_id}/title", response_model=APIResponse)
+async def update_conversation_title(conversation_id: str, request: Dict[str, str]):
+    """Update conversation title"""
+    try:
+        title = request.get('title', '').strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+            
+        # Update title using existing database pattern
+        result = await asyncio.to_thread(
+            lambda: db_client.client.table('conversations')
+            .update({
+                'title': title,
+                'updated_at': datetime.now().isoformat()
+            })
+            .eq('id', conversation_id)
+            .execute()
+        )
+        
+        if result.data:
+            return APIResponse(
+                success=True,
+                message="Conversation title updated successfully"
+            )
+        else:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+            
+    except Exception as e:
+        logger.error(f"Error updating conversation title {conversation_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update title: {str(e)}")
 
 @router.get("/health")
 async def health_check():

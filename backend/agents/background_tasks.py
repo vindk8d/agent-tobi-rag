@@ -329,7 +329,7 @@ class BackgroundTaskManager:
         """
         try:
             task = BackgroundTask(
-                task_type="store_message",
+                task_type="message_storage",
                 priority=TaskPriority.HIGH,  # Message storage is high priority
                 data={
                     "conversation_id": state.get("conversation_id"),
@@ -537,18 +537,34 @@ class BackgroundTaskManager:
     
     async def _handle_message_storage(self, task: BackgroundTask):
         """
-        Handle message storage to existing Supabase messages table.
+        Handle message storage using memory manager to ensure conversation exists.
         Implements LangChain role mapping (human→user, ai→assistant).
         
         Args:
             task: Message storage task
         """
+        # Handle both array of messages and single message formats
         messages = task.data.get("messages", [])
+        
+        # If no messages array, check for single message data
+        if not messages and task.data.get("content"):
+            messages = [task.data]
+        
         if not messages:
+            logger.warning(f"No messages to store for task {task.id}")
             return
         
-        # Prepare messages for Supabase with role mapping
-        supabase_messages = []
+        # Get conversation and user IDs
+        conversation_id = task.data.get("conversation_id") or task.conversation_id
+        user_id = task.data.get("user_id") or task.user_id
+        
+        if not conversation_id or not user_id:
+            raise Exception(f"Missing conversation_id ({conversation_id}) or user_id ({user_id}) for message storage")
+        
+        # Use memory manager to store messages (this ensures conversation exists)
+        from agents.memory import memory_manager
+        
+        stored_count = 0
         for msg in messages:
             # Map LangChain roles to database roles
             role = msg.get("role", "user")
@@ -557,25 +573,27 @@ class BackgroundTaskManager:
             elif role == "ai":
                 role = "assistant"
             
-            supabase_messages.append({
-                "conversation_id": task.conversation_id,
-                "role": role,
-                "content": msg.get("content", ""),
-                "user_id": task.user_id,
-                "created_at": datetime.utcnow().isoformat(),
-                "metadata": msg.get("metadata", {})
-            })
+            content = msg.get("content", "")
+            metadata = msg.get("metadata", {})
+            
+            # Use memory manager's save_message_to_database which calls _ensure_conversation_exists
+            message_id = await memory_manager.save_message_to_database(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                role=role,
+                content=content,
+                metadata=metadata
+            )
+            
+            if message_id:
+                stored_count += 1
+            else:
+                logger.warning(f"Failed to store message: {content[:50]}...")
         
-        # Store to existing Supabase messages table
-        def _store_messages():
-            return db_client.client.table("messages").insert(supabase_messages).execute()
+        if stored_count == 0:
+            raise Exception("Failed to store any messages to database")
         
-        result = await asyncio.to_thread(_store_messages)
-        
-        if not result.data:
-            raise Exception("Failed to store messages to database")
-        
-        logger.debug(f"Stored {len(supabase_messages)} messages for conversation {task.conversation_id}")
+        logger.info(f"Successfully stored {stored_count}/{len(messages)} messages for conversation {conversation_id}")
     
     async def _handle_summary_generation(self, task: BackgroundTask):
         """

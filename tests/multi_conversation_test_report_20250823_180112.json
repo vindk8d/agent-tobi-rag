@@ -1,0 +1,47 @@
+{
+  "summary": {
+    "total": 7,
+    "passed": 3,
+    "failed": 4,
+    "errors": 0,
+    "success_rate": 42.857142857142854
+  },
+  "results": [
+    {
+      "test": "Test 1: Create Multiple Conversations",
+      "status": "PASSED",
+      "timestamp": "2025-08-23T18:00:17.388955"
+    },
+    {
+      "test": "Test 2: Verify Conversation Independence",
+      "status": "PASSED",
+      "timestamp": "2025-08-23T18:00:50.868613"
+    },
+    {
+      "test": "Test 3: Test Auto-Title Generation",
+      "status": "FAILED",
+      "timestamp": "2025-08-23T18:01:12.152637"
+    },
+    {
+      "test": "Test 4: Test Conversation Retrieval",
+      "status": "FAILED",
+      "timestamp": "2025-08-23T18:01:12.363154"
+    },
+    {
+      "test": "Test 5: Test Conversation Title Updates",
+      "status": "FAILED",
+      "timestamp": "2025-08-23T18:01:12.461901"
+    },
+    {
+      "test": "Test 6: Test MenuWindow API Integration",
+      "status": "PASSED",
+      "timestamp": "2025-08-23T18:01:12.668973"
+    },
+    {
+      "test": "Test 7: Test Chat Interface Switching",
+      "status": "FAILED",
+      "timestamp": "2025-08-23T18:01:12.765992"
+    }
+  ],
+  "timestamp": "2025-08-23T18:01:12.777500"
+}

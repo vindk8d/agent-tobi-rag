@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import { ChatInterface } from './chat-interface'
+import { MenuWindow } from './MenuWindow'
 
 // SVG icon from Figma - you'll need to save this locally or use your icon system
 const MenuIcon = ({ size = "48" }: { size?: "20" | "24" | "32" | "40" | "48" | "16" }) => {
@@ -121,6 +122,8 @@ function ChatEntryBox({ onSubmit }: { onSubmit: (message: string) => void }) {
 export default function TobiMobilePage() {
   const [showChat, setShowChat] = useState(false)
   const [initialMessage, setInitialMessage] = useState('')
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
 
   // Handle transition to chat interface
   const handleStartChat = (message?: string) => {
@@ -134,49 +137,83 @@ export default function TobiMobilePage() {
   const handleBackToStart = () => {
     setShowChat(false)
     setInitialMessage('')
+    setSelectedConversationId(null)
+  }
+
+  // Handle menu toggle
+  const handleMenuToggle = () => {
+    setIsMenuOpen(!isMenuOpen)
+  }
+
+  // Handle conversation selection from menu
+  const handleConversationSelect = (conversationId: string) => {
+    setSelectedConversationId(conversationId)
+    setInitialMessage('') // Clear initial message when loading existing conversation
+    setShowChat(true)
   }
 
   // Show chat interface if user has started chatting
   if (showChat) {
     return (
-      <ChatInterface 
-        onBack={handleBackToStart}
-        initialMessages={initialMessage ? [{
-          id: 'initial',
-          type: 'human' as const,
-          content: initialMessage,
-          timestamp: new Date()
-        }] : []}
-      />
+      <>
+        <ChatInterface 
+          onBack={handleBackToStart}
+          onMenuToggle={handleMenuToggle}
+          initialMessages={initialMessage ? [{
+            id: 'initial',
+            type: 'human' as const,
+            content: initialMessage,
+            timestamp: new Date()
+          }] : []}
+          conversationId={selectedConversationId}
+        />
+        <MenuWindow
+          isOpen={isMenuOpen}
+          onClose={() => setIsMenuOpen(false)}
+          onConversationSelect={handleConversationSelect}
+        />
+      </>
     )
   }
 
   // Show start page
   return (
-    <div className="bg-[#ffffff] box-border content-stretch flex flex-col gap-1 items-center justify-center px-8 py-10 relative size-full min-h-screen">
-      {/* Menu Bar */}
-      <div className="bg-[#ffffff] box-border content-stretch flex gap-2.5 items-center justify-end min-w-[390px] overflow-clip p-[4px] relative shrink-0 w-full">
-        <button className="block cursor-pointer overflow-clip relative shrink-0 size-10">
-          <MenuIcon size="40" />
-        </button>
-      </div>
-      
-      {/* Welcome Message */}
-      <div className="basis-0 box-border content-stretch flex gap-2.5 grow items-center justify-center min-h-px min-w-[391px] overflow-clip px-9 py-6 relative shrink-0 w-full">
-        <div className="flex flex-col grow justify-center text-center">
-          <p className="text-[48px] font-semibold text-black leading-[0.95] tracking-[-2.4px]">Hello, my name is Tobi, your sales assistant</p>
+    <>
+      <div className="bg-[#ffffff] box-border content-stretch flex flex-col gap-1 items-center justify-center px-8 py-10 relative size-full min-h-screen">
+        {/* Menu Bar */}
+        <div className="bg-[#ffffff] box-border content-stretch flex gap-2.5 items-center justify-end min-w-[390px] overflow-clip p-[4px] relative shrink-0 w-full">
+          <button 
+            onClick={handleMenuToggle}
+            className="block cursor-pointer overflow-clip relative shrink-0 size-10 hover:opacity-70 transition-opacity"
+          >
+            <MenuIcon size="40" />
+          </button>
+        </div>
+        
+        {/* Welcome Message */}
+        <div className="basis-0 box-border content-stretch flex gap-2.5 grow items-center justify-center min-h-px min-w-[391px] overflow-clip px-9 py-6 relative shrink-0 w-full">
+          <div className="flex flex-col grow justify-center text-center">
+            <p className="text-[48px] font-semibold text-black leading-[0.95] tracking-[-2.4px]">Hello, my name is Tobi, your sales assistant</p>
+          </div>
+        </div>
+        
+        {/* Suggested Actions */}
+        <div className="basis-0 box-border content-center flex flex-wrap gap-5 grow items-center justify-center min-h-px min-w-[390px] px-0 py-10 relative shrink-0 w-full">
+          <SuggestedActionsRow onActionClick={handleStartChat} />
+        </div>
+        
+        {/* Chat Entry */}
+        <div className="box-border content-stretch flex flex-col gap-2.5 items-center justify-center min-w-[440px] overflow-clip px-[28px] py-4 relative shrink-0 w-full">
+          <ChatEntryBox onSubmit={handleStartChat} />
         </div>
       </div>
       
-      {/* Suggested Actions */}
-      <div className="basis-0 box-border content-center flex flex-wrap gap-5 grow items-center justify-center min-h-px min-w-[390px] px-0 py-10 relative shrink-0 w-full">
-        <SuggestedActionsRow onActionClick={handleStartChat} />
-      </div>
-      
-      {/* Chat Entry */}
-      <div className="box-border content-stretch flex flex-col gap-2.5 items-center justify-center min-w-[440px] overflow-clip px-[28px] py-4 relative shrink-0 w-full">
-        <ChatEntryBox onSubmit={handleStartChat} />
-      </div>
-    </div>
+      {/* Menu Window - Always rendered for smooth animations */}
+      <MenuWindow
+        isOpen={isMenuOpen}
+        onClose={() => setIsMenuOpen(false)}
+        onConversationSelect={handleConversationSelect}
+      />
+    </>
   )
 }
