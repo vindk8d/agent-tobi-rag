@@ -3,23 +3,15 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV ENVIRONMENT=production
+ENV PORT=8000
 
 WORKDIR /app
 
-# Install system dependencies for WeasyPrint and other requirements
+# Install system dependencies including WeasyPrint requirements
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl gcc g++ libpq-dev \
-    libglib2.0-0 \
-    libfontconfig1 \
-    libfreetype6 \
-    libxext6 \
-    libxrender1 \
-    libcairo2 \
-    libgdk-pixbuf-xlib-2.0-dev \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf2.0-0 \
-    shared-mime-info \
+    libgobject-2.0-0 libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 \
+    libffi-dev shared-mime-info fontconfig fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies
@@ -40,4 +32,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

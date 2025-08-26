@@ -2,25 +2,11 @@
 Main FastAPI application for RAG-Tobi
 """
 
-import sys
-import os
-from pathlib import Path
-
-# Smart path setup for deployment compatibility
-# Development: running from /backend directory, need to add current dir to path
-# Production: running from /app directory, current dir is already in path
-current_dir = Path(__file__).parent
-
-# In development, we're in /project-root/backend/
-# In production, we're in /app/
-# Add current directory to path so imports like 'from core.config' work in both contexts
-if str(current_dir) not in sys.path:
-    sys.path.insert(0, str(current_dir))
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
+import os
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -28,7 +14,6 @@ from contextlib import asynccontextmanager
 from models.base import APIResponse
 from core.database import db_client
 from api import api_router
-from monitoring.scheduler import DataSourceScheduler
 
 # Configure logging
 logging.basicConfig(
@@ -69,21 +54,6 @@ async def lifespan(app: FastAPI):
             else:
                 logger.error("Failed to establish database connection after all retries")
 
-    # Initialize and start background schedulers following existing patterns
-    scheduler = None
-    background_task_manager = None
-    try:
-        # Start DataSourceScheduler (includes vehicle cleanup jobs)
-        scheduler = DataSourceScheduler()
-        scheduler.start()
-        
-        # Start global BackgroundTaskManager for message persistence
-        from agents.background_tasks import background_task_manager
-        await background_task_manager.start()
-        logger.info("Background schedulers and task manager started successfully")
-    except Exception as e:
-        logger.error(f"Failed to start background schedulers: {e}")
-
     # Log successful startup
     logger.info("RAG-Tobi API startup completed")
 
@@ -91,22 +61,6 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down RAG-Tobi API...")
-    
-    # Stop schedulers gracefully
-    if scheduler:
-        try:
-            scheduler.stop()
-            logger.info("Background schedulers stopped successfully")
-        except Exception as e:
-            logger.error(f"Error stopping schedulers: {e}")
-    
-    # Stop BackgroundTaskManager gracefully
-    if background_task_manager:
-        try:
-            await background_task_manager.stop()
-            logger.info("Background task manager stopped successfully")
-        except Exception as e:
-            logger.error(f"Error stopping background task manager: {e}")
 
 
 # Initialize FastAPI app
